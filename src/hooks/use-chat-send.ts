@@ -3,11 +3,13 @@
 import { useCallback, useEffect, useRef, useState, type MutableRefObject } from "react"
 import { type ProviderConfig } from "@/lib/ai-gateway"
 import {
-  AgentExecutor,
   buildChatHistoryForExecutor,
+} from "@/lib/agent/llm-utils"
+import { loadAgentExecutor } from "@/lib/agent-executor-loader"
+import {
   WorkflowPlanParseError,
   type ActiveProviderId,
-} from "@/lib/agent-executor"
+} from "@/lib/agent/planner"
 import {
   bubbleAfterPlanIntercept,
   connKey,
@@ -206,6 +208,7 @@ export function useChatSend({
       let errMsg: string | undefined
 
       const runOnce = async (p: ProviderConfig, agentUserInput: string, planOpts?: { planRetryMessage?: string }) => {
+        const { AgentExecutor } = await loadAgentExecutor()
         const executor = new AgentExecutor(
           {
             activeProvider: { providerId: p.providerId as ActiveProviderId, model: p.model, baseUrl: p.baseUrl },

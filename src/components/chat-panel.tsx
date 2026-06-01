@@ -2,7 +2,7 @@
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState, Component, type ErrorInfo, type ReactNode } from "react"
 import { AnimatePresence, motion } from "framer-motion"
-import { ArrowDown, ArrowUp, Bolt, Check, Copy, Download, Eraser, Paperclip, Radio, RotateCcw, Square } from "lucide-react"
+import { ArrowDown, ArrowUp, Bolt, Check, Copy, Download, Eraser, Link2, Paperclip, Radio, RotateCcw, Square } from "lucide-react"
 
 import { AcademicMarkdown, safeMarkdownContent } from "@/components/academic-markdown"
 import { TopologyView } from "@/components/topology-view"
@@ -19,21 +19,24 @@ import { collectSourcesFromMessages, exportSourcesAsBibTeX, exportSourcesAsRIS }
 import { formatFileAttachmentBlock, readBrowserFileAsText } from "@/lib/browser-file"
 import { connKey, looksLikeWorkflowPlanJson } from "@/lib/chat-bubble-utils"
 import { useChatSend } from "@/hooks/use-chat-send"
-import { useT } from "@/lib/locales"
+import { extractDoi, fetchMetadataByDoi, formatReferenceBlock } from "@/lib/reference-import"
+import { useT, t as tGlobal } from "@/lib/locales"
 import { QUICK_PROMPTS } from "@/lib/quick-prompts"
 import { cn } from "@/lib/utils"
 import { useAgentStore } from "@/store/useAgentStore"
 import type { LocaleKey } from "@/lib/locales"
 
-function displayMessageContent(raw: unknown): string {
+function displayMessageContent(
+  raw: unknown,
+  tr: (key: LocaleKey, vars?: Record<string, string | number>) => string
+): string {
   const text = safeMarkdownContent(raw)
   if (!text.trim()) return ""
-  // 乱码 / 不可解析 JSON 片段：降级为可读提示，而非白屏
   if (/^[\x00-\x08\x0B\x0C\x0E-\x1F\uFFFD]+$/.test(text.replace(/\s/g, ""))) {
-    return "⚠️ 模型返回了不可解析的内容，已自动降级显示。请重试或切换模型。"
+    return tr("chat.unparseableContent")
   }
   if (text.trim().startsWith("{") && text.includes('"tasks"') && text.length > 400 && !text.includes("\n")) {
-    return "⚠️ 检测到未格式化的规划 JSON，已拦截展示。工作流若已启动，请查看拓扑图与思考过程。"
+    return tr("chat.planJsonIntercepted")
   }
   return text
 }
@@ -151,7 +154,7 @@ class ChatPanelErrorBoundary extends Component<{ children: ReactNode }, { error:
       return (
         <div className="flex h-full min-h-0 flex-col items-center justify-center gap-3 px-6 text-center">
           <div className="rounded-sm border border-rose-500/35 bg-rose-500/10 px-4 py-3 font-mono text-[13px] text-rose-100/95">
-            对话面板遇到异常，已优雅降级。模型返回了无法解析的数据，请重试或切换模型。
+            {tGlobal("chat.panelError")}
           </div>
           <div className="max-w-md font-mono text-[11px] text-muted-foreground">{this.state.error.message}</div>
           <Button
@@ -160,7 +163,7 @@ class ChatPanelErrorBoundary extends Component<{ children: ReactNode }, { error:
             className="rounded-sm font-mono text-[11px]"
             onClick={() => this.setState({ error: null })}
           >
-            重新加载面板
+            {tGlobal("chat.panelReload")}
           </Button>
         </div>
       )
@@ -268,11 +271,11 @@ const ChatPanelInner = memo(function ChatPanelInner() {
       return
     }
     const conv = st.conversations.items.find((c) => c.id === st.conversations.currentId)
-    const title = conv?.title ?? "对话"
+    const title = conv?.title ?? t("chat.defaultTitle")
     const md = formatConversationAsMarkdown(title, exportable)
     downloadTextFile(sanitizeExportFilename(title), md)
     pushToast({ messageKey: "chat.export.done", variant: "success", ttlMs: 2400 })
-  }, [pushToast])
+  }, [pushToast, t])
 
   const onExportBibTeX = useCallback(() => {
     const sources = collectSourcesFromMessages(useAgentStore.getState().chat.messages)
@@ -297,6 +300,29 @@ const ChatPanelInner = memo(function ChatPanelInner() {
     downloadTextFile(`${base}.ris`, exportSourcesAsRIS(sources), "application/x-research-info-systems;charset=utf-8")
     pushToast({ messageKey: "chat.export.citations.done", variant: "success", ttlMs: 2400 })
   }, [pushToast])
+
+  const onImportDoi = useCallback(async () => {
+    if (streaming) return
+    const raw = typeof window !== "undefined" ? window.prompt(t("chat.doi.prompt")) : null
+    if (!raw?.trim()) return
+    const doi = extractDoi(raw)
+    if (!doi) {
+      pushToast({ messageKey: "chat.doi.failed", variant: "error", ttlMs: 4200 })
+      return
+    }
+    try {
+      const meta = await fetchMetadataByDoi(doi)
+      if (!meta) {
+        pushToast({ messageKey: "chat.doi.failed", variant: "error", ttlMs: 4200 })
+        return
+      }
+      const block = `${formatReferenceBlock(meta)}\n\n`
+      setInput((prev) => (prev.trim() ? `${block}${prev}` : block))
+      pushToast({ messageKey: "chat.doi.done", variant: "success", ttlMs: 2400 })
+    } catch {
+      pushToast({ messageKey: "chat.doi.failed", variant: "error", ttlMs: 4200 })
+    }
+  }, [pushToast, streaming, t])
 
   const onPickFile = useCallback(() => {
     if (streaming) return
@@ -419,7 +445,7 @@ const ChatPanelInner = memo(function ChatPanelInner() {
   if (conversationLoading && chatMessages.length === 0) {
     return (
       <div className="flex h-full min-h-0 items-center justify-center">
-        <div className="font-mono text-[13px] text-muted-foreground">加载对话…</div>
+        <div className="font-mono text-[13px] text-muted-foreground">{t("chat.loading")}</div>
       </div>
     )
   }
@@ -538,7 +564,7 @@ const ChatPanelInner = memo(function ChatPanelInner() {
               className="rounded-sm border-border/60 bg-background/40 font-mono text-[11px]"
               onClick={() => setTraceOpen((v) => !v)}
             >
-              {traceOpen ? "隐藏思考过程" : "显示思考过程"}
+              {traceOpen ? t("chat.trace.hide") : t("chat.trace.show")}
             </Button>
             <Button
               variant="outline"
@@ -546,7 +572,7 @@ const ChatPanelInner = memo(function ChatPanelInner() {
               className="rounded-sm border-border/60 bg-background/40 font-mono text-[11px]"
               onClick={() => setTopologyOpen((v) => !v)}
             >
-              {topologyOpen ? "隐藏拓扑" : "显示拓扑"}
+              {topologyOpen ? t("chat.topology.hide") : t("chat.topology.show")}
             </Button>
           </div>
         </div>
@@ -634,24 +660,24 @@ const ChatPanelInner = memo(function ChatPanelInner() {
                   >
                     {m.role === "system" ? (
                       <AcademicMarkdown
-                        content={m.id === "sys-boot" ? t("chat.boot") : displayMessageContent(m.content)}
+                        content={m.id === "sys-boot" ? t("chat.boot") : displayMessageContent(m.content, t)}
                         className="text-[12px]"
-                        fallbackPrefix="系统消息渲染失败"
+                        fallbackPrefix={t("chat.systemRenderFailed")}
                       />
                     ) : m.role === "user" ? (
                       <>
-                        <div className="whitespace-pre-wrap pr-8">{displayMessageContent(m.content)}</div>
+                        <div className="whitespace-pre-wrap pr-8">{displayMessageContent(m.content, t)}</div>
                         <div className="absolute right-2 top-2">
-                          <MessageCopyButton content={displayMessageContent(m.content)} label={t("chat.copy")} onCopied={notifyCopied} />
+                          <MessageCopyButton content={displayMessageContent(m.content, t)} label={t("chat.copy")} onCopied={notifyCopied} />
                         </div>
                       </>
 
-                    ) : displayMessageContent(m.content).length === 0 && isLiveAssistant && streamMetrics?.directChat ? (
+                    ) : displayMessageContent(m.content, t).length === 0 && isLiveAssistant && streamMetrics?.directChat ? (
                       <span className="inline-flex items-center gap-1 font-mono text-[11px] text-muted-foreground">
                         <span className="inline-block h-3 w-1 animate-pulse bg-sky-400/80" />
                         {t("chat.directChatComposing" as LocaleKey)}
                       </span>
-                    ) : displayMessageContent(m.content).length === 0 && isLiveAssistant ? (
+                    ) : displayMessageContent(m.content, t).length === 0 && isLiveAssistant ? (
                       <span className="inline-flex items-center gap-1 font-mono text-[11px] text-muted-foreground">
                         <span className="inline-block h-3 w-1 animate-pulse bg-emerald-400/80" />
                         {t("chat.awaitingTokens")}
@@ -669,7 +695,7 @@ const ChatPanelInner = memo(function ChatPanelInner() {
                           <div className="mb-3 rounded-sm border border-emerald-500/20 bg-background/30 p-3">
                             <div className="flex items-center justify-between gap-2">
                               <div className="font-mono text-[11px] font-semibold tracking-wide text-emerald-200/95">
-                                实时思考过程（可解释执行轨迹）
+                                {t("chat.traceTitle")}
                               </div>
                               <span
                                 role="button"
@@ -683,7 +709,7 @@ const ChatPanelInner = memo(function ChatPanelInner() {
                                   }
                                 }}
                               >
-                                收起
+                                {t("chat.trace.collapse")}
                               </span>
                             </div>
 
@@ -699,7 +725,7 @@ const ChatPanelInner = memo(function ChatPanelInner() {
                                       </div>
                                     </>
                                   ) : (
-                                    <div className="font-mono text-[10px] text-muted-foreground">（等待规划/进入节点）</div>
+                                    <div className="font-mono text-[10px] text-muted-foreground">{t("chat.trace.waiting")}</div>
                                   )}
                                 </div>
                               </div>
@@ -745,7 +771,7 @@ const ChatPanelInner = memo(function ChatPanelInner() {
                                 </div>
                               ) : null}
                               {activeNodeLogs.length === 0 ? (
-                                <div className="mt-1 font-mono text-[10px] text-muted-foreground">（暂无日志）</div>
+                                <div className="mt-1 font-mono text-[10px] text-muted-foreground">{t("chat.trace.noLogs")}</div>
                               ) : (
                                 <div className="mt-1 max-h-[160px] overflow-auto whitespace-pre-wrap font-mono text-[10px] leading-snug text-muted-foreground sk-scrollbar">
                                   {activeNodeLogs.join("\n")}
@@ -756,7 +782,7 @@ const ChatPanelInner = memo(function ChatPanelInner() {
                         ) : null}
                         {isLiveAssistant &&
                         streamMetrics?.active &&
-                        looksLikeWorkflowPlanJson(displayMessageContent(m.content)) &&
+                        looksLikeWorkflowPlanJson(displayMessageContent(m.content, t)) &&
                         (wfIsPlannerOutput ||
                           (Boolean(activeNodeId) && wfNodes.some((n) => n.status === "running"))) ? (
                           <div className="mb-2 rounded-sm border border-amber-500/20 bg-amber-500/10 px-3 py-2 font-mono text-[12px] leading-relaxed text-amber-100/95">
@@ -764,15 +790,15 @@ const ChatPanelInner = memo(function ChatPanelInner() {
                           </div>
                         ) : (
                           <AcademicMarkdown
-                            content={displayMessageContent(m.content)}
-                            fallbackPrefix="回复渲染失败"
+                            content={displayMessageContent(m.content, t)}
+                            fallbackPrefix={t("chat.replyRenderFailed")}
                           />
                         )}
                         {m.role === "assistant" ? (
                           <>
                             <div className="absolute right-2 top-2 z-10 flex gap-1">
                               <MessageCopyButton
-                                content={displayMessageContent(m.content)}
+                                content={displayMessageContent(m.content, t)}
                                 label={t("chat.copy")}
                                 onCopied={notifyCopied}
                               />
@@ -869,6 +895,17 @@ const ChatPanelInner = memo(function ChatPanelInner() {
               >
                 <Paperclip className="h-4 w-4" />
               </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-11 rounded-sm border-border/60 bg-background/40 font-mono text-[11px]"
+                onClick={() => void onImportDoi()}
+                disabled={streaming}
+                title={t("chat.doi.hint")}
+              >
+                <Link2 className="h-4 w-4" />
+              </Button>
               <div className="flex-1">
                 <div className="rounded-sm border border-border/60 bg-background/40 px-3 py-2">
                   <textarea
@@ -913,13 +950,13 @@ const ChatPanelInner = memo(function ChatPanelInner() {
                     disabled={streaming}
                     aria-label={retryState.kind === "replan" ? "replan" : "retry"}
                   >
-                    {retryState.kind === "replan" ? t("chat.replan") : "手动重试"}
+                    {retryState.kind === "replan" ? t("chat.replan") : t("chat.retryManual")}
                   </Button>
                   {retryState.kind === "replan" ? (
                     <div className="max-w-[240px] text-right font-mono text-[10px] text-muted-foreground">{t("chat.planParseHint")}</div>
                   ) : (
                     <div className="max-w-[240px] truncate text-right font-mono text-[10px] text-muted-foreground" title={retryState.error}>
-                      规划失败：{retryState.error}
+                      {t("chat.planFailed", { error: retryState.error })}
                     </div>
                   )}
                 </div>
@@ -968,7 +1005,7 @@ const ChatPanelInner = memo(function ChatPanelInner() {
                   className="h-8 rounded-sm border-border/60 bg-background/40 font-mono text-[11px]"
                   onClick={() => setTopologyOpen(false)}
                 >
-                  收起
+                  {t("chat.trace.collapse")}
                 </Button>
               </div>
               <div className="min-h-[500px] flex-1 overflow-hidden">

@@ -47,16 +47,16 @@ const NAV_ITEMS: readonly NavItem[] = [
   { id: "settings", label: "nav.settings", icon: Settings },
 ] as const
 
-function formatRelativeTime(iso: string | Date) {
+function formatRelativeTime(iso: string | Date, tr: (key: LocaleKey, vars?: Record<string, string | number>) => string) {
   const d = typeof iso === "string" ? new Date(iso) : iso
   const diff = Date.now() - d.getTime()
   const mins = Math.floor(diff / 60_000)
-  if (mins < 1) return "刚刚"
-  if (mins < 60) return `${mins} 分钟前`
+  if (mins < 1) return tr("sidebar.time.justNow")
+  if (mins < 60) return tr("sidebar.time.minsAgo", { n: mins })
   const hrs = Math.floor(mins / 60)
-  if (hrs < 24) return `${hrs} 小时前`
+  if (hrs < 24) return tr("sidebar.time.hoursAgo", { n: hrs })
   const days = Math.floor(hrs / 24)
-  if (days < 7) return `${days} 天前`
+  if (days < 7) return tr("sidebar.time.daysAgo", { n: days })
   return d.toLocaleDateString()
 }
 
@@ -67,6 +67,7 @@ const ConversationItem = memo(function ConversationItem({
   onRename,
   onTogglePin,
   onDelete,
+  formatTime,
 }: {
   item: ConversationSummary
   active: boolean
@@ -74,6 +75,7 @@ const ConversationItem = memo(function ConversationItem({
   onRename: (id: string, title: string) => void
   onTogglePin: (id: string, isPinned: boolean) => void
   onDelete: (id: string) => void
+  formatTime: (iso: string | Date) => string
 }) {
   const [menuOpen, setMenuOpen] = useState(false)
   const [editing, setEditing] = useState(false)
@@ -144,7 +146,7 @@ const ConversationItem = memo(function ConversationItem({
           <>
             <div className="truncate font-mono text-[12px] font-medium text-foreground/95">{item.title}</div>
             <div className="mt-0.5 truncate font-mono text-[10px] text-muted-foreground">
-              {formatRelativeTime(item.updatedAt)}
+              {formatTime(item.updatedAt)}
             </div>
           </>
         )}
@@ -216,12 +218,19 @@ const ConversationItem = memo(function ConversationItem({
   )
 })
 
-export const Sidebar = memo(function Sidebar() {
+export const Sidebar = memo(function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   const t = useT()
   const router = useRouter()
   const searchParams = useSearchParams()
   const active = useAgentStore((s) => s.ui.activePanel)
   const setActive = useAgentStore((s) => s.actions.setActivePanel)
+  const goPanel = useCallback(
+    (panel: PanelId) => {
+      setActive(panel)
+      onNavigate?.()
+    },
+    [onNavigate, setActive]
+  )
   const conversations = useAgentStore((s) => s.conversations.items)
   const currentConversationId = useAgentStore((s) => s.conversations.currentId)
   const conversationsLoading = useAgentStore((s) => s.conversations.loading)
@@ -288,12 +297,12 @@ export const Sidebar = memo(function Sidebar() {
     setCreating(true)
     try {
       const conv = await createConversation()
-      setActive("chat")
+      goPanel("chat")
       router.push(`/?c=${conv.id}`)
     } finally {
       setCreating(false)
     }
-  }, [createConversation, creating, router, setActive])
+  }, [createConversation, creating, goPanel, router])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -314,19 +323,26 @@ export const Sidebar = memo(function Sidebar() {
 
   const handleSelectConversation = useCallback(
     (id: string) => {
-      setActive("chat")
+      goPanel("chat")
       router.push(`/?c=${id}`)
     },
-    [router, setActive]
+    [goPanel, router]
   )
+
+  const formatTime = useCallback((iso: string | Date) => formatRelativeTime(iso, t), [t])
 
   const handleDeleteConversation = useCallback(
     async (id: string) => {
+      if (typeof window !== "undefined" && !window.confirm(t("sidebar.delete.confirm"))) return
       const wasCurrent = id === currentConversationId
-      await deleteConversation(id)
-      if (wasCurrent) router.push("/")
+      try {
+        await deleteConversation(id)
+        if (wasCurrent) router.push("/")
+      } catch {
+        // toast already shown in store
+      }
     },
-    [currentConversationId, deleteConversation, router]
+    [currentConversationId, deleteConversation, router, t]
   )
 
   return (
@@ -405,6 +421,7 @@ export const Sidebar = memo(function Sidebar() {
                         onRename={(id, title) => void renameConversation(id, title)}
                         onTogglePin={(id, isPinned) => void togglePinConversation(id, isPinned)}
                         onDelete={(id) => void handleDeleteConversation(id)}
+                        formatTime={formatTime}
                       />
                     ))}
                   </div>
@@ -426,6 +443,7 @@ export const Sidebar = memo(function Sidebar() {
                         onRename={(id, title) => void renameConversation(id, title)}
                         onTogglePin={(id, isPinned) => void togglePinConversation(id, isPinned)}
                         onDelete={(id) => void handleDeleteConversation(id)}
+                        formatTime={formatTime}
                       />
                     ))}
                   </div>
@@ -449,7 +467,7 @@ export const Sidebar = memo(function Sidebar() {
                   isActive &&
                     "border-sidebar-primary/50 bg-sidebar-primary/10 shadow-[inset_0_0_0_1px_oklch(0.488_0.243_264.376/0.35)]"
                 )}
-                onClick={() => setActive(it.id)}
+                onClick={() => goPanel(it.id)}
               >
                 <Icon className="h-4 w-4" />
                 <span className="truncate">{t(it.label)}</span>
@@ -594,7 +612,7 @@ export const Sidebar = memo(function Sidebar() {
                   </Button>
                   <Button
                     onClick={() => {
-                      setActive("settings")
+                      goPanel("settings")
                       setQuickStartOpen(false)
                     }}
                   >

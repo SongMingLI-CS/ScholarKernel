@@ -4,6 +4,19 @@ ScholarKernel 的 Web 全栈客户端：对话式学术 Agent UI、多模型网�
 
 **产品主仓库**：[SongMingLI-CS/ScholarKernel](https://github.com/SongMingLI-CS/ScholarKernel)
 
+## Docker 部署
+
+```bash
+cp .env.example .env
+# 填写 ENCRYPTION_SECRET、PROXY_ACCESS_TOKEN 等生产变量
+
+docker compose up --build -d
+# 应用监听 http://localhost:3000
+# SQLite 数据持久化在 Docker volume `sk-data`
+```
+
+镜像启动时会自动执行 `prisma migrate deploy` 再 `npm start`。
+
 ## 开发
 
 ```bash

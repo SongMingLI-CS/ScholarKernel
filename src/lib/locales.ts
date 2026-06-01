@@ -109,6 +109,32 @@ export const dictionary = {
     "chat.stop": "停止生成",
     "chat.stop.done": "已停止生成。",
     "chat.stopped": "⏹ 已停止生成",
+    "chat.unparseableContent": "⚠️ 模型返回了不可解析的内容，已自动降级显示。请重试或切换模型。",
+    "chat.planJsonIntercepted": "⚠️ 检测到未格式化的规划 JSON，已拦截展示。工作流若已启动，请查看拓扑图与思考过程。",
+    "chat.panelError": "对话面板遇到异常，已优雅降级。模型返回了无法解析的数据，请重试或切换模型。",
+    "chat.panelReload": "重新加载面板",
+    "chat.defaultTitle": "对话",
+    "chat.loading": "加载对话…",
+    "chat.trace.show": "显示思考过程",
+    "chat.trace.hide": "隐藏思考过程",
+    "chat.topology.show": "显示拓扑",
+    "chat.topology.hide": "隐藏拓扑",
+    "chat.systemRenderFailed": "系统消息渲染失败",
+    "chat.traceTitle": "实时思考过程（可解释执行轨迹）",
+    "chat.trace.collapse": "收起",
+    "chat.trace.waiting": "（等待规划/进入节点）",
+    "chat.trace.noLogs": "（暂无日志）",
+    "chat.replyRenderFailed": "回复渲染失败",
+    "chat.retryManual": "手动重试",
+    "chat.planFailed": "规划失败：{error}",
+    "chat.doi.hint": "通过 DOI 导入文献元数据",
+    "chat.doi.prompt": "输入 DOI 或 doi.org 链接",
+    "chat.doi.done": "文献元数据已插入输入框。",
+    "chat.doi.failed": "无法解析 DOI 或拉取元数据。",
+    "sidebar.time.justNow": "刚刚",
+    "sidebar.time.minsAgo": "{n} 分钟前",
+    "sidebar.time.hoursAgo": "{n} 小时前",
+    "sidebar.time.daysAgo": "{n} 天前",
     "chat.regenerate": "重新生成",
     "chat.regenerate.none": "没有可重新生成的回复。",
     "chat.clear": "清空对话",
@@ -510,6 +536,32 @@ export const dictionary = {
     "chat.stop": "Stop",
     "chat.stop.done": "Generation stopped.",
     "chat.stopped": "⏹ Generation stopped",
+    "chat.unparseableContent": "⚠️ The model returned unparseable content. Display degraded — retry or switch models.",
+    "chat.planJsonIntercepted": "⚠️ Unformatted plan JSON detected and suppressed. If the workflow started, check topology and trace.",
+    "chat.panelError": "Chat panel hit an error and degraded gracefully. Unparseable model output — retry or switch models.",
+    "chat.panelReload": "Reload panel",
+    "chat.defaultTitle": "Chat",
+    "chat.loading": "Loading conversation…",
+    "chat.trace.show": "Show trace",
+    "chat.trace.hide": "Hide trace",
+    "chat.topology.show": "Show topology",
+    "chat.topology.hide": "Hide topology",
+    "chat.systemRenderFailed": "System message render failed",
+    "chat.traceTitle": "Live reasoning trace",
+    "chat.trace.collapse": "Collapse",
+    "chat.trace.waiting": "(Awaiting plan / node entry)",
+    "chat.trace.noLogs": "(No logs yet)",
+    "chat.replyRenderFailed": "Reply render failed",
+    "chat.retryManual": "Retry manually",
+    "chat.planFailed": "Planning failed: {error}",
+    "chat.doi.hint": "Import reference metadata by DOI",
+    "chat.doi.prompt": "Enter a DOI or doi.org URL",
+    "chat.doi.done": "Reference metadata inserted into input.",
+    "chat.doi.failed": "Could not parse DOI or fetch metadata.",
+    "sidebar.time.justNow": "Just now",
+    "sidebar.time.minsAgo": "{n} min ago",
+    "sidebar.time.hoursAgo": "{n} hr ago",
+    "sidebar.time.daysAgo": "{n} d ago",
     "chat.regenerate": "Regenerate",
     "chat.regenerate.none": "Nothing to regenerate.",
     "chat.clear": "Clear chat",
@@ -820,13 +872,27 @@ export const dictionary = {
 
 export type LocaleKey = keyof (typeof dictionary)["zh"] | keyof (typeof dictionary)["en"]
 
-export function t(key: LocaleKey) {
+export function t(key: LocaleKey, vars?: Record<string, string | number>) {
   const lang: Lang = useAgentStore.getState().settings.lang
-  return dictionary[lang][key] ?? dictionary.zh[key] ?? key
+  let s: string = dictionary[lang][key] ?? dictionary.zh[key] ?? key
+  if (vars) {
+    for (const [k, v] of Object.entries(vars)) {
+      s = s.replaceAll(`{${k}}`, String(v))
+    }
+  }
+  return s
 }
 
 export function useT() {
   const lang = useAgentStore((s) => s.settings.lang)
-  return (key: LocaleKey) => dictionary[lang][key] ?? dictionary.zh[key] ?? key
+  return (key: LocaleKey, vars?: Record<string, string | number>) => {
+    let s: string = dictionary[lang][key] ?? dictionary.zh[key] ?? key
+    if (vars) {
+      for (const [k, v] of Object.entries(vars)) {
+        s = s.replaceAll(`{${k}}`, String(v))
+      }
+    }
+    return s
+  }
 }
 
