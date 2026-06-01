@@ -1,0 +1,56 @@
+---
+description: ScholarKernel Web 技术栈、目录约定与禁区
+alwaysApply: true
+---
+
+# ScholarKernel Web 项目上下文
+
+## 仓库关系
+
+| 仓库 | 说明 |
+|------|------|
+| **产品主仓** | [SongMingLI-CS/ScholarKernel](https://github.com/SongMingLI-CS/ScholarKernel) — 项目 canonical 来源；Issue/PR/发布以该仓为准 |
+| **本工作区** | `scholarkernel-web` — ScholarKernel 的 **Web 全栈客户端**（Next.js UI + `src/app/api` + Prisma 本地持久化） |
+
+- 改 Agent 行为、品牌文案、核心能力时，与主仓 README/设计保持一致。
+- 若主仓有独立后端或共享包，**先读主仓结构再改**，避免与上游 API/命名冲突。
+- 本仓 `git push` 目标以用户配置的 `origin` 为准；规则中的主仓链接用于对照与跨仓 PR 说明。
+
+## 技术栈
+
+- **Next.js 16**（App Router）+ **React 19** + **TypeScript strict**
+- **Prisma 7** + SQLite（`prisma/schema.prisma`，client 输出到 `generated/prisma`）
+- **Zustand** 状态：`src/store/useAgentStore.ts`
+- **AI**：`ai` SDK、`src/lib/agent-executor.ts`、`src/lib/ai-gateway.ts`
+- **样式**：Tailwind 4 + shadcn（`src/components/ui/`）
+- 开发：`npm run dev`（Turbo）；构建：`npm run build`（含 `prisma generate`）
+
+## 目录地图
+
+| 路径 | 职责 |
+|------|------|
+| `src/app/api/**` | Route Handlers；用 `jsonOk`/`jsonError`（`@/lib/api-utils`） |
+| `src/lib/**` | 业务逻辑、工具、agent、crypto；**优先单测** |
+| `src/components/**` | UI；复杂逻辑下沉到 `lib` 或 hooks 再测 |
+| `src/store/**` | Zustand；纯 reducer/selector 可单测 |
+| `prisma/` |  schema；迁移用 `npm run db:push` |
+| `generated/prisma` | 生成物，勿手改 |
+
+## 编码约定
+
+- 路径别名：`@/*` → `src/*`
+- API 错误：记录 `console.error` + `jsonError(message, status)`，与现有 route 一致
+- 用户身份：`resolveUserId()` / `conversationOwnerWhere()`（`@/lib/auth-user`）
+- 密钥：仅环境变量或加密存储（`crypto-server`）；**永不**硬编码 token
+- Next.js 16 可能与训练数据不同：改 App Router/配置前先看 `node_modules/next/dist/docs/` 与 `AGENTS.md`
+
+## Agent 执行器注意
+
+- `agent-executor.ts` 体量大：新逻辑优先**抽取**到 `src/lib` 小模块并单测，避免在无测试下改核心循环。
+- 工具：`src/lib/tools/file-tool.ts`、`search-tool.ts` — mock 外部 API。
+
+## 禁止
+
+- 不要引入与 `package.json` 无关的新框架（测前先 `npm ls <pkg>`）。
+- 不要删除或弱化既有 CORS proxy rewrites（`next.config.ts`）除非任务要求。
+- 不要用 `dev.db` 里的真实用户数据写测试断言。

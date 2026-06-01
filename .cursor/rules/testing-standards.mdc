@@ -1,0 +1,65 @@
+---
+description: Vitest 测试规范、mock 策略与 API 路由测法
+globs: "{src/**/*.ts,src/**/*.tsx,**/*.test.ts,**/*.spec.ts,vitest.config.ts}"
+alwaysApply: false
+---
+
+# 测试标准（Vitest）
+
+## 命令
+
+```bash
+npm test          # vitest run，CI/闭环用
+npm run test:watch
+```
+
+## 文件与命名
+
+- 后缀：`.test.ts` / `.test.tsx`
+- 与源码同域：`__tests__` 子目录，镜像模块名
+- 描述块：`describe('<module>', () => { it('should ...', ...) })`
+
+## 分层策略
+
+| 层级 | 工具 | 说明 |
+|------|------|------|
+| 纯函数 / lib | Vitest | 无 mock 或仅 mock 模块 |
+| API Route | Vitest + `Request` | import `{ GET, POST }`；mock `@/lib/prisma` |
+| Zustand slice | Vitest | `createStore` 或导出纯函数 |
+| React UI | 暂缓 | 除非用户要求；优先测提取的纯逻辑 |
+
+## Prisma mock 模板
+
+```typescript
+import { vi } from "vitest"
+
+vi.mock("@/lib/prisma", () => ({
+  prisma: {
+    conversation: {
+      findMany: vi.fn(),
+      create: vi.fn(),
+    },
+  },
+}))
+```
+
+## API 路由示例
+
+```typescript
+import { GET } from "../route"
+
+it("returns 200 with list", async () => {
+  const res = await GET()
+  expect(res.status).toBe(200)
+})
+```
+
+## 断言原则
+
+- 测**行为**（状态码、JSON 字段、抛出类型），不测实现细节（除非防回归）。
+- 每个 bug 修复：**先**加回归测试再现失败，再修代码。
+- 异步：`await` + `res.json()`；计时器用 `vi.useFakeTimers()` 并 `vi.restoreAllMocks()`。
+
+## 覆盖率（可选）
+
+不追求 100%；新 `src/lib` 公共函数至少 1 happy + 1 edge。

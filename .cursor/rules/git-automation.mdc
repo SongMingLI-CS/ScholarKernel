@@ -1,0 +1,44 @@
+---
+description: 测试通过后的自动 Conventional Commit 与安全边界
+alwaysApply: true
+---
+
+# Git 自动化（与 TDD 闭环 §6 配合）
+
+## 何时自动 commit
+
+- `npm test` 与 `npm run lint` **均已通过**
+- 工作区存在**与本任务相关**的 intentional 变更
+- 用户未在本轮对话中说「不要提交 / don't commit」
+
+## 提交前检查清单
+
+1. `git status` — 无意外文件
+2. `git diff` — 无 `.env`、密钥、调试 `console.log` 洪流
+3. `git add` — **显式路径**，避免 `git add -A` 误纳 `dev.db`、`.next`
+4. `git commit` — HEREDOC 多行 message，类型准确
+
+## Message 类型
+
+| type | 用途 |
+|------|------|
+| `feat` | 新功能 |
+| `fix` | Bug 修复 |
+| `test` | 仅测试 |
+| `refactor` | 行为不变重构 |
+| `chore` | 工具、deps、配置 |
+| `docs` | 文档 |
+
+示例：`feat(api): persist conversation pin state`
+
+## 硬边界
+
+- **不** `git push`（除非用户明确要求）
+- **不** `--no-verify`、**不** force push main/master
+- **不** `git commit --amend` 除非用户明确要求且 HEAD 未推送
+- **不** 改 `git config`
+- 单次 commit 单一意图；大任务拆多个 commit、多个闭环
+
+## 提交后
+
+向用户报告：`git log -1 --oneline` 结果与尚需手动验证项（如 E2E、生产 env）。

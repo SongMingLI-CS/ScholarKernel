@@ -1,0 +1,90 @@
+---
+description: Agentic TDD 闭环：先测后码、失败自 Debug、通过自 Commit（挂机工作流核心）
+alwaysApply: true
+---
+
+# Agentic TDD 闭环（非协商）
+
+凡涉及**新功能、行为变更、Bug 修复**的任务，默认进入本闭环，直至 `npm test` 与 `npm run lint` 全部通过。禁止跳过测试直接堆实现。
+
+## 0. 开工前（Preflight）
+
+1. 用 `Read`/`Grep` 确认改动范围；读 `package.json` 与相邻文件，**禁止臆造依赖或 API**。
+2. 若工作区已有无关脏改动：先 `git status`；多文件大改前可选 `git add -A && git commit -m "chore: checkpoint before agent session"`。
+3. 用一句话写出：**验收标准** + **将新增/修改的测试文件路径**。
+
+## 1. RED — 先写失败测试
+
+- **顺序铁律**：测试文件先于生产代码存在；首个测试必须**可失败**（断言真实行为，禁止 `expect(true)`）。
+- 放置约定：
+  - `src/lib/**` → `src/lib/__tests__/<name>.test.ts`
+  - `src/app/api/**` → `src/app/api/**/__tests__/<route>.test.ts`
+  - `src/store/**` → `src/store/__tests__/<name>.test.ts`
+  - 纯工具/加密：mock 外部 IO，不连真实 LLM/网络。
+- API 路由：直接 import 路由文件的命名导出（`GET`/`POST` 等），用 `Request` 构造入参；Prisma 用 mock 或内存 SQLite（见 `testing-standards`）。
+- 只写**覆盖本次任务**的最小测试集（happy path + 至少 1 条失败/边界）。
+
+## 2. RUN — 必须执行
+
+```bash
+npm test
+npm run lint
+```
+
+失败则进入 **Debug 阶段**（加载 `debug-protocol` 规则），不得宣布完成。
+
+## 3. GREEN — 最小实现
+
+- 只写让测试变绿的最少代码；禁止 `TODO`/`FIXME` 占位、禁止 `// ...existing code` 省略。
+- 改完后再次 `npm test && npm run lint`。
+
+## 4. DEBUG 循环（失败时自动执行）
+
+最多 **8 轮**；每轮必须：
+
+1. **假设**：一句主假设。
+2. **证据**：失败测试名、堆栈、`file:line`、命令输出（用 Shell 真实跑，不编造）。
+3. **最小修复**：仅改与证据相关的文件。
+4. 重跑 `npm test && npm run lint`。
+
+第 8 轮仍失败 → 停止改码，向用户汇报：假设链、已试修复、剩余阻塞。
+
+## 5. REFACTOR
+
+测试全绿后，才可做命名/抽取/去重；**每次重构后必须再跑** `npm test && npm run lint`。
+
+## 6. COMMIT — 通过后自动提交
+
+测试与 lint 全绿后**立即**创建原子提交（无需再等用户说「提交」）：
+
+```bash
+git status
+git diff
+git add <仅本次任务相关路径>   # 禁止 add .env*、dev.db、coverage、.next
+git commit -m "$(cat <<'EOF'
+<type>(<scope>): <英文或中文简述，说明 why>
+
+EOF
+)"
+git status
+```
+
+- 格式：[Conventional Commits](https://www.conventionalcommits.org/)：`feat|fix|test|refactor|chore`，scope 如 `api`、`lib`、`store`、`ui`。
+- **禁止**：`git push`（除非用户明确要求）、`--no-verify`、`--amend`（除非用户明确要求且 HEAD 未推送）、force push、改 `git config`。
+- **禁止提交**：`.env*`、`prisma/dev.db`、`generated/prisma`（除非本次任务就是 prisma generate 契约变更）、`node_modules`、`.next`。
+- 若本次**仅**补测试无生产变更：`test(scope): ...`。
+- 提交后向用户报告：commit hash、message、仍失败的后续建议（如有）。
+
+## 7. 退出条件
+
+| 情况 | 行为 |
+|------|------|
+| 测试+lint 绿 | 自动 commit → 汇报 |
+| 仅文档/注释/纯样式且无可测逻辑 | 可跳过 RED，但仍须 lint；commit 用 `docs`/`style` |
+| 用户明确说「不要提交」 | 跳过 §6，其余闭环不变 |
+| 用户明确说「不要测试」 | 仅该任务例外，须在回复中注明原因 |
+
+## 8. 并行与范围
+
+- 一次闭环只解决**一个用户意图**；多个独立功能拆多个 commit。
+- 使用 TodoWrite 跟踪：RED → GREEN → REFACTOR → COMMIT。

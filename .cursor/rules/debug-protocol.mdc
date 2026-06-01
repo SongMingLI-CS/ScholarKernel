@@ -1,0 +1,44 @@
+---
+description: 测试/构建失败时的假设→证据→最小修复协议
+globs: "{src/**,**/*.test.ts,vitest.config.ts}"
+alwaysApply: false
+---
+
+# Debug 协议（TDD 闭环内嵌）
+
+触发：`npm test`、`npm run lint`、`npm run build` 任一失败。
+
+## 步骤（每轮必填）
+
+### 1. 假设（Hypothesis）
+
+一句主假设，例如：「`resolveUserId` 在测试环境返回 undefined 导致 where 子句非法」。
+
+### 2. 证据（Evidence）
+
+必须来自真实命令输出，至少两项：
+
+- 失败用例全名 / ESLint rule id
+- 堆栈 `file:line` 或 linter 路径
+- 复现命令（已执行）
+
+缺证据 → 先 `Read` 源码、加 `console`/`it.only` 定位，**禁止**同时改 5 个文件碰运气。
+
+### 3. 修复（Fix）
+
+- 一次只改**一个根因**；修完立即 `npm test && npm run lint`。
+- 假设被推翻 → 写新假设，**回滚**无效改动（`git checkout -- <file>` 或手动撤销）。
+
+## 禁止
+
+- 无输出重试同一命令超过 2 次。
+- 调试时大规模重命名/搬目录。
+- 用 `any` 或 `@ts-ignore` 糊住类型错误（除非有注释说明临时性且跟进任务）。
+- 删除失败测试换绿（除非测试本身错误，须说明）。
+
+## 常见本项目踩坑
+
+- Prisma client 路径：`@/lib/prisma` 依赖 `prisma generate`。
+- ESM/CJS：Vitest 已配 `@` alias；勿混用相对路径穿透 `generated/`。
+- Next 专有 API（`next/headers`）在 route 测试里需 `vi.mock("next/headers", ...)`。
+- SQLite 锁：并行测试时 mock prisma 而非共享 `dev.db`。
