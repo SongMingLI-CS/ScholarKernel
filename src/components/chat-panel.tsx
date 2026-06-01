@@ -599,7 +599,6 @@ const ChatPanelInner = memo(function ChatPanelInner() {
       ok = false
       console.error("[ChatPanel] AgentExecutor.run failed:", e)
       const lang = useAgentStore.getState().settings.lang
-      const msg = e instanceof Error ? e.message : "StreamFailed"
       errMsg = formatUserFacingErrorMessage(e, lang)
       if (e instanceof WorkflowPlanParseError) {
         errMsg = formatUserFacingErrorMessage(e, lang)
@@ -651,7 +650,6 @@ const ChatPanelInner = memo(function ChatPanelInner() {
               }
               ok = false
               console.error("[ChatPanel] Ollama fallback failed:", e2)
-              const msg2 = e2 instanceof Error ? e2.message : "StreamFailed"
               errMsg = formatUserFacingErrorMessage(e2, lang)
               patchAssistantOnCrash(assistantId, e2)
             }
@@ -684,7 +682,7 @@ const ChatPanelInner = memo(function ChatPanelInner() {
       abortRef.current = null
       activeRunIdRef.current = null
     }
-  }, [connectivity, input, lockToBottomOnce, maybeAutoTitle, provider, runtimeKeys, setTopologyOpen, streaming, t])
+  }, [connectivity, input, lockToBottomOnce, maybeAutoTitle, provider, runtimeKeys, setTopologyOpen, streaming])
 
   const onRegenerate = useCallback(() => {
     if (streaming) return

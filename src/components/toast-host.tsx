@@ -17,11 +17,10 @@ export const ToastHost = memo(function ToastHost() {
   const open = toast.open
 
   useEffect(() => {
-    if (!open) return
-    const ttl = toast.ttlMs
-    const timer = window.setTimeout(() => close(), ttl)
+    if (!open || !toast.open) return
+    const timer = window.setTimeout(() => close(), toast.ttlMs)
     return () => window.clearTimeout(timer)
-  }, [close, open, toast.open ? toast.ttlMs : 0, toast.open ? toast.id : ""])
+  }, [close, open, toast])
 
   const content = useMemo(() => {
     if (!toast.open) return ""

@@ -224,11 +224,7 @@ function bearerAuthHeaders(apiKey: string): Record<string, string> {
 }
 
 /** 统一 fetch 拦截：认证失败时触发可观测 Toast */
-async function gatewayFetch(
-  url: string,
-  init: RequestInit,
-  ctx: { providerId: ProviderId }
-): Promise<Response> {
+async function gatewayFetch(url: string, init: RequestInit): Promise<Response> {
   const res = await proxyAwareFetch(url, init)
   if (res.status === 401 || res.status === 403) {
     const detail = await parseApiErrorDetail(res)
@@ -238,7 +234,7 @@ async function gatewayFetch(
   return res
 }
 
-async function assertOkOrThrow(res: Response, label: string, providerId: ProviderId) {
+async function assertOkOrThrow(res: Response, label: string) {
   if (res.ok) return
   const detail = await parseApiErrorDetail(res)
   if (res.status === 401 || res.status === 403) {
@@ -409,8 +405,7 @@ export async function validateProvider(
               stream: false,
               messages: [{ role: "user", content: "ping" }],
             }),
-          },
-          { providerId }
+          }
         ),
       { label: providerId }
     )
@@ -442,8 +437,7 @@ export async function validateProvider(
               stream: false,
               messages: [{ role: "user", content: "ping" }],
             }),
-          },
-          { providerId }
+          }
         ),
       { label: providerId }
     )
@@ -480,8 +474,7 @@ export async function validateProvider(
               contents: [{ role: "user", parts: [{ text: "ping" }] }],
               generationConfig: { maxOutputTokens: 1 },
             }),
-          },
-          { providerId }
+          }
         ),
       { label: providerId }
     )
@@ -669,18 +662,14 @@ async function* generateOpenAICompatStream(input: GenerateStreamInput): TextStre
     body.response_format = { type: "json_object" }
   }
 
-  const res = await gatewayFetch(
-    url,
-    {
-      method: "POST",
-      signal: mergeAbortSignals(input.signal),
-      headers: bearerAuthHeaders(apiKey),
-      body: JSON.stringify(body),
-    },
-    { providerId: pid }
-  )
+  const res = await gatewayFetch(url, {
+    method: "POST",
+    signal: mergeAbortSignals(input.signal),
+    headers: bearerAuthHeaders(apiKey),
+    body: JSON.stringify(body),
+  })
 
-  await assertOkOrThrow(res, "OpenAICompatError", pid)
+  await assertOkOrThrow(res, "OpenAICompatError")
 
   for await (const data of readSseDataLines(res)) {
     if (data === "[DONE]") break
@@ -737,25 +726,21 @@ async function* generateAnthropicMessagesStream(input: GenerateStreamInput): Tex
 
   const { system, messages } = splitAnthropicMessages(input.messages)
 
-  const res = await gatewayFetch(
-    url,
-    {
-      method: "POST",
-      signal: mergeAbortSignals(input.signal),
-      headers: { ...anthropicAuthHeaders(key), accept: "text/event-stream" },
-      body: JSON.stringify({
-        model: input.provider.model,
-        max_tokens: 1024,
-        stream: true,
-        temperature: input.temperature,
-        system,
-        messages,
-      }),
-    },
-    { providerId: "anthropic" }
-  )
+  const res = await gatewayFetch(url, {
+    method: "POST",
+    signal: mergeAbortSignals(input.signal),
+    headers: { ...anthropicAuthHeaders(key), accept: "text/event-stream" },
+    body: JSON.stringify({
+      model: input.provider.model,
+      max_tokens: 1024,
+      stream: true,
+      temperature: input.temperature,
+      system,
+      messages,
+    }),
+  })
 
-  await assertOkOrThrow(res, "AnthropicError", "anthropic")
+  await assertOkOrThrow(res, "AnthropicError")
 
   for await (const evt of readSseEvents(res)) {
     // Anthropic uses named SSE events; JSON also includes `type`.
@@ -823,23 +808,19 @@ async function* generateGeminiStream(input: GenerateStreamInput): TextStream {
 
   const { systemInstruction, contents } = splitGeminiRoles(input.messages)
 
-  const res = await gatewayFetch(
-    url,
-    {
-      method: "POST",
-      signal: mergeAbortSignals(input.signal),
-      headers,
-      body: JSON.stringify({
-        contents,
-        systemInstruction,
-        generationConfig:
-          typeof input.temperature === "number" ? { temperature: input.temperature } : undefined,
-      }),
-    },
-    { providerId: "google" }
-  )
+  const res = await gatewayFetch(url, {
+    method: "POST",
+    signal: mergeAbortSignals(input.signal),
+    headers,
+    body: JSON.stringify({
+      contents,
+      systemInstruction,
+      generationConfig:
+        typeof input.temperature === "number" ? { temperature: input.temperature } : undefined,
+    }),
+  })
 
-  await assertOkOrThrow(res, "GeminiError", "google")
+  await assertOkOrThrow(res, "GeminiError")
 
   let lastText = ""
   for await (const data of readSseDataLines(res)) {

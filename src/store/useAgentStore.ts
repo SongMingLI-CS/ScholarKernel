@@ -137,15 +137,6 @@ function scheduleSettingsSync(patch: { theme?: ThemeMode; runtimeKeys?: Partial<
   }, 400)
 }
 
-function safeParseJson<T>(raw: string | null): T | null {
-  if (!raw) return null
-  try {
-    return JSON.parse(raw) as T
-  } catch {
-    return null
-  }
-}
-
 function trimKey(value: string | undefined | null) {
   return typeof value === "string" ? value.trim() : ""
 }
