@@ -22,6 +22,7 @@ import { AgentExecutor, buildChatHistoryForExecutor, interceptWorkflowPlanInAssi
 import type { ActiveProviderId } from "@/lib/agent-executor"
 import { dictionary, useT } from "@/lib/locales"
 import { isLikelyCorsBlocked } from "@/lib/network-errors"
+import { formatUserFacingErrorMessage } from "@/lib/user-facing-errors"
 import { isAbortError } from "@/lib/run-abort"
 import { cn } from "@/lib/utils"
 import { buildTopologyForActiveProvider } from "@/store/useAgentStore"
@@ -34,8 +35,8 @@ function randomId() {
 }
 
 function crashBubbleMessage(e: unknown): string {
-  const msg = e instanceof Error ? e.message : String(e ?? "UnknownError")
-  return `🚨 系统崩溃拦截: ${msg}`
+  const lang = useAgentStore.getState().settings.lang
+  return formatUserFacingErrorMessage(e, lang)
 }
 
 function displayMessageContent(raw: unknown): string {
@@ -597,10 +598,11 @@ const ChatPanelInner = memo(function ChatPanelInner() {
       }
       ok = false
       console.error("[ChatPanel] AgentExecutor.run failed:", e)
+      const lang = useAgentStore.getState().settings.lang
       const msg = e instanceof Error ? e.message : "StreamFailed"
-      errMsg = msg
+      errMsg = formatUserFacingErrorMessage(e, lang)
       if (e instanceof WorkflowPlanParseError) {
-        errMsg = e.causeDetail ?? e.message
+        errMsg = formatUserFacingErrorMessage(e, lang)
         setRetryState({ text: rawInput, error: e.causeDetail ?? e.rawContent ?? "", kind: "replan" })
         patchAssistantOnCrash(assistantId, e)
         useAgentStore.getState().actions.setWorkflowNodes([])
@@ -608,7 +610,7 @@ const ChatPanelInner = memo(function ChatPanelInner() {
         queueMicrotask(lockToBottomOnce)
       } else {
         const msg = e instanceof Error ? e.message : "StreamFailed"
-        errMsg = msg
+        errMsg = formatUserFacingErrorMessage(e, lang)
         if (msg.includes("MissingSearchApiKey") && runtimeKeys != null) {
           useAgentStore.getState().actions.pushToast({
             messageKey: "search.toast.unauthorizedWhenLockOn",
@@ -650,7 +652,7 @@ const ChatPanelInner = memo(function ChatPanelInner() {
               ok = false
               console.error("[ChatPanel] Ollama fallback failed:", e2)
               const msg2 = e2 instanceof Error ? e2.message : "StreamFailed"
-              errMsg = msg2
+              errMsg = formatUserFacingErrorMessage(e2, lang)
               patchAssistantOnCrash(assistantId, e2)
             }
           }
