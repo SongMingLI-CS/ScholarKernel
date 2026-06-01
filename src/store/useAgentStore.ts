@@ -5,6 +5,7 @@ import type { ConversationSummary } from "@/lib/db-types"
 import { prismaMessageToChat } from "@/lib/db-types"
 import {
   appendMessage,
+  clearConversationMessages,
   createConversation as apiCreateConversation,
   deleteConversation as apiDeleteConversation,
   fetchConversation,
@@ -377,6 +378,7 @@ type AgentStore = {
     renameConversation: (id: string, title: string) => Promise<void>
     togglePinConversation: (id: string, isPinned: boolean) => Promise<void>
     deleteConversation: (id: string) => Promise<void>
+    clearCurrentConversation: () => Promise<void>
     persistChatMessage: (m: ChatMessage) => void
     setWorkflowNodes: (nodes: WorkflowNode[]) => void
     /** 新一轮对话开始时清除「规划已下发」标记，避免沿用上一次的 isPlannerOutput */
@@ -936,15 +938,49 @@ export const useAgentStore = create<AgentStore>()(
             set((s) => ({ ...s, conversations: { ...s.conversations, loading: false } }))
           }
         },
-        renameConversation: async (id, title) => {
-          const updated = await apiPatchConversation(id, { title })
+        clearCurrentConversation: async () => {
+          const convId = get().conversations.currentId
+          if (!convId) return
+          try {
+            await clearConversationMessages(convId)
+          } catch (e) {
+            console.error("[clearCurrentConversation]", e)
+            get().actions.pushToast({
+              messageKey: "chat.clear.failed",
+              detail: e instanceof Error ? e.message : undefined,
+              variant: "error",
+              ttlMs: 4200,
+            })
+            throw e
+          }
           set((s) => ({
             ...s,
-            conversations: {
-              ...s.conversations,
-              items: s.conversations.items.map((c) => (c.id === id ? { ...c, ...updated } : c)),
-            },
+            chat: { messages: [] },
+            workflow: { version: Date.now(), activeNodeId: null, isPlannerOutput: false, nodes: [] },
+            topology: buildTopologyForActiveProvider(s.providers.active),
           }))
+          get().actions.pushToast({ messageKey: "chat.clear.done", variant: "success", ttlMs: 2400 })
+        },
+        renameConversation: async (id, title) => {
+          try {
+            const updated = await apiPatchConversation(id, { title })
+            set((s) => ({
+              ...s,
+              conversations: {
+                ...s.conversations,
+                items: s.conversations.items.map((c) => (c.id === id ? { ...c, ...updated } : c)),
+              },
+            }))
+          } catch (e) {
+            console.error("[renameConversation]", e)
+            get().actions.pushToast({
+              messageKey: "sidebar.toast.renameFailed",
+              detail: e instanceof Error ? e.message : undefined,
+              variant: "error",
+              ttlMs: 4200,
+            })
+            throw e
+          }
         },
         togglePinConversation: async (id, isPinned) => {
           const updated = await apiPatchConversation(id, { isPinned })
@@ -958,7 +994,18 @@ export const useAgentStore = create<AgentStore>()(
           })
         },
         deleteConversation: async (id) => {
-          await apiDeleteConversation(id)
+          try {
+            await apiDeleteConversation(id)
+          } catch (e) {
+            console.error("[deleteConversation]", e)
+            get().actions.pushToast({
+              messageKey: "sidebar.toast.deleteFailed",
+              detail: e instanceof Error ? e.message : undefined,
+              variant: "error",
+              ttlMs: 4200,
+            })
+            throw e
+          }
           const st = get()
           const remaining = st.conversations.items.filter((c) => c.id !== id)
           const wasCurrent = st.conversations.currentId === id

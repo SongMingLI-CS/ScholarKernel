@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest"
 
 import {
+  deriveConversationTitle,
   filterConversationsByQuery,
+  findLastRegenerablePair,
   formatConversationAsMarkdown,
+  isDefaultConversationTitle,
   sanitizeExportFilename,
 } from "@/lib/conversation-utils"
 import type { ConversationSummary } from "@/lib/db-types"
@@ -93,5 +96,46 @@ describe("sanitizeExportFilename", () => {
 
   it("falls back to default when title is blank", () => {
     expect(sanitizeExportFilename("   ")).toBe("scholarkernel-conversation.md")
+  })
+})
+
+describe("deriveConversationTitle", () => {
+  it("uses first line trimmed", () => {
+    expect(deriveConversationTitle("  量子计算综述  ")).toBe("量子计算综述")
+  })
+
+  it("truncates long titles with ellipsis", () => {
+    const long = "这是一段非常非常非常非常非常非常非常非常长的用户输入标题"
+    const title = deriveConversationTitle(long, 12)
+    expect(title.endsWith("…")).toBe(true)
+    expect(title.length).toBeLessThanOrEqual(12)
+  })
+
+  it("falls back for blank input", () => {
+    expect(deriveConversationTitle("   ")).toBe("新对话")
+  })
+})
+
+describe("isDefaultConversationTitle", () => {
+  it("detects default zh/en titles", () => {
+    expect(isDefaultConversationTitle("新对话")).toBe(true)
+    expect(isDefaultConversationTitle("New Chat")).toBe(true)
+    expect(isDefaultConversationTitle("量子计算")).toBe(false)
+  })
+})
+
+describe("findLastRegenerablePair", () => {
+  it("returns last user-assistant pair", () => {
+    const pair = findLastRegenerablePair([
+      { id: "u1", role: "user", content: "A" },
+      { id: "a1", role: "assistant", content: "B" },
+      { id: "u2", role: "user", content: "C" },
+      { id: "a2", role: "assistant", content: "D" },
+    ])
+    expect(pair).toEqual({ userText: "C", assistantId: "a2", trimBeforeIndex: 3 })
+  })
+
+  it("returns null when no assistant", () => {
+    expect(findLastRegenerablePair([{ id: "u1", role: "user", content: "A" }])).toBeNull()
   })
 })

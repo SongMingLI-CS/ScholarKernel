@@ -56,6 +56,10 @@ export async function appendMessage(conversationId: string, message: CreateMessa
   })
 }
 
+export async function clearConversationMessages(conversationId: string): Promise<void> {
+  await apiFetch<void>(`/api/conversations/${conversationId}/messages`, { method: "DELETE" })
+}
+
 export async function upsertMessageContent(
   conversationId: string,
   message: ChatMessage

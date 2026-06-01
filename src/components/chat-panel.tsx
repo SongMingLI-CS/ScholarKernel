@@ -2,7 +2,7 @@
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState, Component, type ErrorInfo, type ReactNode } from "react"
 import { AnimatePresence, motion } from "framer-motion"
-import { ArrowUp, Bolt, Check, Copy, Download, Radio, Square } from "lucide-react"
+import { ArrowDown, ArrowUp, Bolt, Check, Copy, Download, Eraser, Radio, RotateCcw, Square } from "lucide-react"
 
 import { AcademicMarkdown, safeMarkdownContent } from "@/components/academic-markdown"
 import { TopologyView } from "@/components/topology-view"
@@ -10,14 +10,19 @@ import { Button } from "@/components/ui/button"
 import { type ProviderConfig } from "@/lib/ai-gateway"
 import {
   copyTextToClipboard,
+  deriveConversationTitle,
   downloadTextFile,
+  findLastRegenerablePair,
   formatConversationAsMarkdown,
+  isDefaultConversationTitle,
   sanitizeExportFilename,
 } from "@/lib/conversation-utils"
+import { QUICK_PROMPTS } from "@/lib/quick-prompts"
 import { AgentExecutor, buildChatHistoryForExecutor, interceptWorkflowPlanInAssistantBubble, WorkflowPlanParseError } from "@/lib/agent-executor"
 import type { ActiveProviderId } from "@/lib/agent-executor"
 import { dictionary, useT } from "@/lib/locales"
 import { isLikelyCorsBlocked } from "@/lib/network-errors"
+import { isAbortError } from "@/lib/run-abort"
 import { cn } from "@/lib/utils"
 import { buildTopologyForActiveProvider } from "@/store/useAgentStore"
 import { useAgentStore, type Lang } from "@/store/useAgentStore"
@@ -231,10 +236,14 @@ const ChatPanelInner = memo(function ChatPanelInner() {
   const wfVersion = useAgentStore((s) => s.workflow.version)
   const activeNodeId = useAgentStore((s) => s.workflow.activeNodeId)
   const showThinkingDefault = useAgentStore((s) => s.settings.ui.showThinking)
+  const lang = useAgentStore((s) => s.settings.lang)
   const chatMessages = useAgentStore((s) => s.chat.messages)
   const currentConversationId = useAgentStore((s) => s.conversations.currentId)
   const conversationLoading = useAgentStore((s) => s.conversations.loading)
   const pushToast = useAgentStore((s) => s.actions.pushToast)
+  const renameConversation = useAgentStore((s) => s.actions.renameConversation)
+  const clearCurrentConversation = useAgentStore((s) => s.actions.clearCurrentConversation)
+  const setChatMessages = useAgentStore((s) => s.actions.setChatMessages)
   const [input, setInput] = useState("")
   const [streaming, setStreaming] = useState(false)
   const [topologyOpen, setTopologyOpen] = useState(false)
@@ -242,6 +251,7 @@ const ChatPanelInner = memo(function ChatPanelInner() {
   const [traceOpen, setTraceOpen] = useState<boolean>(showThinkingDefault)
   /** 规划阶段 HTTP 错误：在「实时思考过程」终端用红色展示 */
   const [planHttpTerminalError, setPlanHttpTerminalError] = useState<string | null>(null)
+  const [showScrollDown, setShowScrollDown] = useState(false)
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const bottomAnchorRef = useRef<HTMLDivElement | null>(null)
   const followBottomRef = useRef(true)
@@ -254,6 +264,8 @@ const ChatPanelInner = memo(function ChatPanelInner() {
   /** 仅传给 AgentExecutor.plan()，不写入 chat.messages */
   const planRetryMessageRef = useRef<string | undefined>(undefined)
   const activeRunIdRef = useRef<string | null>(null)
+  const userStoppedRef = useRef(false)
+  const sendModeRef = useRef<"normal" | "regenerate">("normal")
 
   const notifyCopied = useCallback(() => {
     pushToast({ messageKey: "chat.copy.done", variant: "success", ttlMs: 1800 })
@@ -261,6 +273,7 @@ const ChatPanelInner = memo(function ChatPanelInner() {
 
   const stopGeneration = useCallback(() => {
     if (!streaming) return
+    userStoppedRef.current = true
     abortRef.current?.abort()
     abortRef.current = null
 
@@ -288,6 +301,27 @@ const ChatPanelInner = memo(function ChatPanelInner() {
     setStreaming(false)
     pushToast({ messageKey: "chat.stop.done", variant: "success", ttlMs: 2400 })
   }, [pushToast, streaming, t])
+
+  const maybeAutoTitle = useCallback(
+    (userText: string) => {
+      const st = useAgentStore.getState()
+      const convId = st.conversations.currentId
+      if (!convId) return
+      const conv = st.conversations.items.find((c) => c.id === convId)
+      if (!conv || !isDefaultConversationTitle(conv.title)) return
+      const userCount = st.chat.messages.filter((m) => m.role === "user").length
+      if (userCount !== 1) return
+      void renameConversation(convId, deriveConversationTitle(userText))
+    },
+    [renameConversation]
+  )
+
+  const onClearChat = useCallback(() => {
+    if (streaming) return
+    if (chatMessages.filter((m) => m.role !== "system").length === 0) return
+    if (typeof window !== "undefined" && !window.confirm(t("chat.clear.confirm"))) return
+    void clearCurrentConversation()
+  }, [chatMessages, clearCurrentConversation, streaming, t])
 
   const onExportConversation = useCallback(() => {
     const st = useAgentStore.getState()
@@ -324,8 +358,11 @@ const ChatPanelInner = memo(function ChatPanelInner() {
     })
   }, [scrollToBottom])
 
-  const onSend = useCallback(async () => {
-    const rawInput = input.trim()
+  const onSend = useCallback(async (textOverride?: string) => {
+    const isRegenerate = sendModeRef.current === "regenerate"
+    sendModeRef.current = "normal"
+
+    const rawInput = (textOverride ?? input).trim()
     if (!rawInput) return
     if (streaming) return
     setRetryState(null)
@@ -361,14 +398,22 @@ const ChatPanelInner = memo(function ChatPanelInner() {
     const userMsg = { id: randomId(), role: "user" as const, content: sendText }
     const assistantId = randomId()
     lastAssistantIdRef.current = assistantId
-    useAgentStore.getState().actions.pushChatMessage(userMsg)
+
+    if (!isRegenerate) {
+      useAgentStore.getState().actions.pushChatMessage(userMsg)
+      maybeAutoTitle(sendText)
+    }
     useAgentStore.getState().actions.pushChatMessage({ id: assistantId, role: "assistant", content: "" })
-    setInput("")
+
+    if (!isRegenerate) {
+      setInput("")
+    }
     followBottomRef.current = true
     queueMicrotask(lockToBottomOnce)
 
     const ctrl = new AbortController()
     abortRef.current = ctrl
+    userStoppedRef.current = false
     setStreaming(true)
 
     setTopologyOpen(true)
@@ -435,6 +480,7 @@ const ChatPanelInner = memo(function ChatPanelInner() {
             serperApiKey: runtimeKeys?.serper,
           },
           sourceApiBase: typeof window !== "undefined" ? window.location.origin : undefined,
+          signal: ctrl.signal,
           getChatHistory: () =>
             buildChatHistoryForExecutor(useAgentStore.getState().chat.messages),
         },
@@ -537,12 +583,18 @@ const ChatPanelInner = memo(function ChatPanelInner() {
 
     try {
       const { final, sources } = await runOnce(gatewayProvider, sendText, planRetryMessage ? { planRetryMessage } : undefined)
+      if (userStoppedRef.current || ctrl.signal.aborted) {
+        return
+      }
       useAgentStore.getState().actions.patchTopologyNodes({ edge: "done", route: "done", cloud: "done", sink: "done" })
       const lang = useAgentStore.getState().settings.lang
       const finalForBubble = bubbleAfterPlanIntercept(final, lang)
       useAgentStore.getState().actions.patchChatMessage(assistantId, { content: finalForBubble, sources })
       queueMicrotask(lockToBottomOnce)
     } catch (e) {
+      if (isAbortError(e) || userStoppedRef.current || ctrl.signal.aborted) {
+        return
+      }
       ok = false
       console.error("[ChatPanel] AgentExecutor.run failed:", e)
       const msg = e instanceof Error ? e.message : "StreamFailed"
@@ -580,6 +632,9 @@ const ChatPanelInner = memo(function ChatPanelInner() {
             useAgentStore.getState().actions.patchTopologyNodes({ edge: "running", route: "running", cloud: "idle", sink: "idle" })
             try {
               const { final, sources } = await runOnce(next, sendText, planRetryMessage ? { planRetryMessage } : undefined)
+              if (userStoppedRef.current || ctrl.signal.aborted) {
+                return
+              }
               useAgentStore.getState().actions.patchTopologyNodes({ edge: "done", route: "done", cloud: "done", sink: "done" })
               const lang2 = useAgentStore.getState().settings.lang
               useAgentStore.getState().actions.patchChatMessage(assistantId, {
@@ -589,6 +644,9 @@ const ChatPanelInner = memo(function ChatPanelInner() {
               queueMicrotask(lockToBottomOnce)
               return
             } catch (e2) {
+              if (isAbortError(e2) || userStoppedRef.current || ctrl.signal.aborted) {
+                return
+              }
               ok = false
               console.error("[ChatPanel] Ollama fallback failed:", e2)
               const msg2 = e2 instanceof Error ? e2.message : "StreamFailed"
@@ -624,7 +682,27 @@ const ChatPanelInner = memo(function ChatPanelInner() {
       abortRef.current = null
       activeRunIdRef.current = null
     }
-  }, [connectivity, input, lockToBottomOnce, provider, runtimeKeys, setTopologyOpen, streaming, t])
+  }, [connectivity, input, lockToBottomOnce, maybeAutoTitle, provider, runtimeKeys, setTopologyOpen, streaming, t])
+
+  const onRegenerate = useCallback(() => {
+    if (streaming) return
+    const msgs = useAgentStore.getState().chat.messages
+    const pair = findLastRegenerablePair(msgs)
+    if (!pair) {
+      pushToast({ messageKey: "chat.regenerate.none", variant: "error", ttlMs: 3200 })
+      return
+    }
+    setChatMessages(msgs.slice(0, pair.trimBeforeIndex))
+    sendModeRef.current = "regenerate"
+    void onSend(pair.userText)
+  }, [onSend, pushToast, setChatMessages, streaming])
+
+  const lastAssistantId = useMemo(() => {
+    for (let i = chatMessages.length - 1; i >= 0; i--) {
+      if (chatMessages[i]?.role === "assistant") return chatMessages[i]!.id
+    }
+    return null
+  }, [chatMessages])
 
   useEffect(() => {
     if (wfNodes.length > 0) setTopologyOpen(true)
@@ -698,6 +776,7 @@ const ChatPanelInner = memo(function ChatPanelInner() {
     setTopologyOpen(false)
     setRetryState(null)
     setPlanHttpTerminalError(null)
+    userStoppedRef.current = true
     abortRef.current?.abort()
     abortRef.current = null
     activeRunIdRef.current = null
@@ -783,6 +862,26 @@ const ChatPanelInner = memo(function ChatPanelInner() {
               variant="outline"
               size="sm"
               className="gap-2 rounded-sm border-border/60 bg-background/40 font-mono text-[11px]"
+              onClick={onClearChat}
+              disabled={streaming || chatMessages.filter((m) => m.role !== "system").length === 0}
+            >
+              <Eraser className="h-3.5 w-3.5" />
+              {t("chat.clear")}
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-2 rounded-sm border-border/60 bg-background/40 font-mono text-[11px]"
+              onClick={onRegenerate}
+              disabled={streaming || !lastAssistantId}
+            >
+              <RotateCcw className="h-3.5 w-3.5" />
+              {t("chat.regenerate")}
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-2 rounded-sm border-border/60 bg-background/40 font-mono text-[11px]"
               onClick={onExportConversation}
               disabled={chatMessages.filter((m) => m.role !== "system").length === 0}
             >
@@ -855,7 +954,7 @@ const ChatPanelInner = memo(function ChatPanelInner() {
       ) : null}
 
       <div className="mx-auto flex h-full min-h-0 w-full max-w-[1200px] gap-4 px-4">
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+        <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
           <div
             ref={scrollRef}
             className="flex-1 min-h-0 overflow-y-auto terminal-scrollbar px-4 py-6"
@@ -866,6 +965,7 @@ const ChatPanelInner = memo(function ChatPanelInner() {
               const thresholdPx = 48
               const distanceToBottom = el.scrollHeight - el.scrollTop - el.clientHeight
               followBottomRef.current = distanceToBottom <= thresholdPx
+              setShowScrollDown(distanceToBottom > 120)
             }}
           >
             <div className="space-y-3 pb-10">
@@ -1030,12 +1130,23 @@ const ChatPanelInner = memo(function ChatPanelInner() {
                         )}
                         {m.role === "assistant" ? (
                           <>
-                            <div className="absolute right-2 top-2 z-10">
+                            <div className="absolute right-2 top-2 z-10 flex gap-1">
                               <MessageCopyButton
                                 content={displayMessageContent(m.content)}
                                 label={t("chat.copy")}
                                 onCopied={notifyCopied}
                               />
+                              {m.id === lastAssistantId && !streaming ? (
+                                <button
+                                  type="button"
+                                  aria-label={t("chat.regenerate")}
+                                  title={t("chat.regenerate")}
+                                  onClick={() => onRegenerate()}
+                                  className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-border/50 bg-background/50 text-muted-foreground opacity-0 transition-opacity hover:bg-background/80 hover:text-foreground group-hover:opacity-100"
+                                >
+                                  <RotateCcw className="h-3.5 w-3.5" />
+                                </button>
+                              ) : null}
                             </div>
                             <SourcesFoldout
                               sources={m.sources}
@@ -1054,8 +1165,52 @@ const ChatPanelInner = memo(function ChatPanelInner() {
             </div>
           </div>
 
+          <AnimatePresence>
+            {showScrollDown ? (
+              <motion.div
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: 8 }}
+                className="pointer-events-none absolute bottom-28 right-6 z-10"
+              >
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="pointer-events-auto gap-2 rounded-full border-border/60 bg-background/90 font-mono text-[11px] shadow-lg backdrop-blur"
+                  onClick={() => {
+                    followBottomRef.current = true
+                    scrollToBottom()
+                    setShowScrollDown(false)
+                  }}
+                  aria-label={t("chat.scrollToBottom")}
+                >
+                  <ArrowDown className="h-3.5 w-3.5" />
+                  {t("chat.scrollToBottom")}
+                </Button>
+              </motion.div>
+            ) : null}
+          </AnimatePresence>
+
           <div className="shrink-0 border-t border-border/60 bg-background/80 backdrop-blur-md dark:bg-[#0a0a0a]/80">
-            <div className="mx-auto flex w-full max-w-[1200px] items-end gap-2 px-0 py-3">
+            <div className="mx-auto flex w-full max-w-[1200px] flex-col gap-2 px-0 py-3">
+              <div className="flex flex-wrap items-center gap-1.5 px-0.5">
+                <span className="shrink-0 font-mono text-[10px] text-muted-foreground">{t("chat.quickPrompts")}</span>
+                {QUICK_PROMPTS.map((p) => (
+                  <button
+                    key={p.id}
+                    type="button"
+                    disabled={streaming}
+                    className="rounded-full border border-border/60 bg-background/40 px-2.5 py-1 font-mono text-[10px] text-foreground/85 transition-colors hover:border-sidebar-primary/40 hover:bg-sidebar-primary/10 disabled:opacity-50"
+                    onClick={() => {
+                      setInput(p.prompt[lang])
+                    }}
+                  >
+                    {p.label[lang]}
+                  </button>
+                ))}
+              </div>
+              <div className="flex items-end gap-2">
               <div className="flex-1">
                 <div className="rounded-sm border border-border/60 bg-background/40 px-3 py-2">
                   <textarea
@@ -1112,7 +1267,7 @@ const ChatPanelInner = memo(function ChatPanelInner() {
                 </div>
               ) : null}
               <Button
-                onClick={streaming ? stopGeneration : onSend}
+                onClick={() => (streaming ? stopGeneration() : void onSend())}
                 className={cn("h-11 gap-2 rounded-sm font-mono", streaming && "border-rose-500/40 bg-rose-500/15 hover:bg-rose-500/25")}
                 variant={streaming ? "outline" : "default"}
                 disabled={!streaming && !input.trim()}
@@ -1131,6 +1286,7 @@ const ChatPanelInner = memo(function ChatPanelInner() {
                 )}
               </Button>
             </div>
+          </div>
           </div>
         </div>
 

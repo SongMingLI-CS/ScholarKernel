@@ -58,3 +58,29 @@ export async function POST(req: Request, ctx: RouteCtx) {
     return jsonError("Failed to append message", 500)
   }
 }
+
+export async function DELETE(_req: Request, ctx: RouteCtx) {
+  const { id: conversationId } = await ctx.params
+
+  try {
+    const userId = resolveUserId()
+    const conversation = await prisma.conversation.findFirst({
+      where: { id: conversationId, ...conversationOwnerWhere(userId) },
+      select: { id: true },
+    })
+    if (!conversation) return jsonError("Conversation not found", 404)
+
+    await prisma.$transaction([
+      prisma.message.deleteMany({ where: { conversationId } }),
+      prisma.conversation.update({
+        where: { id: conversationId },
+        data: { updatedAt: new Date() },
+      }),
+    ])
+
+    return new Response(null, { status: 204 })
+  } catch (e) {
+    console.error("[DELETE /api/conversations/[id]/messages]", e)
+    return jsonError("Failed to clear messages", 500)
+  }
+}

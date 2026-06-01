@@ -76,3 +76,43 @@ export async function copyTextToClipboard(text: string): Promise<boolean> {
   ta.remove()
   return ok
 }
+
+const DEFAULT_TITLES = new Set(["新对话", "new chat", "new conversation"])
+
+export function deriveConversationTitle(firstUserMessage: string, maxLen = 32): string {
+  const s = firstUserMessage.trim().replace(/\s+/g, " ")
+  if (!s) return "新对话"
+  const oneLine = (s.split("\n")[0] ?? s).trim()
+  if (oneLine.length <= maxLen) return oneLine
+  return `${oneLine.slice(0, maxLen - 1)}…`
+}
+
+export function isDefaultConversationTitle(title: string): boolean {
+  return DEFAULT_TITLES.has(title.trim().toLowerCase())
+}
+
+export function findLastRegenerablePair(
+  messages: ChatMessage[]
+): { userText: string; assistantId: string; trimBeforeIndex: number } | null {
+  let assistantIdx = -1
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i]?.role === "assistant") {
+      assistantIdx = i
+      break
+    }
+  }
+  if (assistantIdx < 0) return null
+
+  let userText = ""
+  for (let i = assistantIdx - 1; i >= 0; i--) {
+    const m = messages[i]
+    if (m?.role === "user" && m.content.trim()) {
+      userText = m.content.trim()
+      break
+    }
+  }
+  if (!userText) return null
+
+  const assistantId = messages[assistantIdx]!.id
+  return { userText, assistantId, trimBeforeIndex: assistantIdx }
+}
