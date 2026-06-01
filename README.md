@@ -33,6 +33,9 @@ Agent 挂机闭环见 [AGENTS.md](./AGENTS.md) 与 [.cursor/rules/](.cursor/rule
 | `DATABASE_ENCRYPTION_KEY` | 否 | 与 `ENCRYPTION_SECRET` 二选一（优先读 `ENCRYPTION_SECRET`） |
 | `PROXY_ACCESS_TOKEN` | 公开部署必填 | `/api/proxy/*` 鉴权；客户端经 `Authorization: Bearer` 或 sessionStorage `sk:proxy-access-token` 携带 |
 | `PROXY_RATE_LIMIT_PER_MIN` | 否 | 每 IP 每分钟 proxy 请求上限，默认 60 |
+| `AUTH_PASSWORD` | 公开部署建议 | 设置后需登录；API 与 Proxy 接受 session cookie |
+| `AUTH_SESSION_SECRET` | Auth 启用时必填 | 会话签名密钥；未设时回退 `ENCRYPTION_SECRET` |
+| `AUTH_USER_ID` | 否 | 登录用户的 DB userId，默认 `primary_user` |
 
 生成生产密钥示例：`openssl rand -base64 32`
 

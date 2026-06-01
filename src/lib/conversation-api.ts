@@ -10,6 +10,7 @@ import type { ChatMessage, RuntimeKeys, ThemeMode } from "@/store/useAgentStore"
 async function apiFetch<T>(input: RequestInfo, init?: RequestInit): Promise<T> {
   const res = await fetch(input, {
     ...init,
+    credentials: "include",
     headers: {
       "Content-Type": "application/json",
       ...(init?.headers ?? {}),

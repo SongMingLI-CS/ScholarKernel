@@ -1,24 +1,27 @@
 import { NextResponse } from "next/server"
 
 import { jsonError, jsonOk, parseJsonBody } from "@/lib/api-utils"
-import { conversationOwnerWhere, resolveUserId } from "@/lib/auth-user"
+import { conversationOwnerWhere, resolveUserIdFromRequest } from "@/lib/auth-user"
 import type { ConversationPatchBody } from "@/lib/db-types"
 import { prisma } from "@/lib/prisma"
 
 type RouteCtx = { params: Promise<{ id: string }> }
 
-async function findOwnedConversation(id: string) {
-  const userId = resolveUserId()
-  return prisma.conversation.findFirst({
+async function findOwnedConversation(req: Request, id: string) {
+  const userId = resolveUserIdFromRequest(req)
+  if (!userId) return { userId: null as string | null, row: null }
+  const row = await prisma.conversation.findFirst({
     where: { id, ...conversationOwnerWhere(userId) },
     select: { id: true },
   })
+  return { userId, row }
 }
 
-export async function GET(_req: Request, ctx: RouteCtx) {
+export async function GET(req: Request, ctx: RouteCtx) {
   const { id } = await ctx.params
+  const userId = resolveUserIdFromRequest(req)
+  if (!userId) return jsonError("Unauthorized", 401)
   try {
-    const userId = resolveUserId()
     const conversation = await prisma.conversation.findFirst({
       where: { id, ...conversationOwnerWhere(userId) },
       include: {
@@ -41,7 +44,8 @@ export async function PATCH(req: Request, ctx: RouteCtx) {
   }
 
   try {
-    const existing = await findOwnedConversation(id)
+    const { userId, row: existing } = await findOwnedConversation(req, id)
+    if (!userId) return jsonError("Unauthorized", 401)
     if (!existing) return jsonError("Conversation not found", 404)
 
     const conversation = await prisma.conversation.update({
@@ -65,10 +69,11 @@ export async function PATCH(req: Request, ctx: RouteCtx) {
   }
 }
 
-export async function DELETE(_req: Request, ctx: RouteCtx) {
+export async function DELETE(req: Request, ctx: RouteCtx) {
   const { id } = await ctx.params
   try {
-    const existing = await findOwnedConversation(id)
+    const { userId, row: existing } = await findOwnedConversation(req, id)
+    if (!userId) return jsonError("Unauthorized", 401)
     if (!existing) return jsonError("Conversation not found", 404)
 
     await prisma.conversation.delete({ where: { id } })

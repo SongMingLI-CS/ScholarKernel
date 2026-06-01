@@ -1,5 +1,5 @@
 import { jsonError, jsonOk, parseJsonBody } from "@/lib/api-utils"
-import { conversationOwnerWhere, resolveUserId } from "@/lib/auth-user"
+import { conversationOwnerWhere, resolveUserIdFromRequest } from "@/lib/auth-user"
 import type { CreateMessageBody } from "@/lib/db-types"
 import { prisma } from "@/lib/prisma"
 
@@ -19,7 +19,8 @@ export async function POST(req: Request, ctx: RouteCtx) {
   }
 
   try {
-    const userId = resolveUserId()
+    const userId = resolveUserIdFromRequest(req)
+    if (!userId) return jsonError("Unauthorized", 401)
     const conversation = await prisma.conversation.findFirst({
       where: { id: conversationId, ...conversationOwnerWhere(userId) },
       select: { id: true },
@@ -59,11 +60,12 @@ export async function POST(req: Request, ctx: RouteCtx) {
   }
 }
 
-export async function DELETE(_req: Request, ctx: RouteCtx) {
+export async function DELETE(req: Request, ctx: RouteCtx) {
   const { id: conversationId } = await ctx.params
 
   try {
-    const userId = resolveUserId()
+    const userId = resolveUserIdFromRequest(req)
+    if (!userId) return jsonError("Unauthorized", 401)
     const conversation = await prisma.conversation.findFirst({
       where: { id: conversationId, ...conversationOwnerWhere(userId) },
       select: { id: true },

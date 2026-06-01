@@ -5,7 +5,7 @@ import {
   type RuntimeKeys,
   type ThemeMode,
 } from "@/store/useAgentStore"
-import { resolveUserId } from "@/lib/auth-user"
+import { resolveUserIdFromRequest } from "@/lib/auth-user"
 import { decryptFromStorage, encryptForStorage } from "@/lib/crypto-server"
 import { jsonError, jsonOk, parseJsonBody } from "@/lib/api-utils"
 import type { SettingsPatchBody, SettingsResponse } from "@/lib/db-types"
@@ -42,8 +42,9 @@ function encryptRuntimeKeys(keys: RuntimeKeys | null): string | null {
   return encryptForStorage(JSON.stringify(keys))
 }
 
-async function getOrCreateSettings() {
-  const userId = resolveUserId()
+async function getOrCreateSettings(req: Request) {
+  const userId = resolveUserIdFromRequest(req)
+  if (!userId) throw new Error("Unauthorized")
   return prisma.userSetting.upsert({
     where: { userId },
     create: { userId, theme: "dark" },
@@ -65,9 +66,11 @@ function toSettingsResponse(row: {
   }
 }
 
-export async function GET() {
+export async function GET(req: Request) {
   try {
-    const row = await getOrCreateSettings()
+    const userId = resolveUserIdFromRequest(req)
+    if (!userId) return jsonError("Unauthorized", 401)
+    const row = await getOrCreateSettings(req)
     return jsonOk(toSettingsResponse(row))
   } catch (e) {
     console.error("[GET /api/settings]", e)
@@ -80,7 +83,9 @@ export async function PATCH(req: Request) {
   if (!body) return jsonError("Invalid body", 400)
 
   try {
-    const current = await getOrCreateSettings()
+    const userId = resolveUserIdFromRequest(req)
+    if (!userId) return jsonError("Unauthorized", 401)
+    const current = await getOrCreateSettings(req)
     const currentKeys = decryptRuntimeKeys(current.runtimeKeys)
 
     const nextTheme: ThemeMode | undefined =

@@ -1,9 +1,10 @@
 import { jsonError, jsonOk } from "@/lib/api-utils"
-import { conversationOwnerWhere, resolveUserId } from "@/lib/auth-user"
+import { conversationOwnerWhere, resolveUserIdFromRequest } from "@/lib/auth-user"
 import { prisma } from "@/lib/prisma"
 
-export async function GET() {
-  const userId = resolveUserId()
+export async function GET(req: Request) {
+  const userId = resolveUserIdFromRequest(req)
+  if (!userId) return jsonError("Unauthorized", 401)
   try {
     const conversations = await prisma.conversation.findMany({
       where: conversationOwnerWhere(userId),
@@ -23,8 +24,9 @@ export async function GET() {
   }
 }
 
-export async function POST() {
-  const userId = resolveUserId()
+export async function POST(req: Request) {
+  const userId = resolveUserIdFromRequest(req)
+  if (!userId) return jsonError("Unauthorized", 401)
   try {
     const conversation = await prisma.conversation.create({
       data: { title: "新对话", userId },

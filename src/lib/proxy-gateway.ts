@@ -1,3 +1,5 @@
+import { hasValidAuthSession } from "@/lib/session-auth"
+
 /** Upstream base URLs for /api/proxy/[provider]/... */
 export const PROXY_PROVIDER_UPSTREAM: Record<string, string> = {
   deepseek: "https://api.deepseek.com",
@@ -63,6 +65,8 @@ export function isProxyAuthRequired(): boolean {
 }
 
 export function checkProxyAuth(req: Request): ProxyAuthResult {
+  if (hasValidAuthSession(req)) return { ok: true }
+
   const configured = readProxyAccessToken()
   if (isProductionEnv() && !configured) {
     return { ok: false, status: 503, message: "PROXY_ACCESS_TOKEN is not configured" }

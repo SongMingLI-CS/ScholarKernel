@@ -3,6 +3,7 @@
 import { memo, useEffect } from "react"
 import { AnimatePresence, motion } from "framer-motion"
 
+import { LoginGate } from "@/components/login-gate"
 import { ChatPanel } from "@/components/chat-panel"
 import { CorsHelpDialog } from "@/components/cors-help-dialog"
 import { DashboardPanel } from "@/components/dashboard-panel"
@@ -42,7 +43,8 @@ export const AppShell = memo(function AppShell() {
   }, [heartbeat])
 
   return (
-    <div className="relative h-screen w-full overflow-hidden bg-background text-foreground">
+    <LoginGate>
+      <div className="relative h-screen w-full overflow-hidden bg-background text-foreground">
       <div className="sk-grid-overlay pointer-events-none fixed inset-0 z-0" aria-hidden />
       <div className="sk-vignette pointer-events-none fixed inset-0 z-0" aria-hidden />
       <div className="relative z-[1] flex h-screen w-full overflow-hidden bg-background">
@@ -71,5 +73,6 @@ export const AppShell = memo(function AppShell() {
       <CorsHelpDialog />
       <ToastHost />
     </div>
+    </LoginGate>
   )
 })
