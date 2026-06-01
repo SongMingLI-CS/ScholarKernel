@@ -354,7 +354,7 @@ export const useAgentStore = create<AgentStore>()(
           theme: "dark",
           lang: "zh",
           inference: { temperature: 0.35, maxTokens: 1024, contextLimit: 24_000 },
-          behavior: { autoSearch: true, maxRetries: 1, planningDepth: "balanced" },
+          behavior: { autoSearch: true, maxRetries: 1, planningDepth: "balanced", localOnly: false },
           ui: { compactMode: false, showThinking: true },
         },
         ui: { activePanel: "chat", corsHelp: { open: false }, toast: { open: false } },
@@ -449,7 +449,7 @@ export const useAgentStore = create<AgentStore>()(
               theme: s.settings.theme,
               lang: s.settings.lang,
               inference: { temperature: 0.35, maxTokens: 1024, contextLimit: 24_000 },
-              behavior: { autoSearch: true, maxRetries: 1, planningDepth: "balanced" },
+              behavior: { autoSearch: true, maxRetries: 1, planningDepth: "balanced", localOnly: false },
               ui: { compactMode: false, showThinking: true },
             }
             applyCompactModeToDom(false)

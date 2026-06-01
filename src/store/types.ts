@@ -37,6 +37,8 @@ export type AgentSettings = {
     autoSearch: boolean
     maxRetries: number
     planningDepth: "conservative" | "balanced" | "creative"
+    /** 纯本地模式：强制 Ollama，禁用云端检索 */
+    localOnly: boolean
   }
   ui: { compactMode: boolean; showThinking: boolean }
 }

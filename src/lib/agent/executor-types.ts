@@ -24,6 +24,7 @@ export type AgentExecutorDeps = {
   inference?: { temperature?: number; maxTokens?: number; contextLimit?: number }
   sourceApiBase?: string
   signal?: AbortSignal
+  localOnly?: boolean
 }
 
 export type AgentExecutorHooks = {

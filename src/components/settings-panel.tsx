@@ -8,15 +8,30 @@ import { SetupGuide } from "@/components/setup-guide"
 import { useT } from "@/lib/locales"
 import { cn } from "@/lib/utils"
 import { decryptString, encryptString, type StoredCipherV1 } from "@/lib/crypto"
+import {
+  appendMessage,
+  createConversation,
+  fetchConversation,
+  fetchConversations,
+  patchConversation,
+} from "@/lib/conversation-api"
+import { buildConversationBackupPayload, parseConversationBackupPayload } from "@/lib/conversation-backup"
+import { chatMessageToCreateBody, prismaMessageToChat } from "@/lib/db-types"
 import { useAgentStore, type AgentSettings, type ProviderConfig } from "@/store/useAgentStore"
-
-type SettingsTab = "general" | "inference" | "behavior" | "dataSecurity" | "helpGuide"
 
 type ExportPayloadV1 = {
   v: 1
   kind: "sk-config"
   cipher: StoredCipherV1
 }
+
+type ConversationBackupFileV1 = {
+  v: 1
+  kind: "sk-conversations"
+  cipher: StoredCipherV1
+}
+
+type SettingsTab = "general" | "inference" | "behavior" | "dataSecurity" | "helpGuide"
 
 function clamp(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, n))
@@ -61,8 +76,11 @@ export const SettingsPanel = memo(function SettingsPanel() {
   // Export/import (encrypted)
   const [exportPass, setExportPass] = useState("")
   const [importPass, setImportPass] = useState("")
-  const [busy, setBusy] = useState<"idle" | "export" | "import">("idle")
+  const [busy, setBusy] = useState<"idle" | "export" | "import" | "conv-export" | "conv-import">("idle")
   const fileRef = useRef<HTMLInputElement | null>(null)
+  const [convBackupPass, setConvBackupPass] = useState("")
+  const convFileRef = useRef<HTMLInputElement | null>(null)
+  const fetchConversationsList = useAgentStore((s) => s.actions.fetchConversationsList)
 
   const tabs = useMemo(
     () =>
@@ -108,6 +126,95 @@ export const SettingsPanel = memo(function SettingsPanel() {
       setBusy("idle")
     }
   }, [busy, exportPass, providers, pushToast, settings])
+
+  const onExportConversations = useCallback(async () => {
+    if (busy !== "idle") return
+    const pass = convBackupPass.trim() || exportPass.trim()
+    if (!pass) {
+      pushToast({ messageKey: "settings.export.missingPass", variant: "error", ttlMs: 4200 })
+      return
+    }
+    setBusy("conv-export")
+    try {
+      const list = await fetchConversations()
+      const entries = await Promise.all(
+        list.map(async (c) => {
+          const detail = await fetchConversation(c.id)
+          return {
+            title: c.title,
+            isPinned: c.isPinned,
+            messages: detail.messages.map((m) => prismaMessageToChat(m)),
+          }
+        })
+      )
+      const payload = buildConversationBackupPayload(entries)
+      const cipher = await encryptString(pass, JSON.stringify(payload))
+      const out: ConversationBackupFileV1 = { v: 1, kind: "sk-conversations", cipher }
+      const blob = new Blob([JSON.stringify(out)], { type: "application/json;charset=utf-8" })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement("a")
+      a.href = url
+      a.download = "scholarkernel-conversations.backup.json"
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      URL.revokeObjectURL(url)
+      pushToast({ messageKey: "settings.conversations.backup.done", variant: "success" })
+    } catch (e) {
+      pushToast({
+        messageKey: "settings.conversations.backup.failed",
+        detail: e instanceof Error ? e.message : "BackupFailed",
+        variant: "error",
+        ttlMs: 5200,
+      })
+    } finally {
+      setBusy("idle")
+    }
+  }, [busy, convBackupPass, exportPass, pushToast])
+
+  const onImportConversations = useCallback(
+    async (file: File | null) => {
+      if (!file || busy !== "idle") return
+      const pass = convBackupPass.trim() || importPass.trim()
+      if (!pass) {
+        pushToast({ messageKey: "settings.import.missingPass", variant: "error", ttlMs: 4200 })
+        return
+      }
+      setBusy("conv-import")
+      try {
+        const raw = safeParseJson(await file.text())
+        if (!isObj(raw) || raw.v !== 1 || raw.kind !== "sk-conversations") {
+          throw new Error("InvalidBackupFile")
+        }
+        const cipher = raw.cipher as StoredCipherV1
+        const plaintext = await decryptString(pass, cipher)
+        const payload = parseConversationBackupPayload(safeParseJson(plaintext))
+        if (!payload) throw new Error("InvalidBackupPayload")
+        for (const entry of payload.conversations) {
+          const created = await createConversation()
+          if (entry.title !== "新对话" || entry.isPinned) {
+            await patchConversation(created.id, { title: entry.title, isPinned: entry.isPinned })
+          }
+          for (const msg of entry.messages) {
+            await appendMessage(created.id, chatMessageToCreateBody(msg))
+          }
+        }
+        await fetchConversationsList()
+        pushToast({ messageKey: "settings.conversations.backup.restored", variant: "success" })
+      } catch (e) {
+        pushToast({
+          messageKey: "settings.conversations.backup.failed",
+          detail: e instanceof Error ? e.message : "RestoreFailed",
+          variant: "error",
+          ttlMs: 5200,
+        })
+      } finally {
+        setBusy("idle")
+        if (convFileRef.current) convFileRef.current.value = ""
+      }
+    },
+    [busy, convBackupPass, fetchConversationsList, importPass, pushToast]
+  )
 
   const onPickImportFile = useCallback(() => {
     if (busy !== "idle") return
@@ -419,6 +526,18 @@ export const SettingsPanel = memo(function SettingsPanel() {
                     </label>
                     <div className="text-xs text-muted-foreground">{t("settings.behavior.autoSearch.hint")}</div>
 
+                    <label className="flex items-center justify-between gap-3">
+                      <span className="text-sm">{t("settings.behavior.localOnly")}</span>
+                      <input
+                        type="checkbox"
+                        checked={!!settings.behavior.localOnly}
+                        onChange={(e) => patchBehavior({ localOnly: e.target.checked })}
+                        onBlur={notifySaved}
+                        className="h-5 w-5 accent-sidebar-primary"
+                      />
+                    </label>
+                    <div className="text-xs text-muted-foreground">{t("settings.behavior.localOnly.hint")}</div>
+
                     <div className="h-px bg-border/50" />
 
                     <div className="grid grid-cols-[1fr_180px] items-center gap-3">
@@ -585,6 +704,45 @@ export const SettingsPanel = memo(function SettingsPanel() {
                     >
                       <Import className="h-4 w-4" />
                       {busy === "import" ? t("settings.import.working") : t("settings.import.btn")}
+                    </Button>
+                  </div>
+                </div>
+
+                <div className="rounded-xl border border-zinc-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-950 lg:col-span-2">
+                  <div className="flex items-center gap-2">
+                    <Download className="h-4 w-4 text-muted-foreground" />
+                    <div className="text-xs font-semibold tracking-wide text-muted-foreground">
+                      {t("settings.conversations.backup.title")}
+                    </div>
+                  </div>
+                  <div className="mt-2 text-xs text-muted-foreground">{t("settings.conversations.backup.hint")}</div>
+                  <input
+                    ref={convFileRef}
+                    type="file"
+                    accept="application/json"
+                    className="hidden"
+                    onChange={(e) => void onImportConversations(e.target.files?.[0] ?? null)}
+                  />
+                  <div className="mt-3 flex flex-wrap items-center gap-2">
+                    <input
+                      value={convBackupPass}
+                      onChange={(e) => setConvBackupPass(e.target.value)}
+                      type="password"
+                      placeholder={t("settings.export.passPlaceholder")}
+                      className="h-10 min-w-0 flex-1 rounded-sm border border-zinc-200 bg-zinc-50 px-3 font-mono text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-3 focus-visible:ring-ring/40 dark:border-neutral-800 dark:bg-neutral-900"
+                    />
+                    <Button onClick={() => void onExportConversations()} className="gap-2" disabled={busy !== "idle"}>
+                      <Download className="h-4 w-4" />
+                      {busy === "conv-export" ? t("settings.export.working") : t("settings.conversations.backup.export")}
+                    </Button>
+                    <Button
+                      onClick={() => convFileRef.current?.click()}
+                      variant="outline"
+                      className="gap-2 rounded-sm border-zinc-200 bg-zinc-50 font-mono text-xs hover:bg-zinc-100 dark:border-neutral-800 dark:bg-neutral-900 dark:hover:bg-neutral-800"
+                      disabled={busy !== "idle"}
+                    >
+                      <Import className="h-4 w-4" />
+                      {busy === "conv-import" ? t("settings.import.working") : t("settings.conversations.backup.import")}
                     </Button>
                   </div>
                 </div>

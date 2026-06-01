@@ -116,6 +116,9 @@ export class AgentExecutor {
   }
 
   private effectiveSearchKeys() {
+    if (this.deps.localOnly) {
+      return resolveSearchApiKeys({})
+    }
     const rk = this.effectiveRuntimeKeys()
     return resolveSearchApiKeys({
       tavilyApiKey: rk?.tavily ?? this.deps.search?.tavilyApiKey,
