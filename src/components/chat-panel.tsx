@@ -2,12 +2,18 @@
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState, Component, type ErrorInfo, type ReactNode } from "react"
 import { AnimatePresence, motion } from "framer-motion"
-import { ArrowUp, Bolt, Radio } from "lucide-react"
+import { ArrowUp, Bolt, Check, Copy, Download, Radio, Square } from "lucide-react"
 
 import { AcademicMarkdown, safeMarkdownContent } from "@/components/academic-markdown"
 import { TopologyView } from "@/components/topology-view"
 import { Button } from "@/components/ui/button"
 import { type ProviderConfig } from "@/lib/ai-gateway"
+import {
+  copyTextToClipboard,
+  downloadTextFile,
+  formatConversationAsMarkdown,
+  sanitizeExportFilename,
+} from "@/lib/conversation-utils"
 import { AgentExecutor, buildChatHistoryForExecutor, interceptWorkflowPlanInAssistantBubble, WorkflowPlanParseError } from "@/lib/agent-executor"
 import type { ActiveProviderId } from "@/lib/agent-executor"
 import { dictionary, useT } from "@/lib/locales"
@@ -137,6 +143,41 @@ const SourcesFoldout = memo(function SourcesFoldout({
   )
 })
 
+const MessageCopyButton = memo(function MessageCopyButton({
+  content,
+  label,
+  onCopied,
+}: {
+  content: string
+  label: string
+  onCopied: () => void
+}) {
+  const [copied, setCopied] = useState(false)
+
+  const onCopy = useCallback(async () => {
+    const text = content.trim()
+    if (!text) return
+    const ok = await copyTextToClipboard(text)
+    if (ok) {
+      setCopied(true)
+      onCopied()
+      window.setTimeout(() => setCopied(false), 1600)
+    }
+  }, [content, onCopied])
+
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={label}
+      onClick={() => void onCopy()}
+      className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-border/50 bg-background/50 text-muted-foreground opacity-0 transition-opacity hover:bg-background/80 hover:text-foreground group-hover:opacity-100"
+    >
+      {copied ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
+    </button>
+  )
+})
+
 export const ChatPanel = memo(function ChatPanel() {
   return (
     <ChatPanelErrorBoundary>
@@ -193,6 +234,7 @@ const ChatPanelInner = memo(function ChatPanelInner() {
   const chatMessages = useAgentStore((s) => s.chat.messages)
   const currentConversationId = useAgentStore((s) => s.conversations.currentId)
   const conversationLoading = useAgentStore((s) => s.conversations.loading)
+  const pushToast = useAgentStore((s) => s.actions.pushToast)
   const [input, setInput] = useState("")
   const [streaming, setStreaming] = useState(false)
   const [topologyOpen, setTopologyOpen] = useState(false)
@@ -211,6 +253,55 @@ const ChatPanelInner = memo(function ChatPanelInner() {
   const streamAssistantTextLenRef = useRef(0)
   /** 仅传给 AgentExecutor.plan()，不写入 chat.messages */
   const planRetryMessageRef = useRef<string | undefined>(undefined)
+  const activeRunIdRef = useRef<string | null>(null)
+
+  const notifyCopied = useCallback(() => {
+    pushToast({ messageKey: "chat.copy.done", variant: "success", ttlMs: 1800 })
+  }, [pushToast])
+
+  const stopGeneration = useCallback(() => {
+    if (!streaming) return
+    abortRef.current?.abort()
+    abortRef.current = null
+
+    if (metricsTimerRef.current != null) {
+      window.clearInterval(metricsTimerRef.current)
+      metricsTimerRef.current = null
+    }
+
+    const st = useAgentStore.getState()
+    const runId = activeRunIdRef.current ?? st.inference.streaming?.runId
+    if (runId) {
+      st.actions.finishInferenceStream({ runId, now: performance.now(), ok: true })
+      st.actions.patchTopologyNodes({ edge: "done", route: "done", cloud: "done", sink: "done" })
+    }
+
+    const aid = lastAssistantIdRef.current
+    if (aid) {
+      const cur = st.chat.messages.find((m) => m.id === aid)?.content?.trim() ?? ""
+      if (!cur) {
+        st.actions.patchChatMessage(aid, { content: t("chat.stopped" as LocaleKey) })
+      }
+    }
+
+    activeRunIdRef.current = null
+    setStreaming(false)
+    pushToast({ messageKey: "chat.stop.done", variant: "success", ttlMs: 2400 })
+  }, [pushToast, streaming, t])
+
+  const onExportConversation = useCallback(() => {
+    const st = useAgentStore.getState()
+    const exportable = st.chat.messages.filter((m) => m.role !== "system" || m.content.trim())
+    if (exportable.length === 0) {
+      pushToast({ messageKey: "chat.export.empty", variant: "error", ttlMs: 3200 })
+      return
+    }
+    const conv = st.conversations.items.find((c) => c.id === st.conversations.currentId)
+    const title = conv?.title ?? "对话"
+    const md = formatConversationAsMarkdown(title, exportable)
+    downloadTextFile(sanitizeExportFilename(title), md)
+    pushToast({ messageKey: "chat.export.done", variant: "success", ttlMs: 2400 })
+  }, [pushToast])
 
   const scrollToBottom = useCallback(() => {
     const el = scrollRef.current
@@ -283,6 +374,7 @@ const ChatPanelInner = memo(function ChatPanelInner() {
     setTopologyOpen(true)
 
     const runId = randomId()
+    activeRunIdRef.current = runId
     const startedAt = performance.now()
     streamAssistantTextLenRef.current = 0
     const st = useAgentStore.getState()
@@ -530,6 +622,7 @@ const ChatPanelInner = memo(function ChatPanelInner() {
 
       setStreaming(false)
       abortRef.current = null
+      activeRunIdRef.current = null
     }
   }, [connectivity, input, lockToBottomOnce, provider, runtimeKeys, setTopologyOpen, streaming, t])
 
@@ -607,7 +700,20 @@ const ChatPanelInner = memo(function ChatPanelInner() {
     setPlanHttpTerminalError(null)
     abortRef.current?.abort()
     abortRef.current = null
+    activeRunIdRef.current = null
   }, [currentConversationId])
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return
+      if (streaming) {
+        e.preventDefault()
+        stopGeneration()
+      }
+    }
+    window.addEventListener("keydown", onKey)
+    return () => window.removeEventListener("keydown", onKey)
+  }, [stopGeneration, streaming])
 
   if (conversationLoading && chatMessages.length === 0) {
     return (
@@ -673,6 +779,16 @@ const ChatPanelInner = memo(function ChatPanelInner() {
           </div>
 
           <div className="hidden shrink-0 items-center gap-2 md:flex">
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-2 rounded-sm border-border/60 bg-background/40 font-mono text-[11px]"
+              onClick={onExportConversation}
+              disabled={chatMessages.filter((m) => m.role !== "system").length === 0}
+            >
+              <Download className="h-3.5 w-3.5" />
+              {t("chat.export")}
+            </Button>
             <Button variant="outline" size="sm" className="gap-2 rounded-sm border-border/60 bg-background/40 font-mono text-[11px]">
               <Bolt className="h-3.5 w-3.5" />
               {t("chat.quickMode")}
@@ -763,7 +879,7 @@ const ChatPanelInner = memo(function ChatPanelInner() {
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ type: "spring", stiffness: 420, damping: 32 }}
                     className={cn(
-                      "max-w-[860px] border px-4 py-3 text-sm leading-normal shadow-none",
+                      "group relative max-w-[860px] border px-4 py-3 text-sm leading-normal shadow-none",
                       m.role === "user" &&
                         "ml-auto rounded-sm border-sidebar-primary/35 bg-sidebar-primary/[0.08] font-sans",
                       m.role === "assistant" &&
@@ -783,7 +899,12 @@ const ChatPanelInner = memo(function ChatPanelInner() {
                         fallbackPrefix="系统消息渲染失败"
                       />
                     ) : m.role === "user" ? (
-                      <div className="whitespace-pre-wrap">{displayMessageContent(m.content)}</div>
+                      <>
+                        <div className="whitespace-pre-wrap pr-8">{displayMessageContent(m.content)}</div>
+                        <div className="absolute right-2 top-2">
+                          <MessageCopyButton content={displayMessageContent(m.content)} label={t("chat.copy")} onCopied={notifyCopied} />
+                        </div>
+                      </>
 
                     ) : displayMessageContent(m.content).length === 0 && isLiveAssistant && streamMetrics?.directChat ? (
                       <span className="inline-flex items-center gap-1 font-mono text-[11px] text-muted-foreground">
@@ -908,12 +1029,21 @@ const ChatPanelInner = memo(function ChatPanelInner() {
                           />
                         )}
                         {m.role === "assistant" ? (
-                          <SourcesFoldout
-                            sources={m.sources}
-                            title={t("chat.sources")}
-                            showText={t("chat.sources.show")}
-                            hideText={t("chat.sources.hide")}
-                          />
+                          <>
+                            <div className="absolute right-2 top-2 z-10">
+                              <MessageCopyButton
+                                content={displayMessageContent(m.content)}
+                                label={t("chat.copy")}
+                                onCopied={notifyCopied}
+                              />
+                            </div>
+                            <SourcesFoldout
+                              sources={m.sources}
+                              title={t("chat.sources")}
+                              showText={t("chat.sources.show")}
+                              hideText={t("chat.sources.hide")}
+                            />
+                          </>
                         ) : null}
                       </motion.div>
                     )}
@@ -982,13 +1112,23 @@ const ChatPanelInner = memo(function ChatPanelInner() {
                 </div>
               ) : null}
               <Button
-                onClick={onSend}
-                className="h-11 gap-2 rounded-sm font-mono"
-                disabled={!input.trim() || streaming}
-                aria-label="send"
+                onClick={streaming ? stopGeneration : onSend}
+                className={cn("h-11 gap-2 rounded-sm font-mono", streaming && "border-rose-500/40 bg-rose-500/15 hover:bg-rose-500/25")}
+                variant={streaming ? "outline" : "default"}
+                disabled={!streaming && !input.trim()}
+                aria-label={streaming ? "stop" : "send"}
               >
-                {streaming ? t("chat.streaming") : t("chat.send")}
-                <ArrowUp className="h-4 w-4" />
+                {streaming ? (
+                  <>
+                    {t("chat.stop")}
+                    <Square className="h-4 w-4 fill-current" />
+                  </>
+                ) : (
+                  <>
+                    {t("chat.send")}
+                    <ArrowUp className="h-4 w-4" />
+                  </>
+                )}
               </Button>
             </div>
           </div>

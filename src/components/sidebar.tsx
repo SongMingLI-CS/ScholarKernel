@@ -14,6 +14,7 @@ import {
   PinOff,
   Plus,
   Pencil,
+  Search,
   Settings,
   Shield,
   Trash2,
@@ -27,6 +28,7 @@ import { SetupGuide } from "@/components/setup-guide"
 import { Button } from "@/components/ui/button"
 import { CloudMetrics } from "@/components/cloud-metrics"
 import { useT, type LocaleKey } from "@/lib/locales"
+import { filterConversationsByQuery } from "@/lib/conversation-utils"
 import { cn } from "@/lib/utils"
 import { useAgentStore, type PanelId } from "@/store/useAgentStore"
 import type { ConversationSummary } from "@/lib/db-types"
@@ -238,6 +240,8 @@ export const Sidebar = memo(function Sidebar() {
   const [manifestOpen, setManifestOpen] = useState(false)
   const [quickStartOpen, setQuickStartOpen] = useState(false)
   const [creating, setCreating] = useState(false)
+  const [searchQuery, setSearchQuery] = useState("")
+  const searchInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     setMounted(true)
@@ -271,8 +275,13 @@ export const Sidebar = memo(function Sidebar() {
 
   const cryptoReady = mounted && runtimeKeys != null
 
-  const pinned = useMemo(() => conversations.filter((c) => c.isPinned), [conversations])
-  const recent = useMemo(() => conversations.filter((c) => !c.isPinned), [conversations])
+  const filteredConversations = useMemo(
+    () => filterConversationsByQuery(conversations, searchQuery),
+    [conversations, searchQuery]
+  )
+  const pinned = useMemo(() => filteredConversations.filter((c) => c.isPinned), [filteredConversations])
+  const recent = useMemo(() => filteredConversations.filter((c) => !c.isPinned), [filteredConversations])
+  const searchActive = searchQuery.trim().length > 0
 
   const handleNewConversation = useCallback(async () => {
     if (creating) return
@@ -285,6 +294,23 @@ export const Sidebar = memo(function Sidebar() {
       setCreating(false)
     }
   }, [createConversation, creating, router, setActive])
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "f" && e.shiftKey) {
+        e.preventDefault()
+        searchInputRef.current?.focus()
+      }
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "n" && !e.shiftKey) {
+        const tag = (e.target as HTMLElement | null)?.tagName?.toLowerCase()
+        if (tag === "input" || tag === "textarea" || (e.target as HTMLElement | null)?.isContentEditable) return
+        e.preventDefault()
+        void handleNewConversation()
+      }
+    }
+    window.addEventListener("keydown", onKey)
+    return () => window.removeEventListener("keydown", onKey)
+  }, [handleNewConversation])
 
   const handleSelectConversation = useCallback(
     (id: string) => {
@@ -342,11 +368,26 @@ export const Sidebar = memo(function Sidebar() {
           </Button>
         </motion.div>
 
+        <div className="relative">
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+          <input
+            ref={searchInputRef}
+            type="search"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder={t("sidebar.search.placeholder")}
+            className="h-9 w-full rounded-lg border border-border/60 bg-background/40 pl-8 pr-3 font-mono text-[12px] outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-sidebar-primary/30"
+            aria-label={t("sidebar.search.placeholder")}
+          />
+        </div>
+
         <div className="max-h-[280px] overflow-y-auto sk-scrollbar pr-0.5">
           {conversationsLoading && conversations.length === 0 ? (
             <div className="px-2 py-3 font-mono text-[11px] text-muted-foreground">加载会话…</div>
           ) : conversations.length === 0 ? (
             <div className="px-2 py-3 font-mono text-[11px] text-muted-foreground">暂无对话，点击上方开始</div>
+          ) : searchActive && filteredConversations.length === 0 ? (
+            <div className="px-2 py-3 font-mono text-[11px] text-muted-foreground">{t("sidebar.search.empty")}</div>
           ) : (
             <div className="space-y-3">
               {pinned.length > 0 ? (
