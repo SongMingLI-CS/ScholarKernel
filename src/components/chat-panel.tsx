@@ -2,42 +2,28 @@
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState, Component, type ErrorInfo, type ReactNode } from "react"
 import { AnimatePresence, motion } from "framer-motion"
-import { ArrowDown, ArrowUp, Bolt, Check, Copy, Download, Eraser, Radio, RotateCcw, Square } from "lucide-react"
+import { ArrowDown, ArrowUp, Bolt, Check, Copy, Download, Eraser, Paperclip, Radio, RotateCcw, Square } from "lucide-react"
 
 import { AcademicMarkdown, safeMarkdownContent } from "@/components/academic-markdown"
 import { TopologyView } from "@/components/topology-view"
 import { Button } from "@/components/ui/button"
-import { type ProviderConfig } from "@/lib/ai-gateway"
 import {
   copyTextToClipboard,
   deriveConversationTitle,
   downloadTextFile,
-  findLastRegenerablePair,
   formatConversationAsMarkdown,
   isDefaultConversationTitle,
   sanitizeExportFilename,
 } from "@/lib/conversation-utils"
+import { collectSourcesFromMessages, exportSourcesAsBibTeX, exportSourcesAsRIS } from "@/lib/citation-export"
+import { formatFileAttachmentBlock, readBrowserFileAsText } from "@/lib/browser-file"
+import { connKey, looksLikeWorkflowPlanJson } from "@/lib/chat-bubble-utils"
+import { useChatSend } from "@/hooks/use-chat-send"
+import { useT } from "@/lib/locales"
 import { QUICK_PROMPTS } from "@/lib/quick-prompts"
-import { AgentExecutor, buildChatHistoryForExecutor, interceptWorkflowPlanInAssistantBubble, WorkflowPlanParseError } from "@/lib/agent-executor"
-import type { ActiveProviderId } from "@/lib/agent-executor"
-import { dictionary, useT } from "@/lib/locales"
-import { isLikelyCorsBlocked } from "@/lib/network-errors"
-import { formatUserFacingErrorMessage } from "@/lib/user-facing-errors"
-import { isAbortError } from "@/lib/run-abort"
 import { cn } from "@/lib/utils"
-import { buildTopologyForActiveProvider } from "@/store/useAgentStore"
-import { useAgentStore, type Lang } from "@/store/useAgentStore"
+import { useAgentStore } from "@/store/useAgentStore"
 import type { LocaleKey } from "@/lib/locales"
-
-function randomId() {
-  if (typeof crypto !== "undefined" && "randomUUID" in crypto) return crypto.randomUUID()
-  return `${Date.now()}-${Math.random().toString(16).slice(2)}`
-}
-
-function crashBubbleMessage(e: unknown): string {
-  const lang = useAgentStore.getState().settings.lang
-  return formatUserFacingErrorMessage(e, lang)
-}
 
 function displayMessageContent(raw: unknown): string {
   const text = safeMarkdownContent(raw)
@@ -50,49 +36,6 @@ function displayMessageContent(raw: unknown): string {
     return "⚠️ 检测到未格式化的规划 JSON，已拦截展示。工作流若已启动，请查看拓扑图与思考过程。"
   }
   return text
-}
-
-function patchAssistantOnCrash(assistantId: string, e: unknown) {
-  const crash = crashBubbleMessage(e)
-  const cur = useAgentStore.getState().chat.messages.find((m) => m.id === assistantId)?.content?.trim() ?? ""
-  useAgentStore.getState().actions.patchChatMessage(assistantId, {
-    content: cur ? `${cur}\n\n${crash}` : crash,
-  })
-}
-
-function normalizeBaseUrl(baseUrl?: string) {
-  if (!baseUrl) return ""
-  return baseUrl.endsWith("/") ? baseUrl.slice(0, -1) : baseUrl
-}
-
-function connKey(providerId: string, baseUrl: string | undefined, model: string) {
-  return `${providerId}::${normalizeBaseUrl(baseUrl)}::${(model ?? "").trim()}`
-}
-
-/** 识别误入对话区的「任务规划」JSON，避免以 Markdown 正文渲染导致体验与执行流异常。 */
-function bubbleAfterPlanIntercept(raw: string, lang: Lang): string {
-  if (!looksLikeWorkflowPlanJson(raw) && !/^\s*```(?:json)?\s*[\[{]/i.test(raw.trim())) {
-    return raw
-  }
-  const p = useAgentStore.getState().providers.active
-  const hit = interceptWorkflowPlanInAssistantBubble(raw, {
-    providerId: p.providerId,
-    model: p.model,
-    baseUrl: p.baseUrl,
-  })
-  if (!hit || hit.planned.length === 0) return raw
-  const cleaned = hit.cleanedText.trim()
-  if (cleaned.length > 0) return cleaned
-  return dictionary[lang]["chat.workflowRunningPlaceholder"]
-}
-
-function looksLikeWorkflowPlanJson(content: string): boolean {
-  const c = content.trim()
-  if (c.length < 24) return false
-  if (!c.startsWith("{") && !c.startsWith("[")) return false
-  if (/"\s*tasks\s*"\s*:\s*\[/.test(c)) return true
-  if (/^\s*\[\s*\{/.test(c) && /"(read_file|reasoning|audit|research)"/.test(c)) return true
-  return false
 }
 
 const SourcesFoldout = memo(function SourcesFoldout({
@@ -229,7 +172,6 @@ class ChatPanelErrorBoundary extends Component<{ children: ReactNode }, { error:
 const ChatPanelInner = memo(function ChatPanelInner() {
   const t = useT()
   const provider = useAgentStore((s) => s.providers.active)
-  const runtimeKeys = useAgentStore((s) => s.runtimeKeys)
   const connectivity = useAgentStore((s) => s.connectivity)
   const streamMetrics = useAgentStore((s) => s.inference.streaming)
   const wfNodes = useAgentStore((s) => s.workflow.nodes)
@@ -244,64 +186,19 @@ const ChatPanelInner = memo(function ChatPanelInner() {
   const pushToast = useAgentStore((s) => s.actions.pushToast)
   const renameConversation = useAgentStore((s) => s.actions.renameConversation)
   const clearCurrentConversation = useAgentStore((s) => s.actions.clearCurrentConversation)
-  const setChatMessages = useAgentStore((s) => s.actions.setChatMessages)
   const [input, setInput] = useState("")
-  const [streaming, setStreaming] = useState(false)
   const [topologyOpen, setTopologyOpen] = useState(false)
-  const [retryState, setRetryState] = useState<null | { text: string; error: string; kind?: "replan" }>(null)
   const [traceOpen, setTraceOpen] = useState<boolean>(showThinkingDefault)
-  /** 规划阶段 HTTP 错误：在「实时思考过程」终端用红色展示 */
-  const [planHttpTerminalError, setPlanHttpTerminalError] = useState<string | null>(null)
   const [showScrollDown, setShowScrollDown] = useState(false)
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const bottomAnchorRef = useRef<HTMLDivElement | null>(null)
   const followBottomRef = useRef(true)
   const scrollRafRef = useRef<number | null>(null)
-  const abortRef = useRef<AbortController | null>(null)
-  const metricsTimerRef = useRef<number | null>(null)
-  const lastAssistantIdRef = useRef<string | null>(null)
-  /** 用于流式 token 的字符增量统计（避免 tickInferenceStream 一直传 charsDelta: 0） */
-  const streamAssistantTextLenRef = useRef(0)
-  /** 仅传给 AgentExecutor.plan()，不写入 chat.messages */
-  const planRetryMessageRef = useRef<string | undefined>(undefined)
-  const activeRunIdRef = useRef<string | null>(null)
-  const userStoppedRef = useRef(false)
-  const sendModeRef = useRef<"normal" | "regenerate">("normal")
+  const fileInputRef = useRef<HTMLInputElement | null>(null)
 
   const notifyCopied = useCallback(() => {
     pushToast({ messageKey: "chat.copy.done", variant: "success", ttlMs: 1800 })
   }, [pushToast])
-
-  const stopGeneration = useCallback(() => {
-    if (!streaming) return
-    userStoppedRef.current = true
-    abortRef.current?.abort()
-    abortRef.current = null
-
-    if (metricsTimerRef.current != null) {
-      window.clearInterval(metricsTimerRef.current)
-      metricsTimerRef.current = null
-    }
-
-    const st = useAgentStore.getState()
-    const runId = activeRunIdRef.current ?? st.inference.streaming?.runId
-    if (runId) {
-      st.actions.finishInferenceStream({ runId, now: performance.now(), ok: true })
-      st.actions.patchTopologyNodes({ edge: "done", route: "done", cloud: "done", sink: "done" })
-    }
-
-    const aid = lastAssistantIdRef.current
-    if (aid) {
-      const cur = st.chat.messages.find((m) => m.id === aid)?.content?.trim() ?? ""
-      if (!cur) {
-        st.actions.patchChatMessage(aid, { content: t("chat.stopped" as LocaleKey) })
-      }
-    }
-
-    activeRunIdRef.current = null
-    setStreaming(false)
-    pushToast({ messageKey: "chat.stop.done", variant: "success", ttlMs: 2400 })
-  }, [pushToast, streaming, t])
 
   const maybeAutoTitle = useCallback(
     (userText: string) => {
@@ -316,27 +213,6 @@ const ChatPanelInner = memo(function ChatPanelInner() {
     },
     [renameConversation]
   )
-
-  const onClearChat = useCallback(() => {
-    if (streaming) return
-    if (chatMessages.filter((m) => m.role !== "system").length === 0) return
-    if (typeof window !== "undefined" && !window.confirm(t("chat.clear.confirm"))) return
-    void clearCurrentConversation()
-  }, [chatMessages, clearCurrentConversation, streaming, t])
-
-  const onExportConversation = useCallback(() => {
-    const st = useAgentStore.getState()
-    const exportable = st.chat.messages.filter((m) => m.role !== "system" || m.content.trim())
-    if (exportable.length === 0) {
-      pushToast({ messageKey: "chat.export.empty", variant: "error", ttlMs: 3200 })
-      return
-    }
-    const conv = st.conversations.items.find((c) => c.id === st.conversations.currentId)
-    const title = conv?.title ?? "对话"
-    const md = formatConversationAsMarkdown(title, exportable)
-    downloadTextFile(sanitizeExportFilename(title), md)
-    pushToast({ messageKey: "chat.export.done", variant: "success", ttlMs: 2400 })
-  }, [pushToast])
 
   const scrollToBottom = useCallback(() => {
     const el = scrollRef.current
@@ -359,343 +235,96 @@ const ChatPanelInner = memo(function ChatPanelInner() {
     })
   }, [scrollToBottom])
 
-  const onSend = useCallback(async (textOverride?: string) => {
-    const isRegenerate = sendModeRef.current === "regenerate"
-    sendModeRef.current = "normal"
+  const {
+    streaming,
+    retryState,
+    setRetryState,
+    planHttpTerminalError,
+    onSend,
+    onRegenerate,
+    stopGeneration,
+    planRetryMessageRef,
+  } = useChatSend({
+    input,
+    setInput,
+    lockToBottomOnce,
+    followBottomRef,
+    setTopologyOpen,
+    maybeAutoTitle,
+  })
 
-    const rawInput = (textOverride ?? input).trim()
-    if (!rawInput) return
+  const onClearChat = useCallback(() => {
     if (streaming) return
-    setRetryState(null)
-    setPlanHttpTerminalError(null)
+    if (chatMessages.filter((m) => m.role !== "system").length === 0) return
+    if (typeof window !== "undefined" && !window.confirm(t("chat.clear.confirm"))) return
+    void clearCurrentConversation()
+  }, [chatMessages, clearCurrentConversation, streaming, t])
 
-    const planRetryMessage = planRetryMessageRef.current
-    planRetryMessageRef.current = undefined
-
-    const sendText = rawInput
-
-    const effectiveKeys = runtimeKeys
-    const needKey = provider.providerId !== "ollama"
-    if (needKey && !useAgentStore.getState().actions.hasRuntimeKeyForProvider(provider.providerId)) {
-      useAgentStore.getState().actions.pushToast({ messageKey: "gateway.toast.missingKey", variant: "error", ttlMs: 5200 })
-      useAgentStore.getState().actions.setActivePanel("keys")
-      return
-    }
-
-    // 连通性拦截：如果最近一次拨测为 Offline，则阻止发送并提示。
-    const k = connKey(provider.providerId, provider.baseUrl, provider.model)
-    const conn = connectivity[k]
-    if (conn?.health === "offline") {
-      useAgentStore.getState().actions.pushToast({
-        messageKey: "conn.toast.offline.gotoModels",
-        detail: typeof conn.errorCode === "number" ? `(${conn.errorCode})` : conn.errorCode ? `(${conn.errorCode})` : "",
-        variant: "error",
-        ttlMs: 4200,
-      })
-      useAgentStore.getState().actions.setActivePanel("models")
-      return
-    }
-
-    const userMsg = { id: randomId(), role: "user" as const, content: sendText }
-    const assistantId = randomId()
-    lastAssistantIdRef.current = assistantId
-
-    if (!isRegenerate) {
-      useAgentStore.getState().actions.pushChatMessage(userMsg)
-      maybeAutoTitle(sendText)
-    }
-    useAgentStore.getState().actions.pushChatMessage({ id: assistantId, role: "assistant", content: "" })
-
-    if (!isRegenerate) {
-      setInput("")
-    }
-    followBottomRef.current = true
-    queueMicrotask(lockToBottomOnce)
-
-    const ctrl = new AbortController()
-    abortRef.current = ctrl
-    userStoppedRef.current = false
-    setStreaming(true)
-
-    setTopologyOpen(true)
-
-    const runId = randomId()
-    activeRunIdRef.current = runId
-    const startedAt = performance.now()
-    streamAssistantTextLenRef.current = 0
+  const onExportConversation = useCallback(() => {
     const st = useAgentStore.getState()
-    st.actions.resetWorkflowPlanOutput()
-
-    st.actions.setTopology(buildTopologyForActiveProvider(provider))
-    st.actions.patchTopologyNodes({ edge: "running", route: "running", cloud: "idle", sink: "idle" })
-
-    st.actions.startInferenceStream({
-      runId,
-      assistantMessageId: assistantId,
-      startedAt,
-      providerId: provider.providerId,
-      model: provider.model,
-      baseUrl: provider.baseUrl,
-    })
-
-    metricsTimerRef.current = window.setInterval(() => {
-      useAgentStore.getState().actions.tickInferenceStream({
-        runId,
-        now: performance.now(),
-        charsDelta: 0,
-        firstToken: false,
-      })
-    }, 50)
-
-    const gatewayProvider: ProviderConfig = {
-      providerId: provider.providerId,
-      model: provider.model,
-      baseUrl: provider.baseUrl,
-    }
-
-    let ok = true
-    let errMsg: string | undefined
-
-    const runOnce = async (p: ProviderConfig, agentUserInput: string, planOpts?: { planRetryMessage?: string }) => {
-      // Agent 工作流模式：先拆解 -> 执行 -> 汇总
-      const executor = new AgentExecutor(
-        {
-          activeProvider: { providerId: p.providerId as ActiveProviderId, model: p.model, baseUrl: p.baseUrl },
-          inference: {
-            temperature: useAgentStore.getState().settings.inference.temperature,
-            maxTokens: useAgentStore.getState().settings.inference.maxTokens,
-            contextLimit: useAgentStore.getState().settings.inference.contextLimit,
-          },
-          runtimeKeys: {
-            openai: effectiveKeys?.openai,
-            anthropic: effectiveKeys?.anthropic,
-            google: effectiveKeys?.google,
-            deepseek: effectiveKeys?.deepseek,
-            tavily: effectiveKeys?.tavily,
-            serper: effectiveKeys?.serper,
-          },
-          // 显式注入：工具执行时读取最新明文 runtimeKeys
-          getRuntimeKeys: () => useAgentStore.getState().actions.getRuntimeKeys(),
-          search: {
-            tavilyApiKey: runtimeKeys?.tavily,
-            serperApiKey: runtimeKeys?.serper,
-          },
-          sourceApiBase: typeof window !== "undefined" ? window.location.origin : undefined,
-          signal: ctrl.signal,
-          getChatHistory: () =>
-            buildChatHistoryForExecutor(useAgentStore.getState().chat.messages),
-        },
-        {
-          onWorkflowPlanned: (nodes) => {
-            const store = useAgentStore.getState()
-            store.actions.setWorkflowNodes(
-              nodes.map((n) => ({
-                id: n.id,
-                type: n.type,
-                provider: n.provider,
-                status: n.status,
-                title: n.title ?? `${n.type}`,
-                logs: [],
-                metadata: n.metadata,
-              }))
-            )
-          },
-          onNodePatch: (id, patch) => {
-            const store = useAgentStore.getState()
-            const cur = store.workflow.nodes.find((n) => n.id === id)
-            const nextStatus = patch.status ?? cur?.status ?? "pending"
-            store.actions.patchWorkflowNode(id, {
-              status: nextStatus,
-              output: patch.output,
-              metadata: patch.metadata,
-              error: patch.error,
-            })
-
-            // Token-level streaming: bind current reasoning output to last assistant message.
-            if (store.inference.streaming?.active && store.inference.streaming.assistantMessageId) {
-              const node = store.workflow.nodes.find((n) => n.id === id) ?? cur
-              if (node?.type !== "reasoning") return
-              const out = patch.output ?? node.output
-              const rec = out && typeof out === "object" ? (out as Record<string, unknown>) : null
-              const txt = typeof rec?.["text"] === "string" ? String(rec["text"]) : null
-              if (txt == null) return
-              const lang = store.settings.lang
-              const displayTxt = bubbleAfterPlanIntercept(txt, lang)
-              const prevLen = streamAssistantTextLenRef.current
-              const delta = Math.max(0, displayTxt.length - prevLen)
-              streamAssistantTextLenRef.current = displayTxt.length
-              store.actions.patchChatMessage(store.inference.streaming.assistantMessageId, { content: displayTxt })
-              store.actions.tickInferenceStream({
-                runId: store.inference.streaming.runId,
-                now: performance.now(),
-                charsDelta: delta,
-                firstToken: displayTxt.length > 0 && store.inference.streaming.firstTokenAt == null,
-              })
-            }
-          },
-          onNodeLog: (id, line) => {
-            useAgentStore.getState().actions.appendNodeLog(id, line)
-          },
-          onPlanHttpError: (message) => {
-            setPlanHttpTerminalError(message)
-          },
-          onDirectChatStart: () => {
-            const st = useAgentStore.getState()
-            st.actions.patchActiveInferenceStream({ runId, patch: { directChat: true } })
-            setTopologyOpen(false)
-          },
-          onDirectChatStream: (acc) => {
-            const st = useAgentStore.getState()
-            const cur = st.inference.streaming
-            const aid = cur?.assistantMessageId
-            if (!cur?.active || cur.runId !== runId || !aid) return
-            const lang = st.settings.lang
-            const displayTxt = bubbleAfterPlanIntercept(acc, lang)
-            const prevLen = streamAssistantTextLenRef.current
-            const delta = Math.max(0, displayTxt.length - prevLen)
-            streamAssistantTextLenRef.current = displayTxt.length
-            st.actions.patchChatMessage(aid, { content: displayTxt })
-            st.actions.tickInferenceStream({
-              runId,
-              now: performance.now(),
-              charsDelta: delta,
-              firstToken: displayTxt.length > 0 && cur.firstTokenAt == null,
-            })
-          },
-          onStreamFlush: ({ reason }) => {
-            if (reason === "pre-reasoning-stream") {
-              // research → reasoning 切换：重置打字机指针，避免 delta 假死
-              streamAssistantTextLenRef.current = 0
-            }
-          },
-          onResearchResultsSynced: ({ sources }) => {
-            const st = useAgentStore.getState()
-            const aid = st.inference.streaming?.assistantMessageId
-            if (!aid || !sources.length) return
-            st.actions.patchChatMessage(aid, { sources })
-          },
-        }
-      )
-
-      // 用 topology 视图表达 “思考与拆解”：
-      useAgentStore.getState().actions.patchTopologyNodes({ edge: "done", route: "running", cloud: "idle", sink: "idle" })
-      return await executor.run(agentUserInput, planOpts)
-    }
-
-    try {
-      const { final, sources } = await runOnce(gatewayProvider, sendText, planRetryMessage ? { planRetryMessage } : undefined)
-      if (userStoppedRef.current || ctrl.signal.aborted) {
-        return
-      }
-      useAgentStore.getState().actions.patchTopologyNodes({ edge: "done", route: "done", cloud: "done", sink: "done" })
-      const lang = useAgentStore.getState().settings.lang
-      const finalForBubble = bubbleAfterPlanIntercept(final, lang)
-      useAgentStore.getState().actions.patchChatMessage(assistantId, { content: finalForBubble, sources })
-      queueMicrotask(lockToBottomOnce)
-    } catch (e) {
-      if (isAbortError(e) || userStoppedRef.current || ctrl.signal.aborted) {
-        return
-      }
-      ok = false
-      console.error("[ChatPanel] AgentExecutor.run failed:", e)
-      const lang = useAgentStore.getState().settings.lang
-      errMsg = formatUserFacingErrorMessage(e, lang)
-      if (e instanceof WorkflowPlanParseError) {
-        errMsg = formatUserFacingErrorMessage(e, lang)
-        setRetryState({ text: rawInput, error: e.causeDetail ?? e.rawContent ?? "", kind: "replan" })
-        patchAssistantOnCrash(assistantId, e)
-        useAgentStore.getState().actions.setWorkflowNodes([])
-        useAgentStore.getState().actions.patchTopologyNodes({ edge: "done", route: "done", cloud: "done", sink: "done" })
-        queueMicrotask(lockToBottomOnce)
-      } else {
-        const msg = e instanceof Error ? e.message : "StreamFailed"
-        errMsg = formatUserFacingErrorMessage(e, lang)
-        if (msg.includes("MissingSearchApiKey") && runtimeKeys != null) {
-          useAgentStore.getState().actions.pushToast({
-            messageKey: "search.toast.unauthorizedWhenLockOn",
-            variant: "error",
-            ttlMs: 6200,
-          })
-        }
-        if (/InvalidJSON|InvalidJSON:|ZodError|TaskListSchema|Invalid\\s*JSON/i.test(msg)) {
-          setRetryState({ text: rawInput, error: msg })
-        }
-        const isCloud = provider.providerId !== "ollama"
-        // 移除强制降级：改为弹窗询问是否切换本地 Ollama 尝试一次。
-        if (isCloud && !msg.includes("MissingApiKey")) {
-          const want = typeof window !== "undefined" ? window.confirm("云端请求失败，是否切换到本地 Ollama 尝试？") : false
-          if (want) {
-            ok = true
-            errMsg = undefined
-            const next = { providerId: "ollama", model: "llama3.1", baseUrl: "http://localhost:11434" } as const
-            useAgentStore.getState().actions.setActiveProvider(next)
-            useAgentStore.getState().actions.setTopology(buildTopologyForActiveProvider(next))
-            useAgentStore.getState().actions.patchTopologyNodes({ edge: "running", route: "running", cloud: "idle", sink: "idle" })
-            try {
-              const { final, sources } = await runOnce(next, sendText, planRetryMessage ? { planRetryMessage } : undefined)
-              if (userStoppedRef.current || ctrl.signal.aborted) {
-                return
-              }
-              useAgentStore.getState().actions.patchTopologyNodes({ edge: "done", route: "done", cloud: "done", sink: "done" })
-              const lang2 = useAgentStore.getState().settings.lang
-              useAgentStore.getState().actions.patchChatMessage(assistantId, {
-                content: bubbleAfterPlanIntercept(final, lang2),
-                sources,
-              })
-              queueMicrotask(lockToBottomOnce)
-              return
-            } catch (e2) {
-              if (isAbortError(e2) || userStoppedRef.current || ctrl.signal.aborted) {
-                return
-              }
-              ok = false
-              console.error("[ChatPanel] Ollama fallback failed:", e2)
-              errMsg = formatUserFacingErrorMessage(e2, lang)
-              patchAssistantOnCrash(assistantId, e2)
-            }
-          }
-        }
-
-        if (isLikelyCorsBlocked(e)) {
-          useAgentStore.getState().actions.openCorsHelp({
-            providerId: provider.providerId,
-            baseUrl: provider.baseUrl,
-            detail: msg,
-          })
-        }
-        useAgentStore.getState().actions.patchTopologyNodes({ edge: "done", route: "done", cloud: "error", sink: "error" })
-        patchAssistantOnCrash(assistantId, e)
-      }
-    } finally {
-      if (metricsTimerRef.current != null) {
-        window.clearInterval(metricsTimerRef.current)
-        metricsTimerRef.current = null
-      }
-
-      const now = performance.now()
-      useAgentStore.getState().actions.finishInferenceStream({ runId, now, ok, error: errMsg })
-      if (ok) {
-        useAgentStore.getState().actions.patchTopologyNodes({ edge: "done", route: "done", cloud: "done", sink: "done" })
-      }
-
-      setStreaming(false)
-      abortRef.current = null
-      activeRunIdRef.current = null
-    }
-  }, [connectivity, input, lockToBottomOnce, maybeAutoTitle, provider, runtimeKeys, setTopologyOpen, streaming])
-
-  const onRegenerate = useCallback(() => {
-    if (streaming) return
-    const msgs = useAgentStore.getState().chat.messages
-    const pair = findLastRegenerablePair(msgs)
-    if (!pair) {
-      pushToast({ messageKey: "chat.regenerate.none", variant: "error", ttlMs: 3200 })
+    const exportable = st.chat.messages.filter((m) => m.role !== "system" || m.content.trim())
+    if (exportable.length === 0) {
+      pushToast({ messageKey: "chat.export.empty", variant: "error", ttlMs: 3200 })
       return
     }
-    setChatMessages(msgs.slice(0, pair.trimBeforeIndex))
-    sendModeRef.current = "regenerate"
-    void onSend(pair.userText)
-  }, [onSend, pushToast, setChatMessages, streaming])
+    const conv = st.conversations.items.find((c) => c.id === st.conversations.currentId)
+    const title = conv?.title ?? "对话"
+    const md = formatConversationAsMarkdown(title, exportable)
+    downloadTextFile(sanitizeExportFilename(title), md)
+    pushToast({ messageKey: "chat.export.done", variant: "success", ttlMs: 2400 })
+  }, [pushToast])
+
+  const onExportBibTeX = useCallback(() => {
+    const sources = collectSourcesFromMessages(useAgentStore.getState().chat.messages)
+    if (!sources.length) {
+      pushToast({ messageKey: "chat.export.citations.empty", variant: "error", ttlMs: 3200 })
+      return
+    }
+    const conv = useAgentStore.getState().conversations.items.find((c) => c.id === useAgentStore.getState().conversations.currentId)
+    const base = sanitizeExportFilename(conv?.title ?? "references").replace(/\.md$/, "")
+    downloadTextFile(`${base}.bib`, exportSourcesAsBibTeX(sources), "application/x-bibtex;charset=utf-8")
+    pushToast({ messageKey: "chat.export.citations.done", variant: "success", ttlMs: 2400 })
+  }, [pushToast])
+
+  const onExportRIS = useCallback(() => {
+    const sources = collectSourcesFromMessages(useAgentStore.getState().chat.messages)
+    if (!sources.length) {
+      pushToast({ messageKey: "chat.export.citations.empty", variant: "error", ttlMs: 3200 })
+      return
+    }
+    const conv = useAgentStore.getState().conversations.items.find((c) => c.id === useAgentStore.getState().conversations.currentId)
+    const base = sanitizeExportFilename(conv?.title ?? "references").replace(/\.md$/, "")
+    downloadTextFile(`${base}.ris`, exportSourcesAsRIS(sources), "application/x-research-info-systems;charset=utf-8")
+    pushToast({ messageKey: "chat.export.citations.done", variant: "success", ttlMs: 2400 })
+  }, [pushToast])
+
+  const onPickFile = useCallback(() => {
+    if (streaming) return
+    fileInputRef.current?.click()
+  }, [streaming])
+
+  const onFileSelected = useCallback(
+    async (file: File | null) => {
+      if (!file || streaming) return
+      try {
+        const text = await readBrowserFileAsText(file)
+        const block = formatFileAttachmentBlock(file.name, text)
+        setInput((prev) => (prev.trim() ? `${block}${prev}` : block))
+        pushToast({ messageKey: "chat.upload.done", variant: "success", ttlMs: 2400 })
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e)
+        pushToast({
+          messageKey: "chat.upload.failed",
+          detail: msg,
+          variant: "error",
+          ttlMs: 4200,
+        })
+      } finally {
+        if (fileInputRef.current) fileInputRef.current.value = ""
+      }
+    },
+    [pushToast, streaming]
+  )
 
   const lastAssistantId = useMemo(() => {
     for (let i = chatMessages.length - 1; i >= 0; i--) {
@@ -724,7 +353,6 @@ const ChatPanelInner = memo(function ChatPanelInner() {
 
   useEffect(() => {
     return () => {
-      if (metricsTimerRef.current != null) window.clearInterval(metricsTimerRef.current)
       if (scrollRafRef.current != null) window.cancelAnimationFrame(scrollRafRef.current)
     }
   }, [])
@@ -772,15 +400,9 @@ const ChatPanelInner = memo(function ChatPanelInner() {
 
   useEffect(() => {
     setInput("")
-    setStreaming(false)
     setTopologyOpen(false)
     setRetryState(null)
-    setPlanHttpTerminalError(null)
-    userStoppedRef.current = true
-    abortRef.current?.abort()
-    abortRef.current = null
-    activeRunIdRef.current = null
-  }, [currentConversationId])
+  }, [currentConversationId, setRetryState])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -888,6 +510,24 @@ const ChatPanelInner = memo(function ChatPanelInner() {
               <Download className="h-3.5 w-3.5" />
               {t("chat.export")}
             </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-2 rounded-sm border-border/60 bg-background/40 font-mono text-[11px]"
+              onClick={onExportBibTeX}
+              disabled={streaming}
+            >
+              {t("chat.export.bibtex")}
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-2 rounded-sm border-border/60 bg-background/40 font-mono text-[11px]"
+              onClick={onExportRIS}
+              disabled={streaming}
+            >
+              {t("chat.export.ris")}
+            </Button>
             <Button variant="outline" size="sm" className="gap-2 rounded-sm border-border/60 bg-background/40 font-mono text-[11px]">
               <Bolt className="h-3.5 w-3.5" />
               {t("chat.quickMode")}
@@ -970,7 +610,7 @@ const ChatPanelInner = memo(function ChatPanelInner() {
           >
             <div className="space-y-3 pb-10">
               {chatMessages.map((m) => {
-                const isLiveAssistant = streaming && m.role === "assistant" && m.id === lastAssistantIdRef.current
+                const isLiveAssistant = streaming && m.role === "assistant" && m.id === lastAssistantId
                 return (
                   <motion.div
                     key={m.id}
@@ -1211,6 +851,24 @@ const ChatPanelInner = memo(function ChatPanelInner() {
                 ))}
               </div>
               <div className="flex items-end gap-2">
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".txt,.md,.json,.csv,.ts,.tsx,.js,.jsx,.py,.bib,.tex,.yaml,.yml,.html,.css"
+                className="hidden"
+                onChange={(e) => void onFileSelected(e.target.files?.[0] ?? null)}
+              />
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-11 rounded-sm border-border/60 bg-background/40 font-mono text-[11px]"
+                onClick={onPickFile}
+                disabled={streaming}
+                title={t("chat.upload.hint")}
+              >
+                <Paperclip className="h-4 w-4" />
+              </Button>
               <div className="flex-1">
                 <div className="rounded-sm border border-border/60 bg-background/40 px-3 py-2">
                   <textarea
