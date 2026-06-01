@@ -1,0 +1,83 @@
+import { beforeEach, describe, expect, it, vi } from "vitest"
+
+import { GET, PATCH } from "../route"
+
+const { upsert, update } = vi.hoisted(() => ({
+  upsert: vi.fn(),
+  update: vi.fn(),
+}))
+
+vi.mock("@/lib/auth-user", () => ({
+  resolveUserIdFromRequest: vi.fn(() => "user-test"),
+}))
+
+vi.mock("@/lib/crypto-server", () => ({
+  encryptForStorage: (plain: string) => `enc:${plain}`,
+  decryptFromStorage: (stored: string) => stored.replace(/^enc:/, ""),
+}))
+
+vi.mock("@/lib/prisma", () => ({
+  prisma: {
+    userSetting: {
+      upsert,
+      update,
+    },
+  },
+}))
+
+import { resolveUserIdFromRequest } from "@/lib/auth-user"
+
+describe("/api/settings", () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.mocked(resolveUserIdFromRequest).mockReturnValue("user-test")
+    upsert.mockResolvedValue({
+      userId: "user-test",
+      theme: "dark",
+      runtimeKeys: null,
+      updatedAt: new Date("2026-01-01T00:00:00.000Z"),
+    })
+  })
+
+  it("GET returns 401 when unauthenticated", async () => {
+    vi.mocked(resolveUserIdFromRequest).mockReturnValueOnce(null)
+    const res = await GET(new Request("http://localhost/api/settings"))
+    expect(res.status).toBe(401)
+  })
+
+  it("GET returns settings payload", async () => {
+    const res = await GET(new Request("http://localhost/api/settings"))
+    expect(res.status).toBe(200)
+    const json = (await res.json()) as { userId: string; theme: string }
+    expect(json.userId).toBe("user-test")
+    expect(json.theme).toBe("dark")
+  })
+
+  it("PATCH returns 400 on invalid body", async () => {
+    const req = new Request("http://localhost/api/settings", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: "not-json",
+    })
+    const res = await PATCH(req)
+    expect(res.status).toBe(400)
+  })
+
+  it("PATCH updates theme", async () => {
+    update.mockResolvedValueOnce({
+      userId: "user-test",
+      theme: "light",
+      runtimeKeys: null,
+      updatedAt: new Date("2026-01-02T00:00:00.000Z"),
+    })
+    const req = new Request("http://localhost/api/settings", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ theme: "light" }),
+    })
+    const res = await PATCH(req)
+    expect(res.status).toBe(200)
+    const json = (await res.json()) as { theme: string }
+    expect(json.theme).toBe("light")
+  })
+})
