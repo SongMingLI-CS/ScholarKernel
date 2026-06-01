@@ -2,7 +2,7 @@ import { create } from "zustand"
 import { persist, subscribeWithSelector } from "zustand/middleware"
 
 import type { ConversationSummary } from "@/lib/db-types"
-import { prismaMessageToChat } from "@/lib/db-types"
+import { prismaMessageToChat, chatMessageToCreateBody } from "@/lib/db-types"
 import {
   appendMessage,
   clearConversationMessages,
@@ -12,288 +12,86 @@ import {
   fetchConversations,
   fetchSettings,
   patchConversation as apiPatchConversation,
-  patchSettings,
 } from "@/lib/conversation-api"
 
-export type PanelId = "dashboard" | "chat" | "keys" | "models" | "settings"
+import {
+  PROVIDER_DEFAULTS,
+  normalizeProviderModel,
+  resetProviderDefaults,
+  scheduleSettingsSync,
+} from "@/store/provider-config"
+import {
+  clearLegacySessionKeys,
+  getRuntimeKeyForProvider,
+  isUsableApiKey,
+  mergeRuntimeKeysUpdate,
+  sanitizeRuntimeKeys,
+} from "@/store/runtime-keys"
 
-export type ProviderId =
-  | "ollama"
-  | "openai"
-  | "anthropic"
-  | "google"
-  | "deepseek_openai_compat"
+export type {
+  AgentSettings,
+  ChatMessage,
+  ConnectionHealth,
+  CorsHelpState,
+  Health,
+  InferenceMetrics,
+  KeyStatus,
+  Lang,
+  ModelConnectivity,
+  PanelId,
+  ProbeId,
+  ProbeState,
+  ProviderConfig,
+  ProviderId,
+  RuntimeKeyField,
+  RuntimeKeys,
+  StartInferenceStreamInput,
+  StreamingInferenceMetrics,
+  ThemeMode,
+  ToastState,
+  ToastVariant,
+  TopologyState,
+  WorkflowNode,
+  WorkflowNodeProvider,
+  WorkflowNodeStatus,
+  WorkflowNodeType,
+} from "@/store/types"
 
-export type Health = "unknown" | "ok" | "down"
+export {
+  EMPTY_RUNTIME_KEYS,
+  RUNTIME_KEY_FIELDS,
+  getRuntimeKeyForProvider,
+  hasRuntimeKeyForProvider,
+  isUsableApiKey,
+  mergeRuntimeKeysUpdate,
+  sanitizeRuntimeKeys,
+} from "@/store/runtime-keys"
 
-export type ProbeId = "ollama"
+import type {
+  AgentSettings,
+  ChatMessage,
+  CorsHelpState,
+  InferenceMetrics,
+  KeyStatus,
+  Lang,
+  ModelConnectivity,
+  PanelId,
+  ProbeId,
+  ProbeState,
+  ProviderConfig,
+  ProviderId,
+  RuntimeKeys,
+  StartInferenceStreamInput,
+  StreamingInferenceMetrics,
+  ThemeMode,
+  ToastState,
+  ToastVariant,
+  TopologyState,
+  WorkflowNode,
+  WorkflowNodeStatus,
+} from "@/store/types"
 
-export type ThemeMode = "dark" | "light"
-export type Lang = "zh" | "en"
-
-export type ConnectionHealth = "unknown" | "online" | "offline"
-
-export type ProbeState = {
-  health: Health
-  latencyMs: number | null
-  lastCheckedAt: number | null
-}
-
-export type ModelConnectivity = {
-  health: ConnectionHealth
-  latencyMs: number | null
-  lastCheckedAt: number | null
-  /**
-   * Last known error "code" for quick UI rendering:
-   * - HTTP status (e.g. 401)
-   * - or a short string reason (e.g. MissingApiKey / CorsBlocked / NetworkError)
-   */
-  errorCode?: number | string
-}
-
-export type AgentSettings = {
-  theme: ThemeMode
-  lang: Lang
-  inference: { temperature: number; maxTokens: number; contextLimit: number }
-  behavior: {
-    autoSearch: boolean
-    maxRetries: number
-    planningDepth: "conservative" | "balanced" | "creative"
-  }
-  ui: { compactMode: boolean; showThinking: boolean }
-}
-
-export type ProviderConfig = {
-  providerId: ProviderId
-  model: string
-  baseUrl?: string
-}
-
-const PROVIDER_DEFAULTS: Record<ProviderId, Required<Pick<ProviderConfig, "model" | "baseUrl">>> = {
-  ollama: { model: "llama3.1", baseUrl: "http://localhost:11434" },
-  openai: { model: "gpt-4o", baseUrl: "https://api.openai.com/v1" },
-  anthropic: { model: "claude-3-5-sonnet-latest", baseUrl: "https://api.anthropic.com" },
-  google: { model: "gemini-2.0-flash", baseUrl: "https://generativelanguage.googleapis.com" },
-  deepseek_openai_compat: { model: "deepseek-chat", baseUrl: "/api/proxy/deepseek" },
-}
-
-function normalizeProviderModel(providerId: ProviderId, model: string) {
-  const m = (model ?? "").trim()
-  return m || PROVIDER_DEFAULTS[providerId].model
-}
-
-function resetProviderDefaults(providerId: ProviderId): ProviderConfig {
-  const d = PROVIDER_DEFAULTS[providerId]
-  return { providerId, model: d.model, baseUrl: d.baseUrl }
-}
-
-export type KeyStatus = {
-  hasMasterPassword: boolean
-  hasEncryptedKeys: boolean
-  unlocked: boolean
-}
-
-export type RuntimeKeyField = "openai" | "anthropic" | "google" | "deepseek" | "tavily" | "serper"
-
-export type RuntimeKeys = Record<RuntimeKeyField, string>
-
-/** 参考 Maoxuan-Changzheng：无 Key 时各字段均为 ""，绝不写入占位符 */
-export const EMPTY_RUNTIME_KEYS: RuntimeKeys = {
-  openai: "",
-  anthropic: "",
-  google: "",
-  deepseek: "",
-  tavily: "",
-  serper: "",
-}
-
-export const RUNTIME_KEY_FIELDS = Object.keys(EMPTY_RUNTIME_KEYS) as RuntimeKeyField[]
-
-/** Legacy session keys — cleared on cloud init (Route B) */
-const SESSION_RUNTIME_KEYS = "sk:runtime-keys:session:v3"
-const SESSION_RUNTIME_KEYS_LEGACY_V1 = "sk:runtime-keys:session:v1"
-const SESSION_RUNTIME_KEYS_LEGACY_V2 = "sk:runtime-keys:session:v2"
-
-function clearLegacySessionKeys() {
-  if (typeof window === "undefined") return
-  try {
-    window.sessionStorage.removeItem(SESSION_RUNTIME_KEYS)
-    window.sessionStorage.removeItem(SESSION_RUNTIME_KEYS_LEGACY_V1)
-    window.sessionStorage.removeItem(SESSION_RUNTIME_KEYS_LEGACY_V2)
-  } catch {
-    /* ignore */
-  }
-}
-
-let settingsSyncTimer: ReturnType<typeof setTimeout> | null = null
 const messagePersistTimers = new Map<string, ReturnType<typeof setTimeout>>()
-
-function scheduleSettingsSync(patch: { theme?: ThemeMode; runtimeKeys?: Partial<RuntimeKeys> | null }) {
-  if (typeof window === "undefined") return
-  if (settingsSyncTimer) clearTimeout(settingsSyncTimer)
-  settingsSyncTimer = setTimeout(() => {
-    settingsSyncTimer = null
-    void patchSettings(patch).catch((e) => console.error("[cloud settings sync]", e))
-  }, 400)
-}
-
-function trimKey(value: string | undefined | null) {
-  return typeof value === "string" ? value.trim() : ""
-}
-
-/** 合法云厂商 / 检索 Key：非空、非 dummy / 测试占位、长度达标 */
-export function isUsableApiKey(value: string | undefined | null): boolean {
-  const t = trimKey(value)
-  if (!t) return false
-  if (t.length < 8) return false
-  if (/dummy/i.test(t)) return false
-  if (/^(sk|tvly)-test-/i.test(t)) return false
-  return true
-}
-
-/** 载入或保存前清洗：非法字段归零为 "" */
-export function sanitizeRuntimeKeys(raw: RuntimeKeys | null | undefined): RuntimeKeys | null {
-  if (!raw) return null
-  const out = { ...EMPTY_RUNTIME_KEYS }
-  for (const field of RUNTIME_KEY_FIELDS) {
-    const v = raw[field]
-    out[field] = isUsableApiKey(v) ? trimKey(v) : ""
-  }
-  return hasAnyRuntimeKey(out) ? out : null
-}
-
-export function getRuntimeKeyForProvider(keys: RuntimeKeys | null | undefined, providerId: ProviderId): string {
-  if (!keys || providerId === "ollama") return ""
-  if (providerId === "openai") return trimKey(keys.openai)
-  if (providerId === "deepseek_openai_compat") return trimKey(keys.deepseek)
-  if (providerId === "anthropic") return trimKey(keys.anthropic)
-  if (providerId === "google") return trimKey(keys.google)
-  return ""
-}
-
-export function hasRuntimeKeyForProvider(keys: RuntimeKeys | null | undefined, providerId: ProviderId): boolean {
-  return isUsableApiKey(getRuntimeKeyForProvider(keys, providerId))
-}
-
-/** 增量合并：仅当 incoming 字段合法时覆盖，否则保留 existing */
-export function mergeRuntimeKeysUpdate(
-  existing: RuntimeKeys | null | undefined,
-  incoming: Partial<RuntimeKeys>
-): RuntimeKeys | null {
-  const prev = sanitizeRuntimeKeys(existing) ?? { ...EMPTY_RUNTIME_KEYS }
-  const out = { ...EMPTY_RUNTIME_KEYS }
-  for (const field of RUNTIME_KEY_FIELDS) {
-    const next = incoming[field]
-    if (isUsableApiKey(next)) {
-      out[field] = trimKey(next)
-    } else if (isUsableApiKey(prev[field])) {
-      out[field] = prev[field]
-    } else {
-      out[field] = ""
-    }
-  }
-  return hasAnyRuntimeKey(out) ? out : null
-}
-
-function hasAnyRuntimeKey(keys: RuntimeKeys | null): boolean {
-  if (!keys) return false
-  return RUNTIME_KEY_FIELDS.some((f) => isUsableApiKey(keys[f]))
-}
-
-export type TopologyState = {
-  version: number
-  nodes: Array<{
-    id: string
-    label: string
-    status: "idle" | "running" | "done" | "error"
-  }>
-  edges: Array<{ id: string; source: string; target: string }>
-}
-
-export type WorkflowNodeStatus = "pending" | "running" | "done" | "error"
-export type WorkflowNodeType = "read_file" | "reasoning" | "audit" | "research"
-export type WorkflowNodeProvider = "local" | "cloud"
-
-export type WorkflowNode = {
-  id: string
-  type: WorkflowNodeType
-  provider: WorkflowNodeProvider
-  status: WorkflowNodeStatus
-  title?: string
-  logs: string[]
-  output?: unknown
-  metadata?: Record<string, unknown>
-  error?: string
-}
-
-export type ChatMessage = {
-  id: string
-  role: "user" | "assistant" | "system"
-  content: string
-  sources?: Array<{ title: string; url: string; snippet?: string; publishedAt?: string }>
-}
-
-export type InferenceMetrics = {
-  at: number
-  providerId: ProviderId
-  model: string
-  baseUrl?: string
-  ttftMs: number | null
-  totalMs: number
-  chars: number
-  ok: boolean
-  error?: string
-}
-
-export type StreamingInferenceMetrics = {
-  active: boolean
-  runId: string
-  assistantMessageId?: string
-  startedAt: number
-  providerId: ProviderId
-  model: string
-  baseUrl?: string
-  /** 直连对话（跳过任务规划）；用于 UI 避免误显示「等待 tokens」占位 */
-  directChat?: boolean
-  firstTokenAt: number | null
-  lastTickAt: number
-  chars: number
-  ttftMs: number | null
-  totalMs: number
-}
-
-export type StartInferenceStreamInput = {
-  runId: string
-  assistantMessageId?: string
-  startedAt: number
-  providerId: ProviderId
-  model: string
-  baseUrl?: string
-}
-
-export type CorsHelpState =
-  | { open: false }
-  | {
-      open: true
-      title: string
-      providerId: ProviderId
-      baseUrl?: string
-      detail: string
-      hints: readonly string[]
-    }
-
-export type ToastVariant = "info" | "error" | "success"
-export type ToastState =
-  | { open: false }
-  | {
-      open: true
-      id: string
-      messageKey: import("@/lib/locales").LocaleKey
-      detail?: string
-      variant: ToastVariant
-      shownAt: number
-      ttlMs: number
-    }
 
 type AgentStore = {
   settings: AgentSettings
@@ -793,7 +591,7 @@ export const useAgentStore = create<AgentStore>()(
             const sanitized = mergeRuntimeKeysUpdate(s.runtimeKeys, keys)
             clearLegacySessionKeys()
             scheduleSettingsSync({ runtimeKeys: sanitized ?? keys })
-            const unlocked = hasAnyRuntimeKey(sanitized)
+            const unlocked = sanitized != null
             return {
               ...s,
               runtimeKeys: sanitized,
@@ -814,7 +612,7 @@ export const useAgentStore = create<AgentStore>()(
           set((s) => ({ ...s, chat: { ...s.chat, messages: [...s.chat.messages, m] } }))
           const convId = get().conversations.currentId
           if (!convId || m.role === "system") return
-          void appendMessage(convId, { id: m.id, role: m.role, content: m.content }).catch((e) =>
+          void appendMessage(convId, chatMessageToCreateBody(m)).catch((e) =>
             console.error("[persist message]", e)
           )
         },
@@ -831,7 +629,7 @@ export const useAgentStore = create<AgentStore>()(
           if (!convId || m.role === "system") return
 
           const run = () => {
-            void appendMessage(convId, { id: m.id, role: m.role, content: m.content }).catch((e) =>
+            void appendMessage(convId, chatMessageToCreateBody(m)).catch((e) =>
               console.error("[persist message]", e)
             )
           }
@@ -854,7 +652,7 @@ export const useAgentStore = create<AgentStore>()(
           try {
             const [settings, list] = await Promise.all([fetchSettings(), fetchConversations()])
             const cloudKeys = sanitizeRuntimeKeys(settings.runtimeKeys)
-            const unlocked = hasAnyRuntimeKey(cloudKeys)
+            const unlocked = cloudKeys != null
 
             if (settings.theme === "light" || settings.theme === "dark") {
               applyThemeToDom(settings.theme)
