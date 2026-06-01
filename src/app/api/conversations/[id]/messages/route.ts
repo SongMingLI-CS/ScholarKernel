@@ -28,6 +28,10 @@ export async function POST(req: Request, ctx: RouteCtx) {
     if (!conversation) return jsonError("Conversation not found", 404)
 
     const messageId = body.id?.trim() || undefined
+    const metadata =
+      body.metadata && typeof body.metadata === "object" && !Array.isArray(body.metadata)
+        ? body.metadata
+        : undefined
     const [message] = await prisma.$transaction([
       messageId
         ? prisma.message.upsert({
@@ -37,14 +41,20 @@ export async function POST(req: Request, ctx: RouteCtx) {
               conversationId,
               role,
               content: body.content,
+              ...(metadata ? { metadata } : {}),
             },
-            update: { content: body.content, role },
+            update: {
+              content: body.content,
+              role,
+              ...(metadata !== undefined ? { metadata } : {}),
+            },
           })
         : prisma.message.create({
             data: {
               conversationId,
               role,
               content: body.content,
+              ...(metadata ? { metadata } : {}),
             },
           }),
       prisma.conversation.update({

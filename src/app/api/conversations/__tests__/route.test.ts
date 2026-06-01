@@ -43,6 +43,19 @@ describe("/api/conversations", () => {
     expect(json).toHaveLength(1)
   })
 
+  it("GET with limit returns paginated payload", async () => {
+    findMany.mockResolvedValueOnce([
+      { id: "c1", title: "A", isPinned: false, createdAt: new Date(), updatedAt: new Date() },
+      { id: "c2", title: "B", isPinned: false, createdAt: new Date(), updatedAt: new Date() },
+    ])
+    const res = await GET(new Request("http://localhost/api/conversations?limit=1"))
+    expect(res.status).toBe(200)
+    const json = (await res.json()) as { items: unknown[]; hasMore: boolean; nextCursor: string | null }
+    expect(json.items).toHaveLength(1)
+    expect(json.hasMore).toBe(true)
+    expect(json.nextCursor).toBe("c1")
+  })
+
   it("POST creates conversation", async () => {
     create.mockResolvedValueOnce({
       id: "c-new",

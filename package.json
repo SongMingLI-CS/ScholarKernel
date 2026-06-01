@@ -18,6 +18,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "db:push": "prisma db push",
+    "db:migrate": "prisma migrate deploy",
+    "db:migrate:dev": "prisma migrate dev",
     "postinstall": "prisma generate"
   },
   "dependencies": {

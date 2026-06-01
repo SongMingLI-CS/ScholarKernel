@@ -17,19 +17,49 @@ async function findOwnedConversation(req: Request, id: string) {
   return { userId, row }
 }
 
+function parseLimit(raw: string | null, fallback = 100, max = 200) {
+  const n = raw ? Number.parseInt(raw, 10) : fallback
+  if (!Number.isFinite(n) || n < 1) return fallback
+  return Math.min(max, Math.floor(n))
+}
+
 export async function GET(req: Request, ctx: RouteCtx) {
   const { id } = await ctx.params
   const userId = resolveUserIdFromRequest(req)
   if (!userId) return jsonError("Unauthorized", 401)
   try {
+    const url = new URL(req.url)
+    const paginateMessages = url.searchParams.has("msgLimit") || url.searchParams.has("msgCursor")
+    const msgLimit = parseLimit(url.searchParams.get("msgLimit"))
+    const msgCursor = url.searchParams.get("msgCursor")?.trim() || undefined
+
     const conversation = await prisma.conversation.findFirst({
       where: { id, ...conversationOwnerWhere(userId) },
       include: {
-        messages: { orderBy: { createdAt: "asc" } },
+        messages: paginateMessages
+          ? {
+              orderBy: { createdAt: "asc" },
+              take: msgLimit + 1,
+              ...(msgCursor ? { cursor: { id: msgCursor }, skip: 1 } : {}),
+            }
+          : { orderBy: { createdAt: "asc" } },
       },
     })
     if (!conversation) return jsonError("Conversation not found", 404)
-    return jsonOk(conversation)
+
+    if (!paginateMessages) {
+      return jsonOk(conversation)
+    }
+
+    const { messages, ...rest } = conversation
+    const hasMore = messages.length > msgLimit
+    const page = hasMore ? messages.slice(0, msgLimit) : messages
+    return jsonOk({
+      ...rest,
+      messages: page,
+      messagesNextCursor: hasMore ? (page[page.length - 1]?.id ?? null) : null,
+      messagesHasMore: hasMore,
+    })
   } catch (e) {
     console.error("[GET /api/conversations/[id]]", e)
     return jsonError("Failed to fetch conversation", 500)

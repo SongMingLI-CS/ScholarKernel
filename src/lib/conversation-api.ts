@@ -2,9 +2,11 @@ import type {
   ConversationDetail,
   ConversationSummary,
   CreateMessageBody,
+  PaginatedConversations,
   SettingsPatchBody,
   SettingsResponse,
 } from "@/lib/db-types"
+import { chatMessageToCreateBody } from "@/lib/db-types"
 import type { ChatMessage, RuntimeKeys, ThemeMode } from "@/store/useAgentStore"
 
 async function apiFetch<T>(input: RequestInfo, init?: RequestInit): Promise<T> {
@@ -28,12 +30,29 @@ export async function fetchConversations(): Promise<ConversationSummary[]> {
   return apiFetch<ConversationSummary[]>("/api/conversations")
 }
 
+export async function fetchConversationsPage(input?: {
+  limit?: number
+  cursor?: string | null
+}): Promise<PaginatedConversations> {
+  const qp = new URLSearchParams()
+  qp.set("limit", String(input?.limit ?? 50))
+  if (input?.cursor) qp.set("cursor", input.cursor)
+  return apiFetch<PaginatedConversations>(`/api/conversations?${qp.toString()}`)
+}
+
 export async function createConversation(): Promise<ConversationSummary> {
   return apiFetch<ConversationSummary>("/api/conversations", { method: "POST" })
 }
 
-export async function fetchConversation(id: string): Promise<ConversationDetail> {
-  return apiFetch<ConversationDetail>(`/api/conversations/${id}`)
+export async function fetchConversation(
+  id: string,
+  opts?: { msgLimit?: number; msgCursor?: string | null }
+): Promise<ConversationDetail> {
+  const qp = new URLSearchParams()
+  if (opts?.msgLimit) qp.set("msgLimit", String(opts.msgLimit))
+  if (opts?.msgCursor) qp.set("msgCursor", opts.msgCursor)
+  const qs = qp.toString()
+  return apiFetch<ConversationDetail>(`/api/conversations/${id}${qs ? `?${qs}` : ""}`)
 }
 
 export async function patchConversation(
@@ -65,11 +84,7 @@ export async function upsertMessageContent(
   conversationId: string,
   message: ChatMessage
 ): Promise<void> {
-  await appendMessage(conversationId, {
-    id: message.id,
-    role: message.role,
-    content: message.content,
-  })
+  await appendMessage(conversationId, chatMessageToCreateBody(message))
 }
 
 export async function fetchSettings(): Promise<SettingsResponse> {
