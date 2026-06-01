@@ -4,14 +4,45 @@ const ALGO = "aes-256-gcm" as const
 const IV_LEN = 12
 const KEY_LEN = 32
 
+/** Dev-only fallback; never used when NODE_ENV=production. */
+export const DEV_FALLBACK_ENCRYPTION_SECRET = "scholarkernel-dev-secret"
+
 type EncryptedBlob = {
   iv: string
   tag: string
   data: string
 }
 
+function isProductionEnv() {
+  return process.env.NODE_ENV === "production"
+}
+
+function readSecretFromEnv(): string | undefined {
+  const raw = process.env.ENCRYPTION_SECRET ?? process.env.DATABASE_ENCRYPTION_KEY
+  const trimmed = typeof raw === "string" ? raw.trim() : ""
+  return trimmed.length > 0 ? trimmed : undefined
+}
+
+/** Resolve runtime encryption secret; throws in production if unset. */
+export function resolveEncryptionSecret(): string {
+  const fromEnv = readSecretFromEnv()
+  if (fromEnv) return fromEnv
+  if (isProductionEnv()) {
+    throw new Error(
+      "Missing ENCRYPTION_SECRET (or DATABASE_ENCRYPTION_KEY): required in production to encrypt runtime API keys at rest."
+    )
+  }
+  return DEV_FALLBACK_ENCRYPTION_SECRET
+}
+
+/** Call during server startup to fail fast in production without a secret. */
+export function assertEncryptionSecretForProduction(): void {
+  if (!isProductionEnv()) return
+  resolveEncryptionSecret()
+}
+
 function deriveKey(): Buffer {
-  const secret = process.env.ENCRYPTION_SECRET ?? process.env.DATABASE_ENCRYPTION_KEY ?? "scholarkernel-dev-secret"
+  const secret = resolveEncryptionSecret()
   return scryptSync(secret, "scholarkernel-runtime-keys", KEY_LEN)
 }
 
