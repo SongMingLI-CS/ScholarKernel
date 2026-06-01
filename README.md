@@ -31,11 +31,14 @@ Agent 挂机闭环见 [AGENTS.md](./AGENTS.md) 与 [.cursor/rules/](.cursor/rule
 | `DATABASE_URL` | 是 | SQLite 路径，如 `file:./prisma/dev.db` |
 | `ENCRYPTION_SECRET` | **生产必填** | 服务端加密持久化 API Key；开发未设置时使用 dev fallback |
 | `DATABASE_ENCRYPTION_KEY` | 否 | 与 `ENCRYPTION_SECRET` 二选一（优先读 `ENCRYPTION_SECRET`） |
-| `PROXY_ACCESS_TOKEN` | 公开部署建议 | `/api/proxy/*` 鉴权（见下方安全说明） |
+| `PROXY_ACCESS_TOKEN` | 公开部署必填 | `/api/proxy/*` 鉴权；客户端经 `Authorization: Bearer` 或 sessionStorage `sk:proxy-access-token` 携带 |
+| `PROXY_RATE_LIMIT_PER_MIN` | 否 | 每 IP 每分钟 proxy 请求上限，默认 60 |
 
 生成生产密钥示例：`openssl rand -base64 32`
 
 **生产启动**：`NODE_ENV=production` 时若未配置 `ENCRYPTION_SECRET`（或 `DATABASE_ENCRYPTION_KEY`），应用将在启动阶段失败，避免用默认密钥加密用户 API Key。
+
+**公开部署 Proxy**：生产环境必须设置 `PROXY_ACCESS_TOKEN`；浏览器请求 `/api/proxy/*` 时需携带相同 token（Bearer 或 `X-ScholarKernel-Proxy-Token`）。开发环境未设置 token 时 proxy 开放以便本地调试。
 
 勿将 `.env` / `.env.local` 提交到 Git。
 

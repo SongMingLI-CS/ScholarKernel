@@ -1,4 +1,5 @@
 import { useAgentStore } from "@/store/useAgentStore"
+import { proxyAwareFetch } from "@/lib/proxy-client"
 
 /**
  * 网关请求层（参考 Maoxuan-Changzheng test.html）：
@@ -228,7 +229,7 @@ async function gatewayFetch(
   init: RequestInit,
   ctx: { providerId: ProviderId }
 ): Promise<Response> {
-  const res = await fetch(url, init)
+  const res = await proxyAwareFetch(url, init)
   if (res.status === 401 || res.status === 403) {
     const detail = await parseApiErrorDetail(res)
     notifyAuthFailure(detail, res.status)

@@ -5,6 +5,20 @@ import { createGoogleGenerativeAI } from "@ai-sdk/google"
 import { createOllama } from "ai-sdk-ollama"
 import { z } from "zod"
 import {
+  buildDualSearchQueries,
+  clampReasoningPrompt,
+  DEFAULT_ACADEMIC_SEARCH_MAX_RESULTS,
+  expandSearchQueries,
+  formatResearchHitLines,
+  formatResearchResultsForContext,
+  isBroadTopicQuery,
+  isSurveyOrProgressTopic,
+  mergeAcademicSearchHits,
+  mergeAcademicSearchResponses,
+  resolveResearchQueryList,
+  serializeResearchOutputForReasoning,
+} from "@/lib/tools/academic-search-strategy"
+import {
   createAcademicSearchTool,
   resolveSearchApiKeys,
   synthesizeCitationsMarkdown,
@@ -12,8 +26,13 @@ import {
   type AcademicSearchResponse,
 } from "@/lib/tools/search-tool"
 import { createFileTool } from "@/lib/tools/file-tool"
+import { isAbortError } from "@/lib/run-abort"
+import { proxyAwareFetch } from "@/lib/proxy-client"
 
 type GenModel = Parameters<typeof generateText>[0]["model"]
+
+/** AI SDK fetch that attaches proxy access token for same-origin /api/proxy routes. */
+const PROXY_SDK_FETCH = proxyAwareFetch as typeof fetch
 
 /** 复杂推理 / 长公式输出：放宽 HTTP 与 SDK 层超时（毫秒）。 */
 const LLM_STREAM_TIMEOUT_MS = 60_000
@@ -27,10 +46,32 @@ type StreamTextCallExtras = {
   experimental_continueOnLimit?: boolean
 }
 
+function mergeAbortSignals(primary?: AbortSignal | null, secondary?: AbortSignal): AbortSignal | undefined {
+  const signals = [primary, secondary].filter((s): s is AbortSignal => s != null)
+  if (signals.length === 0) return undefined
+  if (signals.length === 1) return signals[0]
+  if (typeof AbortSignal.any === "function") return AbortSignal.any(signals)
+  return secondary ?? primary ?? undefined
+}
+
+function llmCallSettings(signal?: AbortSignal) {
+  return {
+    timeout: buildStreamTextTimeout(),
+    ...(signal ? { abortSignal: signal } : {}),
+  }
+}
+
+function assertNotAborted(signal?: AbortSignal) {
+  if (!signal?.aborted) return
+  const reason = signal.reason
+  throw reason instanceof Error ? reason : new DOMException("Aborted", "AbortError")
+}
+
 /** 规划阶段：HTTP 非 2xx 时上报 UI，并抛出（避免 SDK 静默吞掉）。 */
-function createPlanningFetch(onHttpError: (msg: string) => void): typeof fetch {
+function createPlanningFetch(onHttpError: (msg: string) => void, abortSignal?: AbortSignal): typeof fetch {
   return async (input, init) => {
-    const res = await fetch(input as RequestInfo, init)
+    const mergedSignal = mergeAbortSignals(init?.signal ?? undefined, abortSignal)
+    const res = await proxyAwareFetch(input as RequestInfo, mergedSignal ? { ...init, signal: mergedSignal } : init)
     if (!res.ok) {
       const body = await res.text().catch(() => "")
       const msg = `规划失败 [状态码 ${res.status}]: ${body}`
@@ -100,6 +141,8 @@ export type AgentExecutorDeps = {
    * 例如：/api/source?path=src/app/page.tsx
    */
   sourceApiBase?: string
+  /** 用户点击「停止」或切换会话时传入，用于取消进行中的 LLM 请求 */
+  signal?: AbortSignal
 }
 
 export type AgentExecutorHooks = {
@@ -132,23 +175,7 @@ function buildReasoningOutputTokenBudget(maxTokens: number | undefined) {
 }
 
 function formatResearchResultsForSessionContext(out: AcademicSearchResponse, citationsMarkdown: string): string {
-  const refLines = (out.results ?? []).slice(0, 12).map((r, i) => {
-    const sid = r.source_id?.trim() ? r.source_id.trim() : String(i + 1)
-    const snippet = r.snippet?.trim() ? `\n   摘要: ${r.snippet.trim().slice(0, 320)}` : ""
-    return `[${sid}] ${r.title} (${r.url})${snippet}`
-  })
-  return [
-    "【academicSearch 工具结果 — 已同步至会话上下文】",
-    `query: ${out.query}`,
-    `total: ${out.total}`,
-    `status: ${out.status}`,
-    "",
-    "检索到的文献摘要 (tool result / references):",
-    ...refLines,
-    citationsMarkdown ? ["", citationsMarkdown].join("\n") : "",
-  ]
-    .filter(Boolean)
-    .join("\n")
+  return formatResearchResultsForContext(out, citationsMarkdown)
 }
 
 const ABSORBED_STREAM_PART_TYPES = new Set([
@@ -176,11 +203,13 @@ const ABSORBED_STREAM_PART_TYPES = new Set([
 /** 健壮消费 streamText.fullStream：非文本帧只吸收不 break，确保 onFinish 与背压释放。 */
 async function consumeStreamTextOutput(
   streamed: Awaited<ReturnType<typeof streamText>>,
-  onAccumulated: (acc: string) => void
+  onAccumulated: (acc: string) => void,
+  signal?: AbortSignal
 ): Promise<string> {
   let acc = ""
   try {
     for await (const part of streamed.fullStream) {
+      assertNotAborted(signal)
       try {
         if (part.type === "text-delta" || part.type === "reasoning-delta") {
           acc += part.text
@@ -695,6 +724,56 @@ function correctMisplacedReadFileNodes(
   })
 }
 
+/** 综述/核心进展类：自动插入双路 research（Survey + Methodology），再进入 reasoning 聚合。 */
+function ensureMultiSourceResearchPlan(nodes: WorkflowNode[], userInput: string): WorkflowNode[] {
+  if (!isSurveyOrProgressTopic(userInput)) return nodes
+
+  const researchIndices = nodes.map((n, i) => (n.type === "research" ? i : -1)).filter((i) => i >= 0)
+  if (researchIndices.length >= 2) return nodes
+
+  const firstIdx = researchIndices[0]
+  const firstResearch = firstIdx != null ? nodes[firstIdx] : null
+  const inp = asRecord(firstResearch?.input)
+  const draftQ =
+    typeof inp["search_query"] === "string"
+      ? String(inp["search_query"])
+      : typeof inp["query"] === "string"
+        ? String(inp["query"])
+        : buildFallbackSearchQuery(userInput, undefined)
+
+  const [surveyQ, methodQ] = buildDualSearchQueries(userInput, draftQ)
+
+  const surveyNode: WorkflowNode = {
+    id: firstResearch?.id ?? "research-survey-1",
+    type: "research",
+    provider: "cloud",
+    status: "pending",
+    title: "综述/Survey 检索",
+    input: { search_query: surveyQ.trim(), academicOnly: true },
+    logs: firstResearch?.logs ?? [],
+    metadata: { kind: "multi-source", searchPass: "survey", queryExpanded: true },
+  }
+  const methodNode: WorkflowNode = {
+    id: "research-method-2",
+    type: "research",
+    provider: "cloud",
+    status: "pending",
+    title: "核心模型/方法论检索",
+    input: { search_query: methodQ.trim(), academicOnly: true },
+    logs: [],
+    metadata: { kind: "multi-source", searchPass: "methodology", queryExpanded: true },
+  }
+
+  if (firstIdx == null) {
+    return [surveyNode, methodNode, ...nodes]
+  }
+
+  const updated = [...nodes]
+  updated[firstIdx] = surveyNode
+  updated.splice(firstIdx + 1, 0, methodNode)
+  return updated
+}
+
 const PLAN_TOOL_ENFORCEMENT = [
   "【硬性反幻觉 — 必须遵守】",
   "当用户意图包含检索、查找文献、审查代码、读取文件、对比论文等需要调用工具的动作时：",
@@ -704,13 +783,24 @@ const PLAN_TOOL_ENFORCEMENT = [
 ].join("\n")
 
 const PLAN_QUERY_OPTIMIZATION = [
-  "【检索词优化 — research 节点 input.search_query — 绝对指令】",
-  "- 生成 research 任务时，query 字段（search_query）必须是提炼后的、适合学术搜索引擎的【纯英文关键词】。",
-  "- 绝不能直接使用用户的中文口语短句！必须结合对话历史将意图翻译/扩写为英文检索式。",
-  "- 示例：「找一篇计算机视觉的」→ \"latest computer vision deep learning research papers arxiv\"",
-  "- 示例：「再找一篇视觉的」→ \"Latest Computer Vision research papers 2024 arxiv\"",
-  "- 示例：「对比 Transformer 和 Mamba」→ \"Transformer vs Mamba architecture survey paper 2024\"",
-  "- input 字段名必须是 search_query（也接受 query，但优先 search_query）。",
+  "【检索词优化 — research 节点 input — 绝对指令】",
+  "- search_query 必须是提炼后的纯英文学术关键词；禁止中文口语。",
+  "- input 字段名优先 search_query；也接受 query。",
+  "",
+  "【关键词多样化策略 — 宽泛主题必填】",
+  "- 当主题为 LLM、计算机视觉、深度学习等宽泛领域时，必须在 input 中提供 search_queries 数组（2–3 条英文检索式），系统将并行检索后聚合。",
+  "- 示例（LLM）：search_queries: [",
+  '  "Recent LLM survey 2024 2025 2026 arxiv",',
+  '  "State-of-the-art LLM architectures research papers",',
+  '  "Core AI research papers 2024 2026 arxiv"',
+  "  ]",
+  "- 若仅一条 query，执行器会对宽泛主题自动扩写为上述多路检索。",
+  "",
+  "【多源聚合 — 综述/核心进展类 — 强制双检索】",
+  "- 用户意图为综述、Survey、Review、研究进展、核心进展、前沿对比时：必须规划【两个】连续的 research 节点：",
+  "  1) 第一次：survey/review/literature 向检索；",
+  "  2) 第二次：state-of-the-art / core models / methodology 向检索；",
+  "- 两次检索结果由 reasoning 节点聚合总结，禁止只规划单次检索。",
 ].join("\n")
 
 const PLAN_TOOL_BOUNDARY = [
@@ -1159,13 +1249,16 @@ async function generatePlanTextWithStructuredFallback(input: {
   systemPlain: string
   messages: LlmHistoryMessage[]
   temperature: number
+  signal?: AbortSignal
 }): Promise<{ gen: Awaited<ReturnType<typeof generateText>>; usesStructuredJson: boolean }> {
+  const llmOpts = llmCallSettings(input.signal)
   try {
     const gen = await generateText({
       model: input.model,
       system: input.systemStructured,
       messages: input.messages,
       temperature: input.temperature,
+      ...llmOpts,
       output: Output.json({
         name: "scholarkernel_workflow_plan",
         description: "Task DAG as JSON object with tasks[]",
@@ -1181,6 +1274,7 @@ async function generatePlanTextWithStructuredFallback(input: {
         system: input.systemPlain,
         messages: input.messages,
         temperature: input.temperature,
+        ...llmOpts,
       })
       return { gen, usesStructuredJson: false }
     } catch (fallbackErr) {
@@ -1310,11 +1404,15 @@ export function buildChatHistoryForExecutor(
 
     let content = (m.content ?? "").trim()
     if (m.role === "assistant" && m.sources?.length) {
-      const refLines = m.sources.slice(0, 12).map((s, i) => {
-        const sid = s.source_id?.trim() ? s.source_id.trim() : String(i + 1)
-        const snippet = s.snippet?.trim() ? `\n   摘要: ${s.snippet.trim().slice(0, 280)}` : ""
-        return `[${sid}] ${s.title} (${s.url})${snippet}`
-      })
+      const refLines = formatResearchHitLines(
+        m.sources.map((s, i) => ({
+          source_id: s.source_id?.trim() ? s.source_id.trim() : String(i + 1),
+          title: s.title,
+          url: s.url,
+          snippet: s.snippet,
+          publishedAt: s.publishedAt,
+        }))
+      )
       content = [content, "", "---", "检索工具返回的文献摘要 (tool result):", ...refLines].filter(Boolean).join("\n")
     }
 
@@ -1409,6 +1507,7 @@ async function rewriteResearchSearchQuery(
     try {
       const openai = createOpenAI({
         apiKey: dsKey,
+        fetch: PROXY_SDK_FETCH,
         baseURL: normalizeOpenAICompatBaseUrlWithProxy(
           active.providerId === "deepseek_openai_compat" ? active.baseUrl : undefined,
           "deepseek_openai_compat"
@@ -1423,6 +1522,7 @@ async function rewriteResearchSearchQuery(
 
       const { text } = await generateText({
         model,
+        ...llmCallSettings(deps.signal),
         temperature: 0.1,
         system: [
           "你是学术检索 query 改写器（指代消解 + 中英转换）。",
@@ -1533,6 +1633,9 @@ function serializeSubtaskForReasoning(r: { id: string; ok: boolean; summary: str
   }
 
   if (typeof rec["provider"] === "string") {
+    if (Array.isArray(rec["results"]) && rec["results"].length > 0) {
+      return { ...base, ...serializeResearchOutputForReasoning(rec) }
+    }
     return {
       ...base,
       search_status: "ok" as const,
@@ -1573,6 +1676,14 @@ export class AgentExecutor {
     private deps: AgentExecutorDeps,
     private hooks: AgentExecutorHooks = {}
   ) {}
+
+  private throwIfAborted() {
+    assertNotAborted(this.deps.signal)
+  }
+
+  private llmSettings() {
+    return llmCallSettings(this.deps.signal)
+  }
 
   private effectiveRuntimeKeys() {
     const latest = this.deps.getRuntimeKeys?.() ?? undefined
@@ -1651,14 +1762,15 @@ export class AgentExecutor {
       const apiKey = keyForActiveProvider(rk, active.providerId)?.trim()
       if (!apiKey) throw new Error("MissingApiKey")
       if (active.providerId === "anthropic") {
-        return createAnthropic({ apiKey, baseURL: active.baseUrl })(modelId)
+        return createAnthropic({ apiKey, baseURL: active.baseUrl, fetch: PROXY_SDK_FETCH })(modelId)
       }
       if (active.providerId === "google") {
-        return createGoogleGenerativeAI({ apiKey, baseURL: active.baseUrl })(modelId)
+        return createGoogleGenerativeAI({ apiKey, baseURL: active.baseUrl, fetch: PROXY_SDK_FETCH })(modelId)
       }
       if (active.providerId === "openai" || active.providerId === "deepseek_openai_compat") {
         return createOpenAI({
           apiKey,
+          fetch: PROXY_SDK_FETCH,
           baseURL: normalizeOpenAICompatBaseUrlWithProxy(active.baseUrl, active.providerId),
         }).chat(modelId)
       }
@@ -1669,11 +1781,13 @@ export class AgentExecutor {
     if (!dsKey) throw new Error("MissingApiKey")
     return createOpenAI({
       apiKey: dsKey,
+      fetch: PROXY_SDK_FETCH,
       baseURL: normalizeOpenAICompatBaseUrlWithProxy(undefined, "deepseek_openai_compat"),
     }).chat(modelId)
   }
 
   async plan(userInput: string, opts?: { retryMessage?: string }): Promise<WorkflowNode[]> {
+    this.throwIfAborted()
     try {
     console.log("Plan starting with provider:", this.deps.activeProvider.providerId)
     const inf = this.inferenceCfg()
@@ -1691,7 +1805,7 @@ export class AgentExecutor {
       PLAN_QUERY_OPTIMIZATION,
       PLAN_TOOL_BOUNDARY,
       "约束：",
-      "- 对于“学术综述/Survey/Review/对比论文”类任务：优先添加 research 节点（会调用 academicSearch）作为第一步",
+      "- 对于“学术综述/Survey/Review/核心进展/对比论文”类任务：必须规划两个 research 节点（Survey 向 + Methodology 向），见【多源聚合】",
       "- 用户要求「详解/深入分析上一轮某篇论文」时：必须从 messages 历史 assistant 的参考文献中提炼论文完整英文标题，规划 research 节点重新检索；严禁 read_file",
       "- 只有当任务明确涉及本地项目/具体文件/代码问题时，才使用 read_file（必须提供 input.path，且必须是本地源码路径如 src/...）",
       "- 优先把“读文件/抓上下文”拆成 read_file（但不要为了凑步骤而读文件）",
@@ -1737,7 +1851,7 @@ export class AgentExecutor {
       if (planHttpErrorEmitted) return
       planHttpErrorEmitted = true
       this.hooks.onPlanHttpError?.(msg)
-    })
+    }, this.deps.signal)
 
     const planningIntroDeepSeek = providerSelfIntro({
       providerId: "deepseek_openai_compat",
@@ -1767,6 +1881,7 @@ export class AgentExecutor {
         systemPlain: `${sysTextArray}\n\n${planningIntroDeepSeek}`,
         messages: planMessages,
         temperature: inf.temperature ?? 0.2,
+        signal: this.deps.signal,
       })
       planGen = planResult.gen
       usesStructuredJson = planResult.usesStructuredJson
@@ -1777,22 +1892,24 @@ export class AgentExecutor {
       usesStructuredJson = active.providerId === "openai" || active.providerId === "deepseek_openai_compat"
 
       if (active.providerId === "anthropic") {
-        const provider = createAnthropic({ apiKey, baseURL: active.baseUrl })
+        const provider = createAnthropic({ apiKey, baseURL: active.baseUrl, fetch: planningFetch })
         const model = provider(normalizeModelId(active.providerId, active.model))
         planGen = await generateText({
           model,
           system: `${sysTextArray}\n\n${providerSelfIntro(active)}`,
           messages: planMessages,
           temperature: inf.temperature ?? 0.2,
+          ...this.llmSettings(),
         })
       } else if (active.providerId === "google") {
-        const provider = createGoogleGenerativeAI({ apiKey, baseURL: active.baseUrl })
+        const provider = createGoogleGenerativeAI({ apiKey, baseURL: active.baseUrl, fetch: planningFetch })
         const model = provider(normalizeModelId(active.providerId, active.model))
         planGen = await generateText({
           model,
           system: `${sysTextArray}\n\n${providerSelfIntro(active)}`,
           messages: planMessages,
           temperature: inf.temperature ?? 0.2,
+          ...this.llmSettings(),
         })
       } else if (active.providerId === "openai" || active.providerId === "deepseek_openai_compat") {
         const provider = createOpenAI({
@@ -1808,6 +1925,7 @@ export class AgentExecutor {
           systemPlain: `${sysTextArray}\n\n${providerSelfIntro(active)}`,
           messages: planMessages,
           temperature: inf.temperature ?? 0.2,
+          signal: this.deps.signal,
         })
         planGen = planResult.gen
         usesStructuredJson = planResult.usesStructuredJson
@@ -1868,6 +1986,7 @@ export class AgentExecutor {
 
     const historyForCorrection = this.deps.getChatHistory?.() ?? []
     nodes = correctMisplacedReadFileNodes(nodes, userInput, historyForCorrection)
+    nodes = ensureMultiSourceResearchPlan(nodes, userInput)
 
     if (needsPaperDetailIntent(userInput) && !nodes.some((n) => n.type === "research")) {
       const paperQuery =
@@ -1894,6 +2013,7 @@ export class AgentExecutor {
     this.hooks.onWorkflowPlanned?.(nodes)
     return nodes
     } catch (error) {
+      if (isAbortError(error)) throw error
       console.error("🔥🔥🔥 PLAN_CRASH_REASON:", error)
       console.error("🔥 PLAN_CRASH_DETAIL:", formatPlanCrashDetail(error))
       const history = this.deps.getChatHistory?.() ?? []
@@ -1961,6 +2081,7 @@ export class AgentExecutor {
         const model = provider(this.deps.activeProvider.model)
         const { text } = await generateText({
           model,
+          ...llmCallSettings(this.deps.signal),
           temperature: Math.min(inf.temperature ?? 0.1, 0.2),
           system: [
             "你是严谨的代码审计助手。",
@@ -1999,12 +2120,13 @@ export class AgentExecutor {
         let model: GenModel
         const normalizedModel = normalizeModelId(active.providerId, active.model)
         if (active.providerId === "anthropic") {
-          model = createAnthropic({ apiKey, baseURL: active.baseUrl })(normalizedModel)
+          model = createAnthropic({ apiKey, baseURL: active.baseUrl, fetch: PROXY_SDK_FETCH })(normalizedModel)
         } else if (active.providerId === "google") {
-          model = createGoogleGenerativeAI({ apiKey, baseURL: active.baseUrl })(normalizedModel)
+          model = createGoogleGenerativeAI({ apiKey, baseURL: active.baseUrl, fetch: PROXY_SDK_FETCH })(normalizedModel)
         } else if (active.providerId === "openai" || active.providerId === "deepseek_openai_compat") {
           model = createOpenAI({
             apiKey,
+            fetch: PROXY_SDK_FETCH,
             baseURL: normalizeOpenAICompatBaseUrlWithProxy(active.baseUrl, active.providerId),
           }).chat(normalizedModel)
         } else {
@@ -2013,6 +2135,7 @@ export class AgentExecutor {
 
         const { text } = await generateText({
           model,
+          ...llmCallSettings(this.deps.signal),
           temperature: inf.temperature ?? 0.4,
           system: [
             "你是资深科研助理，擅长学术综述写作。",
@@ -2038,6 +2161,7 @@ export class AgentExecutor {
 
   /** 直连对话：无工具、无拓扑；流式正文经 onDirectChatStream 回传。 */
   private async streamDirectChat(userInput: string): Promise<string> {
+    this.throwIfAborted()
     const active = this.deps.activeProvider
     const inf = this.inferenceCfg()
     const rk = this.effectiveRuntimeKeys()
@@ -2050,12 +2174,13 @@ export class AgentExecutor {
     } else {
       if (!apiKey) throw new Error("MissingApiKey")
       if (active.providerId === "anthropic") {
-        model = createAnthropic({ apiKey, baseURL: active.baseUrl })(normalizedModel)
+        model = createAnthropic({ apiKey, baseURL: active.baseUrl, fetch: PROXY_SDK_FETCH })(normalizedModel)
       } else if (active.providerId === "google") {
-        model = createGoogleGenerativeAI({ apiKey, baseURL: active.baseUrl })(normalizedModel)
+        model = createGoogleGenerativeAI({ apiKey, baseURL: active.baseUrl, fetch: PROXY_SDK_FETCH })(normalizedModel)
       } else if (active.providerId === "openai" || active.providerId === "deepseek_openai_compat") {
         model = createOpenAI({
           apiKey,
+          fetch: PROXY_SDK_FETCH,
           baseURL: normalizeOpenAICompatBaseUrlWithProxy(active.baseUrl, active.providerId),
         }).chat(normalizedModel)
       } else {
@@ -2084,7 +2209,7 @@ export class AgentExecutor {
         temperature: Math.min(0.72, (inf.temperature ?? 0.45) + 0.12),
         system: sys,
         messages: chatMessages,
-        timeout: buildStreamTextTimeout(),
+        ...this.llmSettings(),
         maxOutputTokens: buildReasoningOutputTokenBudget(inf.maxTokens),
         ...( { experimental_continueOnLimit: true } satisfies StreamTextCallExtras ),
         onFinish: () => {
@@ -2101,7 +2226,7 @@ export class AgentExecutor {
 
     const acc = await consumeStreamTextOutput(streamed, (text) => {
       this.hooks.onDirectChatStream?.(text)
-    })
+    }, this.deps.signal)
 
     return acc
   }
@@ -2129,6 +2254,7 @@ export class AgentExecutor {
     let citationsMarkdown = ""
 
     for (const n of nodes) {
+      this.throwIfAborted()
       this.hooks.onNodeLog?.(n.id, `进入节点：${n.id}`)
       this.hooks.onNodePatch?.(n.id, { status: "running" })
       this.hooks.onNodeLog?.(n.id, `开始执行：${n.type} · ${n.provider}`)
@@ -2150,8 +2276,9 @@ export class AgentExecutor {
             { userInput, draftQuery, history }
           )
           const academicOnly = typeof payload["academicOnly"] === "boolean" ? Boolean(payload["academicOnly"]) : true
+          const queryList = resolveResearchQueryList(payload, search_query, userInput)
 
-          console.log("🔍 research 节点执行，search_query:", search_query)
+          console.log("🔍 research 节点执行，queries:", queryList)
 
           // inject per-node logger
           const keysNow = this.effectiveSearchKeys()
@@ -2165,7 +2292,27 @@ export class AgentExecutor {
           const toolOpts = {} as Parameters<Exec>[1]
           let out: AcademicSearchResponse | null = null
           try {
-            out = (await exec({ search_query, academicOnly, maxResults: 5 }, toolOpts)) as AcademicSearchResponse
+            if (queryList.length <= 1) {
+              out = (await exec(
+                {
+                  search_query: queryList[0] ?? search_query,
+                  academicOnly,
+                  maxResults: DEFAULT_ACADEMIC_SEARCH_MAX_RESULTS,
+                },
+                toolOpts
+              )) as AcademicSearchResponse
+            } else {
+              this.hooks.onNodeLog?.(n.id, `关键词多样化：并行 ${queryList.length} 路检索…`)
+              const outs = await Promise.all(
+                queryList.map((q) =>
+                  exec(
+                    { search_query: q, academicOnly, maxResults: DEFAULT_ACADEMIC_SEARCH_MAX_RESULTS },
+                    toolOpts
+                  )
+                )
+              )
+              out = mergeAcademicSearchResponses(outs as AcademicSearchResponse[], queryList.join(" | "))
+            }
           } catch (e) {
             const msg = e instanceof Error ? e.message : String(e)
             const durationMs = Math.round(performance.now() - nodeStartedAt)
@@ -2199,7 +2346,7 @@ export class AgentExecutor {
             continue
           }
 
-          sources = Array.isArray(out?.results) ? out.results : []
+          sources = mergeAcademicSearchHits(sources, Array.isArray(out?.results) ? out.results : [])
           const synthesized = synthesizeCitationsMarkdown(sources)
           citationsMarkdown = synthesized.markdown
 
@@ -2230,7 +2377,7 @@ export class AgentExecutor {
             continue
           }
 
-          this.hooks.onNodeLog?.(n.id, `正在分析 ${Math.min(5, sources.length)} 篇相关论文…`)
+          this.hooks.onNodeLog?.(n.id, `正在分析 ${sources.length} 篇相关论文（本轮新增 ${out.total} 条）…`)
           this.pushResearchIntoSessionContext(out, citationsMarkdown, n.id)
           this.hooks.onNodeLog?.(
             n.id,
@@ -2484,7 +2631,7 @@ export class AgentExecutor {
           ACADEMIC_OUTPUT_DISCIPLINE,
         ].join("\n")
 
-        const prompt = clampTextByChars(
+        const prompt = clampReasoningPrompt(
           [
             "【当前系统配置（必须据此回答身份相关问题）】",
             `providerId: ${active.providerId}`,
@@ -2493,7 +2640,9 @@ export class AgentExecutor {
             "",
             "用户需求：",
             userInput,
-            citationsMarkdown ? ["", "已检索到的参考文献（可引用）：", citationsMarkdown].join("\n") : "",
+            citationsMarkdown
+              ? ["", "已检索到的参考文献（完整保留，禁止省略 URL）：", citationsMarkdown].join("\n")
+              : "",
             "",
             "已完成子任务结果（JSON）：",
             JSON.stringify(results.map(serializeSubtaskForReasoning), null, 2),
@@ -2501,7 +2650,7 @@ export class AgentExecutor {
             "你可以：",
             "- 如果需要长综述，调用 globalLiteratureReview(topic, constraints)",
             "- 如果需要源码审计，调用 localSourceAudit(path|content, focus)",
-            "- 如果需要全球检索，调用 academicSearch(search_query, academicOnly)",
+            "- 如果需要全球检索，调用 academicSearch(search_query, academicOnly) 或对宽泛主题使用 search_queries 数组",
           ].join("\n"),
           inf.contextLimit
         )
@@ -2514,7 +2663,7 @@ export class AgentExecutor {
           tools,
           system: sys,
           messages: reasoningMessages,
-          timeout: buildStreamTextTimeout(),
+          ...this.llmSettings(),
           maxOutputTokens: buildReasoningOutputTokenBudget(inf.maxTokens),
           stopWhen: stepCountIs(REASONING_TOOL_LOOP_STEPS),
           ...( { experimental_continueOnLimit: true } satisfies StreamTextCallExtras ),
@@ -2534,7 +2683,7 @@ export class AgentExecutor {
           }
           acc = text
           this.hooks.onNodePatch?.(n.id, { output: { text: acc } })
-        })
+        }, this.deps.signal)
 
         this.hooks.onNodePatch?.(n.id, {
           status: "done",

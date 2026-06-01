@@ -2,6 +2,12 @@ import { tool, zodSchema } from "ai"
 import { z } from "zod"
 
 import { useAgentStore } from "@/store/useAgentStore"
+import { proxyAwareFetch } from "@/lib/proxy-client"
+
+import {
+  DEFAULT_ACADEMIC_SEARCH_MAX_RESULTS,
+  mergeAcademicSearchHits,
+} from "@/lib/tools/academic-search-strategy"
 
 export type AcademicSearchProvider = "tavily" | "serper"
 
@@ -33,7 +39,9 @@ export type AcademicSearchResponse = {
 const AcademicSearchInputSchema = z.object({
   search_query: z.string().min(1),
   academicOnly: z.boolean().optional().default(true),
-  maxResults: z.number().int().min(1).max(20).optional().default(5),
+  maxResults: z.number().int().min(1).max(20).optional().default(DEFAULT_ACADEMIC_SEARCH_MAX_RESULTS),
+  /** 关键词多样化：并行检索多组 query（Planner 对宽泛主题应输出此字段） */
+  search_queries: z.array(z.string().min(1)).min(1).max(4).optional(),
 })
 
 const ACADEMIC_DOMAINS = [
@@ -192,7 +200,7 @@ async function tavilySearch(apiKey: string, query: string, maxResults: number): 
 
   console.log("🚀 [Tavily Request Payload]:", JSON.stringify(requestBody))
 
-  const res = await fetch(url, {
+  const res = await proxyAwareFetch(url, {
     method: "POST",
     headers: {
       "content-type": "application/json",
@@ -255,7 +263,7 @@ async function serperSearch(apiKey: string, query: string, maxResults: number): 
   }
 
   const url = isBrowser() ? "/api/proxy/serper/search" : "https://google.serper.dev/search"
-  const res = await fetch(url, {
+  const res = await proxyAwareFetch(url, {
     method: "POST",
     headers: { "content-type": "application/json", "X-API-KEY": normalizedKey },
     body: JSON.stringify({ q: query, num: maxResults }),
@@ -297,14 +305,18 @@ export function createAcademicSearchTool(input: {
 }) {
   return tool({
     description:
-      "深度学术检索：调用 Tavily 或 Serper（Google）进行检索，返回标题/链接/摘要/发布日期等结构化结果。" +
-      "search_query 必须是提炼后的纯英文学术关键词（如 latest computer vision deep learning research papers arxiv），禁止中文口语。" +
+      "深度学术检索（Tavily advanced / max_results=10）：返回标题/链接/摘要/发布日期。" +
+      "search_query 须为纯英文学术关键词；宽泛主题请用 search_queries 数组并行多路检索。" +
       "可开启 academicOnly 过滤学术域名。",
     inputSchema: zodSchema(AcademicSearchInputSchema),
-    execute: async ({ search_query, academicOnly, maxResults }) => {
-      const query = sanitizeSearchQuery(search_query)
+    execute: async ({ search_query, search_queries, academicOnly, maxResults }) => {
+      const queryList =
+        Array.isArray(search_queries) && search_queries.length
+          ? search_queries.map((q) => sanitizeSearchQuery(q)).filter(Boolean)
+          : [sanitizeSearchQuery(search_query)]
+      const query = queryList.join(" | ")
       const wantAcademicOnly = Boolean(academicOnly)
-      const n = maxResults
+      const n = maxResults ?? DEFAULT_ACADEMIC_SEARCH_MAX_RESULTS
 
       const { tavilyApiKey: tavilyKey, serperApiKey: serperKey } = resolveSearchApiKeys({
         tavilyApiKey: input.tavilyApiKey,
@@ -325,12 +337,16 @@ export function createAcademicSearchTool(input: {
         input.onLog?.(`[Key] Serper 已就绪（${serperKey.length} chars）`)
       }
 
-      input.onLog?.(`正在检索：${provider === "tavily" ? "Tavily" : "Serper/Google"}…`)
+      input.onLog?.(
+        `正在检索：${provider === "tavily" ? "Tavily (advanced)" : "Serper/Google"}…` +
+          (queryList.length > 1 ? ` · ${queryList.length} 路并行` : "")
+      )
 
-      const raw =
-        provider === "tavily"
-          ? await tavilySearch(tavilyKey!, query, n)
-          : await serperSearch(serperKey!, query, n)
+      const runOne = async (q: string) =>
+        provider === "tavily" ? await tavilySearch(tavilyKey!, q, n) : await serperSearch(serperKey!, q, n)
+
+      const batches = await Promise.all(queryList.map(runOne))
+      const raw = mergeAcademicSearchHits([], batches.flat())
 
       const filtered0 = wantAcademicOnly ? filterAcademicOnly(raw) : raw
       // Attach stable source_id (1-based) for citation tracking.
@@ -388,7 +404,7 @@ export function createAcademicSearchTool(input: {
 
 export function synthesizeCitationsMarkdown(results: AcademicSearchHit[], title = "## 参考文献 (References)") {
   if (!results.length) return { markdown: "", count: 0 }
-  const lines = results.slice(0, 12).map((r, i) => {
+  const lines = results.slice(0, 24).map((r, i) => {
     const sid = r.source_id?.trim() ? r.source_id.trim() : String(i + 1)
     const yearMatch = r.publishedAt?.match(/\b(19|20)\d{2}\b/)
     const year = yearMatch ? ` (${yearMatch[0]})` : r.publishedAt ? ` (${r.publishedAt})` : ""
