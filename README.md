@@ -43,6 +43,16 @@ Agent 挂机闭环见 [AGENTS.md](./AGENTS.md) 与 [.cursor/rules/](.cursor/rule
 
 **公开部署 Proxy**：生产环境必须设置 `PROXY_ACCESS_TOKEN`；浏览器请求 `/api/proxy/*` 时需携带相同 token（Bearer 或 `X-ScholarKernel-Proxy-Token`）。开发环境未设置 token 时 proxy 开放以便本地调试。
 
+## 隐私模型（简）
+
+| 层级 | 存放内容 | 说明 |
+|------|----------|------|
+| 浏览器 sessionStorage | 运行时 API Key（明文） | 当前标签页推理使用 |
+| 浏览器 localStorage | 加密密钥包、Zustand 偏好 | 可选；主密码加密 |
+| 本机 SQLite | 对话、加密后的 runtimeKeys | 服务端 AES 加密持久化 |
+| 第三方 LLM/检索 | 对话内容与检索 query | 由你选择的供应商处理 |
+| `/api/proxy` | 转发流量 | 不持久化请求体；生产需鉴权 |
+
 勿将 `.env` / `.env.local` 提交到 Git。
 
 ## 技术栈

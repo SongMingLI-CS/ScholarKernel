@@ -135,6 +135,12 @@ export const KeysPanel = memo(function KeysPanel() {
             </span>
           </div>
           <div className="mt-1 text-xs text-muted-foreground">{t("keys.cloudEncryptedDesc")}</div>
+          <details className="mt-3 rounded-lg border border-border/50 bg-background/20 px-3 py-2">
+            <summary className="cursor-pointer text-xs font-semibold tracking-wide text-muted-foreground">
+              {t("keys.dataFlow.title")}
+            </summary>
+            <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground">{t("keys.dataFlow.body")}</p>
+          </details>
         </div>
         <span className="inline-flex items-center gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-200/90">
           <ShieldCheck className="h-4 w-4" />
