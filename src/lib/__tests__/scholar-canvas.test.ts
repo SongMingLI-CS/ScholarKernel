@@ -1,0 +1,41 @@
+import { describe, expect, it } from "vitest"
+
+import {
+  interceptScholarCanvasInAssistantBubble,
+  SCHOLAR_CANVAS_OUTPUT_DISCIPLINE,
+  stripScholarCanvasBlocks,
+} from "@/lib/scholar-canvas"
+
+describe("scholar-canvas", () => {
+  it("extracts title and content from complete tag", () => {
+    const raw = `前言\n<scholar-canvas title="文献综述">\n## 背景\n内容段落\n</scholar-canvas>\n尾声`
+    const hit = interceptScholarCanvasInAssistantBubble(raw)
+    expect(hit).not.toBeNull()
+    expect(hit!.title).toBe("文献综述")
+    expect(hit!.content).toContain("## 背景")
+    expect(hit!.hasCompleteTag).toBe(true)
+    expect(hit!.cleanedText).toBe("前言\n\n尾声")
+  })
+
+  it("supports streaming partial tag without closing marker", () => {
+    const raw = `<scholar-canvas title="报告">\n# 第一章\n正在撰写`
+    const hit = interceptScholarCanvasInAssistantBubble(raw)
+    expect(hit!.title).toBe("报告")
+    expect(hit!.content).toBe("# 第一章\n正在撰写")
+    expect(hit!.hasCompleteTag).toBe(false)
+    expect(hit!.cleanedText).toBe("")
+  })
+
+  it("returns null when no scholar-canvas tag", () => {
+    expect(interceptScholarCanvasInAssistantBubble("普通回复")).toBeNull()
+  })
+
+  it("stripScholarCanvasBlocks removes all canvas regions", () => {
+    const raw = `a<scholar-canvas title="x">inner</scholar-canvas>b`
+    expect(stripScholarCanvasBlocks(raw)).toBe("ab")
+  })
+
+  it("SCHOLAR_CANVAS_OUTPUT_DISCIPLINE mentions scholar-canvas tag", () => {
+    expect(SCHOLAR_CANVAS_OUTPUT_DISCIPLINE).toContain("<scholar-canvas")
+  })
+})

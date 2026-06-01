@@ -8,15 +8,29 @@ datasource db {
 }
 
 model Conversation {
-  id        String   @id @default(cuid())
+  id        String     @id @default(cuid())
   userId    String?
-  title     String   @default("新对话")
-  isPinned  Boolean  @default(false)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  title     String     @default("新对话")
+  isPinned  Boolean    @default(false)
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
   messages  Message[]
+  documents Document[]
 
   @@index([userId, isPinned, updatedAt])
+}
+
+model Document {
+  id             String       @id @default(cuid())
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  title          String       @default("未命名文档")
+  content        String       @default("")
+  version        Int          @default(1)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@index([conversationId, updatedAt])
 }
 
 model Message {

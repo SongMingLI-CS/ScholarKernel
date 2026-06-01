@@ -52,6 +52,26 @@ export type CreateMessageBody = {
   metadata?: MessageMetadata | null
 }
 
+export type ScholarDocument = {
+  id: string
+  conversationId: string
+  title: string
+  content: string
+  version: number
+  createdAt: string
+  updatedAt: string
+}
+
+export type CreateDocumentBody = {
+  title?: string
+  content?: string
+}
+
+export type PatchDocumentBody = {
+  title?: string
+  content?: string
+}
+
 function parseMessageMetadata(raw: unknown): MessageMetadata {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {}
   const rec = raw as Record<string, unknown>

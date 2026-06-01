@@ -1,5 +1,6 @@
 import { interceptWorkflowPlanInAssistantBubble } from "@/lib/agent-executor"
 import { dictionary } from "@/lib/locales"
+import { interceptScholarCanvasInAssistantBubble } from "@/lib/scholar-canvas"
 import { formatUserFacingErrorMessage } from "@/lib/user-facing-errors"
 import type { Lang } from "@/store/types"
 import { useAgentStore } from "@/store/useAgentStore"
@@ -15,7 +16,7 @@ export function looksLikeWorkflowPlanJson(content: string): boolean {
 
 export function bubbleAfterPlanIntercept(raw: string, lang: Lang): string {
   if (!looksLikeWorkflowPlanJson(raw) && !/^\s*```(?:json)?\s*[\[{]/i.test(raw.trim())) {
-    return raw
+    return processScholarCanvasIntercept(raw, lang)
   }
   const p = useAgentStore.getState().providers.active
   const hit = interceptWorkflowPlanInAssistantBubble(raw, {
@@ -23,10 +24,27 @@ export function bubbleAfterPlanIntercept(raw: string, lang: Lang): string {
     model: p.model,
     baseUrl: p.baseUrl,
   })
-  if (!hit || hit.planned.length === 0) return raw
+  if (!hit || hit.planned.length === 0) return processScholarCanvasIntercept(raw, lang)
   const cleaned = hit.cleanedText.trim()
-  if (cleaned.length > 0) return cleaned
+  if (cleaned.length > 0) return processScholarCanvasIntercept(cleaned, lang)
   return dictionary[lang]["chat.workflowRunningPlaceholder"]
+}
+
+function processScholarCanvasIntercept(raw: string, lang: Lang): string {
+  const hit = interceptScholarCanvasInAssistantBubble(raw)
+  if (!hit) return raw
+
+  useAgentStore.getState().actions.applyScholarCanvasStream({
+    title: hit.title,
+    content: hit.content,
+    complete: hit.hasCompleteTag,
+  })
+
+  if (hit.cleanedText.trim().length > 0) return hit.cleanedText.trim()
+
+  return hit.hasCompleteTag
+    ? dictionary[lang]["chat.canvasReady"]
+    : dictionary[lang]["chat.canvasStreaming"]
 }
 
 export function patchAssistantOnCrash(assistantId: string, e: unknown) {

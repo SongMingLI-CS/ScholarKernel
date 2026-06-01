@@ -5,6 +5,7 @@ import { AnimatePresence, motion } from "framer-motion"
 import { ArrowDown, ArrowUp, Bolt, Check, Copy, Download, Eraser, Link2, Paperclip, Radio, RotateCcw, Square } from "lucide-react"
 
 import { AcademicMarkdown, safeMarkdownContent } from "@/components/academic-markdown"
+import { ScholarCanvas, ScholarCanvasMobileDrawer } from "@/components/scholar-canvas"
 import { TopologyView } from "@/components/topology-view"
 import { Button } from "@/components/ui/button"
 import {
@@ -186,6 +187,8 @@ const ChatPanelInner = memo(function ChatPanelInner() {
   const chatMessages = useAgentStore((s) => s.chat.messages)
   const currentConversationId = useAgentStore((s) => s.conversations.currentId)
   const conversationLoading = useAgentStore((s) => s.conversations.loading)
+  const canvasOpen = useAgentStore((s) => s.canvas.canvasOpen)
+  const activeDocument = useAgentStore((s) => s.canvas.activeDocument)
   const pushToast = useAgentStore((s) => s.actions.pushToast)
   const renameConversation = useAgentStore((s) => s.actions.renameConversation)
   const clearCurrentConversation = useAgentStore((s) => s.actions.clearCurrentConversation)
@@ -619,8 +622,18 @@ const ChatPanelInner = memo(function ChatPanelInner() {
         </div>
       ) : null}
 
-      <div className="mx-auto flex h-full min-h-0 w-full max-w-[1200px] gap-4 px-4">
-        <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
+      <div
+        className={cn(
+          "mx-auto flex h-full min-h-0 w-full flex-1 gap-4 px-4 transition-all duration-300 ease-out",
+          canvasOpen ? "max-w-none" : "max-w-[1200px]"
+        )}
+      >
+        <div
+          className={cn(
+            "relative flex min-h-0 min-w-0 flex-col",
+            canvasOpen ? "min-w-0 flex-1 lg:w-[40%] lg:flex-none lg:shrink-0" : "flex-1"
+          )}
+        >
           <div
             ref={scrollRef}
             className="flex-1 min-h-0 overflow-y-auto terminal-scrollbar px-4 py-6"
@@ -986,7 +999,22 @@ const ChatPanelInner = memo(function ChatPanelInner() {
         </div>
 
         <AnimatePresence>
-          {topologyOpen ? (
+          {canvasOpen && activeDocument ? (
+            <motion.aside
+              key="scholar-canvas"
+              initial={{ opacity: 0, x: 24 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: 16 }}
+              transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
+              className="hidden h-full min-h-0 w-[60%] shrink-0 flex-col overflow-hidden py-6 lg:flex"
+            >
+              <ScholarCanvas className="h-full" />
+            </motion.aside>
+          ) : null}
+        </AnimatePresence>
+
+        <AnimatePresence>
+          {!canvasOpen && topologyOpen ? (
             <motion.aside
               key="topology"
               initial={{ opacity: 0, x: 16 }}
@@ -1015,6 +1043,7 @@ const ChatPanelInner = memo(function ChatPanelInner() {
           ) : null}
         </AnimatePresence>
       </div>
+      <ScholarCanvasMobileDrawer />
     </div>
   )
 })

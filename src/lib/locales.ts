@@ -86,6 +86,13 @@ export const dictionary = {
     "chat.replanPlanRetryHint":
       "上一次返回的任务规划 JSON 无效。请仅输出符合协议的任务列表 JSON（数组或 {\"tasks\":[...]}），不要任何解释、前后缀或 Markdown 代码块。",
     "chat.workflowRunningPlaceholder": "正在执行工作流…（规划 JSON 已拦截，不进入对话正文）",
+    "chat.canvasStreaming": "正在学术工坊中协作撰写文档…（正文已定向至右侧画板）",
+    "chat.canvasReady": "文档已生成至学术工坊，请在右侧画板查看与导出。",
+    "chat.canvas.title": "学术工坊",
+    "chat.canvas.close": "关闭画板",
+    "chat.canvas.exportMd": "导出 Markdown",
+    "chat.canvas.exportDoc": "导出 Word",
+    "chat.canvas.empty": "等待模型生成长文内容…",
     "chat.replanJsonOnlyHint":
       "【系统】刚才的任务规划 JSON 格式无效。请仅输出一个纯净的 JSON 数组（任务列表协议），不要包含任何解释、前后缀或 Markdown 代码块。",
     "chat.boot":
@@ -513,6 +520,13 @@ export const dictionary = {
     "chat.replanPlanRetryHint":
       "The previous workflow plan JSON was invalid. Output ONLY valid task-list JSON (array or {\"tasks\":[...]}), with no explanations, wrappers, or Markdown fences.",
     "chat.workflowRunningPlaceholder": "Running workflow… (plan JSON is suppressed from the reply body)",
+    "chat.canvasStreaming": "Collaborating on a document in Scholar Canvas… (content routed to the side panel)",
+    "chat.canvasReady": "Document ready in Scholar Canvas — view and export in the side panel.",
+    "chat.canvas.title": "Scholar Canvas",
+    "chat.canvas.close": "Close canvas",
+    "chat.canvas.exportMd": "Export Markdown",
+    "chat.canvas.exportDoc": "Export Word",
+    "chat.canvas.empty": "Waiting for long-form content from the model…",
     "chat.replanJsonOnlyHint":
       "[SYSTEM] The previous workflow plan JSON was invalid. Output ONLY a raw JSON array (task list schema), with no prose, prefixes, or Markdown fences.",
     "chat.boot":

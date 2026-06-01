@@ -87,6 +87,27 @@ export async function upsertMessageContent(
   await appendMessage(conversationId, chatMessageToCreateBody(message))
 }
 
+export async function createDocument(
+  conversationId: string,
+  body: { title?: string; content?: string }
+): Promise<import("@/lib/db-types").ScholarDocument> {
+  return apiFetch(`/api/conversations/${conversationId}/documents`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  })
+}
+
+export async function patchDocument(
+  conversationId: string,
+  docId: string,
+  patch: { title?: string; content?: string }
+): Promise<import("@/lib/db-types").ScholarDocument> {
+  return apiFetch(`/api/conversations/${conversationId}/documents/${docId}`, {
+    method: "PATCH",
+    body: JSON.stringify(patch),
+  })
+}
+
 export async function fetchSettings(): Promise<SettingsResponse> {
   return apiFetch<SettingsResponse>("/api/settings")
 }

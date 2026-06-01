@@ -1,17 +1,19 @@
 import { create } from "zustand"
 import { persist, subscribeWithSelector } from "zustand/middleware"
 
-import type { ConversationSummary } from "@/lib/db-types"
+import type { ConversationSummary, ScholarDocument } from "@/lib/db-types"
 import { prismaMessageToChat, chatMessageToCreateBody } from "@/lib/db-types"
 import {
   appendMessage,
   clearConversationMessages,
   createConversation as apiCreateConversation,
+  createDocument as apiCreateDocument,
   deleteConversation as apiDeleteConversation,
   fetchConversation,
   fetchConversations,
   fetchSettings,
   patchConversation as apiPatchConversation,
+  patchDocument as apiPatchDocument,
 } from "@/lib/conversation-api"
 
 import {
@@ -92,6 +94,7 @@ import type {
 } from "@/store/types"
 
 const messagePersistTimers = new Map<string, ReturnType<typeof setTimeout>>()
+const documentPersistTimer: { id: ReturnType<typeof setTimeout> | null } = { id: null }
 
 type AgentStore = {
   settings: AgentSettings
@@ -129,6 +132,10 @@ type AgentStore = {
     last: InferenceMetrics | null
     /** 最近完成的推理记录（最多 10 条），用于看板趋势图 */
     history: InferenceMetrics[]
+  }
+  canvas: {
+    activeDocument: ScholarDocument | null
+    canvasOpen: boolean
   }
 
   actions: {
@@ -194,6 +201,9 @@ type AgentStore = {
     closeToast: () => void
     resetTopology: () => void
     heartbeatSessionKeys: () => void
+    setCanvasOpen: (open: boolean) => void
+    closeCanvas: () => void
+    applyScholarCanvasStream: (input: { title: string; content: string; complete: boolean }) => void
   }
 }
 
@@ -387,6 +397,7 @@ export const useAgentStore = create<AgentStore>()(
         }),
         workflow: { version: 1, activeNodeId: null, isPlannerOutput: false, nodes: [] },
         inference: { streaming: null, last: null, history: [] },
+        canvas: { activeDocument: null, canvasOpen: false },
 
         actions: {
           // State guard: only change activePanel string; no side effects.
@@ -703,6 +714,7 @@ export const useAgentStore = create<AgentStore>()(
             chat: { messages: [] },
             workflow: { version: Date.now(), activeNodeId: null, isPlannerOutput: false, nodes: [] },
             topology: buildTopologyForActiveProvider(s.providers.active),
+            canvas: { activeDocument: null, canvasOpen: false },
           }))
           return conv
         },
@@ -712,6 +724,7 @@ export const useAgentStore = create<AgentStore>()(
             ...s,
             conversations: { ...s.conversations, currentId: id, loading: true },
             workflow: { version: Date.now(), activeNodeId: null, isPlannerOutput: false, nodes: [] },
+            canvas: { activeDocument: null, canvasOpen: false },
           }))
           try {
             const detail = await fetchConversation(id)
@@ -1038,6 +1051,75 @@ export const useAgentStore = create<AgentStore>()(
           })),
         heartbeatSessionKeys: () => {
           /* Route B: keys live in cloud memory; no sessionStorage heartbeat */
+        },
+        setCanvasOpen: (open) => set((s) => ({ ...s, canvas: { ...s.canvas, canvasOpen: open } })),
+        closeCanvas: () =>
+          set((s) => ({
+            ...s,
+            canvas: { activeDocument: s.canvas.activeDocument, canvasOpen: false },
+          })),
+        applyScholarCanvasStream: ({ title, content, complete }) => {
+          const st = get()
+          const convId = st.conversations.currentId
+          const prev = st.canvas.activeDocument
+          const nowIso = new Date().toISOString()
+
+          const nextDoc: ScholarDocument = prev
+            ? {
+                ...prev,
+                title: title.trim() || prev.title,
+                content,
+                updatedAt: nowIso,
+                ...(complete && content !== prev.content ? { version: prev.version + 1 } : {}),
+              }
+            : {
+                id: `local-${randomId()}`,
+                conversationId: convId ?? "",
+                title: title.trim() || "未命名文档",
+                content,
+                version: 1,
+                createdAt: nowIso,
+                updatedAt: nowIso,
+              }
+
+          set((s) => ({
+            ...s,
+            canvas: { activeDocument: nextDoc, canvasOpen: true },
+          }))
+
+          if (!convId) return
+
+          const schedulePersist = () => {
+            if (documentPersistTimer.id) clearTimeout(documentPersistTimer.id)
+            documentPersistTimer.id = setTimeout(() => {
+              documentPersistTimer.id = null
+              const cur = get()
+              const doc = cur.canvas.activeDocument
+              const cid = cur.conversations.currentId
+              if (!doc || !cid) return
+
+              if (doc.id.startsWith("local-")) {
+                void apiCreateDocument(cid, { title: doc.title, content: doc.content })
+                  .then((saved) => {
+                    set((s) => ({
+                      ...s,
+                      canvas: {
+                        ...s.canvas,
+                        activeDocument: s.canvas.activeDocument?.id === doc.id ? saved : s.canvas.activeDocument,
+                      },
+                    }))
+                  })
+                  .catch((e) => console.error("[create document]", e))
+                return
+              }
+
+              void apiPatchDocument(cid, doc.id, { title: doc.title, content: doc.content }).catch((e) =>
+                console.error("[patch document]", e)
+              )
+            }, complete ? 400 : 900)
+          }
+
+          schedulePersist()
         },
         },
       }

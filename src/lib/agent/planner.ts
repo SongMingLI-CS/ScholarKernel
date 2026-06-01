@@ -670,6 +670,9 @@ export const ACADEMIC_OUTPUT_DISCIPLINE = [
   "绝对禁止将长篇的英文 Abstract（摘要）或原始抓取文本直接粘贴到正文中！",
   "正文引用仅用 [1] [2] 等编号标注，与文末 References 列表编号一致。",
   "如果有表格，请使用标准 Markdown 表格语法；如果有数学公式，请严格使用 LaTeX 语法包围（如 $E=mc^2$ 或 $$公式$$）。",
+  "",
+  "【学术工坊 Scholar Canvas】",
+  "当你被要求撰写长篇综述、报告或完整代码时，请使用 `<scholar-canvas title=\"文档标题\">你的长篇内容</scholar-canvas>` 标签包裹输出，以便在用户的独立工作台中展示。",
 ].join("\n")
 
 /**
