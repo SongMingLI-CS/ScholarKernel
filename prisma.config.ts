@@ -9,6 +9,10 @@ export default defineConfig({
     path: "prisma/migrations",
   },
   datasource: {
-    url: process.env["DATABASE_URL"],
+    // CLI（migrate / db push）走直连；generate 阶段无 env 时用占位符
+    url:
+      process.env["DIRECT_URL"] ??
+      process.env["DATABASE_URL"] ??
+      "postgresql://placeholder:5432/placeholder",
   },
 });

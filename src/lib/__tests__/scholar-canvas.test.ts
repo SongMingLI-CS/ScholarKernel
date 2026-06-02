@@ -38,4 +38,9 @@ describe("scholar-canvas", () => {
   it("SCHOLAR_CANVAS_OUTPUT_DISCIPLINE mentions scholar-canvas tag", () => {
     expect(SCHOLAR_CANVAS_OUTPUT_DISCIPLINE).toContain("<scholar-canvas")
   })
+
+  it("SCHOLAR_CANVAS_OUTPUT_DISCIPLINE requires doctoral depth", () => {
+    expect(SCHOLAR_CANVAS_OUTPUT_DISCIPLINE).toContain("博士级别")
+    expect(SCHOLAR_CANVAS_OUTPUT_DISCIPLINE).toContain("算法复杂度")
+  })
 })

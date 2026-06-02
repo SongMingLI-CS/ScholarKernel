@@ -204,6 +204,7 @@ type AgentStore = {
     setCanvasOpen: (open: boolean) => void
     closeCanvas: () => void
     applyScholarCanvasStream: (input: { title: string; content: string; complete: boolean }) => void
+    updateCanvasContent: (content: string) => void
   }
 }
 
@@ -1120,6 +1121,48 @@ export const useAgentStore = create<AgentStore>()(
           }
 
           schedulePersist()
+        },
+        updateCanvasContent: (content) => {
+          const st = get()
+          const prev = st.canvas.activeDocument
+          if (!prev) return
+          const nowIso = new Date().toISOString()
+          const nextDoc: ScholarDocument = { ...prev, content, updatedAt: nowIso }
+          set((s) => ({
+            ...s,
+            canvas: { ...s.canvas, activeDocument: nextDoc },
+          }))
+
+          const convId = st.conversations.currentId
+          if (!convId) return
+
+          if (documentPersistTimer.id) clearTimeout(documentPersistTimer.id)
+          documentPersistTimer.id = setTimeout(() => {
+            documentPersistTimer.id = null
+            const cur = get()
+            const doc = cur.canvas.activeDocument
+            const cid = cur.conversations.currentId
+            if (!doc || !cid) return
+
+            if (doc.id.startsWith("local-")) {
+              void apiCreateDocument(cid, { title: doc.title, content: doc.content })
+                .then((saved) => {
+                  set((s) => ({
+                    ...s,
+                    canvas: {
+                      ...s.canvas,
+                      activeDocument: s.canvas.activeDocument?.id === doc.id ? saved : s.canvas.activeDocument,
+                    },
+                  }))
+                })
+                .catch((e) => console.error("[create document]", e))
+              return
+            }
+
+            void apiPatchDocument(cid, doc.id, { title: doc.title, content: doc.content }).catch((e) =>
+              console.error("[patch document]", e)
+            )
+          }, 900)
         },
         },
       }

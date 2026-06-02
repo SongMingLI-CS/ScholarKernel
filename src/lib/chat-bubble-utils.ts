@@ -1,6 +1,6 @@
 import { interceptWorkflowPlanInAssistantBubble } from "@/lib/agent-executor"
 import { dictionary } from "@/lib/locales"
-import { interceptScholarCanvasInAssistantBubble } from "@/lib/scholar-canvas"
+import { interceptScholarCanvasInAssistantBubble, buildCanvasChatPlaceholder } from "@/lib/scholar-canvas"
 import { formatUserFacingErrorMessage } from "@/lib/user-facing-errors"
 import type { Lang } from "@/store/types"
 import { useAgentStore } from "@/store/useAgentStore"
@@ -40,11 +40,10 @@ function processScholarCanvasIntercept(raw: string, lang: Lang): string {
     complete: hit.hasCompleteTag,
   })
 
-  if (hit.cleanedText.trim().length > 0) return hit.cleanedText.trim()
-
-  return hit.hasCompleteTag
-    ? dictionary[lang]["chat.canvasReady"]
-    : dictionary[lang]["chat.canvasStreaming"]
+  const placeholder = buildCanvasChatPlaceholder(hit.title, lang, !hit.hasCompleteTag)
+  const prefix = hit.cleanedText.trim()
+  if (prefix.length > 0) return `${prefix}\n\n${placeholder}`
+  return placeholder
 }
 
 export function patchAssistantOnCrash(assistantId: string, e: unknown) {

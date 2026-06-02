@@ -264,6 +264,7 @@ function TopologyFlowCanvas({
   const containerRef = useRef<HTMLDivElement>(null)
   const { fitView } = useReactFlow()
   const [measured, setMeasured] = useState(false)
+  const sizeRef = useRef({ width: 0, height: 0 })
 
   useEffect(() => {
     const el = containerRef.current
@@ -272,16 +273,29 @@ function TopologyFlowCanvas({
       return
     }
 
+    let raf = 0
     const update = () => {
       const { width, height } = el.getBoundingClientRect()
-      setMeasured(width > 0 && height > 0)
+      const ok = width > 0 && height > 0
+      const changed = width !== sizeRef.current.width || height !== sizeRef.current.height
+      sizeRef.current = { width, height }
+      setMeasured(ok)
+      if (ok && changed && flowNodes.length > 0) {
+        cancelAnimationFrame(raf)
+        raf = requestAnimationFrame(() => {
+          fitView({ padding: 0.22, duration: changed ? 480 : 0 })
+        })
+      }
     }
 
     update()
     const ro = new ResizeObserver(update)
     ro.observe(el)
-    return () => ro.disconnect()
-  }, [])
+    return () => {
+      cancelAnimationFrame(raf)
+      ro.disconnect()
+    }
+  }, [fitView, flowNodes.length])
 
   const statusSignature = useMemo(
     () => flowNodes.map((n) => `${n.id}:${(n.data as WorkflowNodeData).status ?? "pending"}`).join("|"),
@@ -291,13 +305,13 @@ function TopologyFlowCanvas({
   useEffect(() => {
     if (!measured || flowNodes.length === 0) return
     const timer = window.setTimeout(() => {
-      fitView({ padding: 0.2, duration: 800 })
-    }, 64)
+      fitView({ padding: 0.22, duration: 640 })
+    }, 48)
     return () => window.clearTimeout(timer)
   }, [fitView, flowNodes.length, layoutKey, measured, statusSignature])
 
   return (
-    <div ref={containerRef} className="absolute inset-0 h-full w-full min-h-[500px]">
+    <div ref={containerRef} className="absolute inset-0 h-full w-full min-h-0">
       {measured ? (
         <ReactFlow
           className="h-full w-full"
@@ -317,7 +331,7 @@ function TopologyFlowCanvas({
           <Controls className="!rounded-sm !border-border/60 !bg-background/60 !font-mono !text-xs" />
         </ReactFlow>
       ) : (
-        <div className="flex h-full min-h-[500px] w-full items-center justify-center font-mono text-[11px] text-muted-foreground">
+        <div className="flex h-full w-full items-center justify-center font-mono text-[11px] text-muted-foreground">
           拓扑画布初始化…
         </div>
       )}
@@ -413,12 +427,12 @@ export const TopologyView = memo(function TopologyView({ topology }: { topology?
   return (
     <div
       className={cn(
-        "h-full min-h-[500px] w-full overflow-hidden rounded-sm border border-border/60 bg-card/20",
+        "h-full min-h-0 w-full overflow-hidden rounded-sm border border-border/60 bg-card/20",
         anyRunning && "sk-topology-live"
       )}
     >
       <TopologyFlowErrorBoundary>
-        <div className="relative h-full w-full min-h-[500px] overflow-hidden">
+        <div className="relative h-full min-h-0 w-full overflow-hidden">
           <ReactFlowProvider>
             <TopologyFlowCanvas
               flowNodes={flowNodes}

@@ -2,7 +2,7 @@
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState, Component, type ErrorInfo, type ReactNode } from "react"
 import { AnimatePresence, motion } from "framer-motion"
-import { ArrowDown, ArrowUp, Bolt, Check, Copy, Download, Eraser, Link2, Paperclip, Radio, RotateCcw, Square } from "lucide-react"
+import { ArrowDown, ArrowUp, Bolt, Check, Copy, Download, Eraser, FileDown, FileText, Link2, Paperclip, Radio, RotateCcw, Square } from "lucide-react"
 
 import { AcademicMarkdown, safeMarkdownContent } from "@/components/academic-markdown"
 import { ScholarCanvas, ScholarCanvasMobileDrawer } from "@/components/scholar-canvas"
@@ -17,6 +17,7 @@ import {
   sanitizeExportFilename,
 } from "@/lib/conversation-utils"
 import { collectSourcesFromMessages, exportSourcesAsBibTeX, exportSourcesAsRIS } from "@/lib/citation-export"
+import { downloadConversationAsDocx, downloadConversationAsPdf } from "@/lib/export-utils"
 import { formatFileAttachmentBlock, readBrowserFileAsText } from "@/lib/browser-file"
 import { connKey, looksLikeWorkflowPlanJson } from "@/lib/chat-bubble-utils"
 import { useChatSend } from "@/hooks/use-chat-send"
@@ -173,6 +174,60 @@ class ChatPanelErrorBoundary extends Component<{ children: ReactNode }, { error:
   }
 }
 
+const TopologyMobileDrawer = memo(function TopologyMobileDrawer({
+  open,
+  onClose,
+  conversationId,
+}: {
+  open: boolean
+  onClose: () => void
+  conversationId: string | null
+}) {
+  const t = useT()
+
+  return (
+    <AnimatePresence>
+      {open ? (
+        <>
+          <motion.button
+            type="button"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-40 bg-black/60 lg:hidden"
+            aria-label="Close topology drawer"
+            onClick={onClose}
+          />
+          <motion.aside
+            initial={{ x: "100%" }}
+            animate={{ x: 0 }}
+            exit={{ x: "100%" }}
+            transition={{ type: "spring", stiffness: 420, damping: 36 }}
+            className="fixed inset-y-0 right-0 z-50 flex w-[min(100vw,420px)] flex-col overflow-hidden border-l border-border/60 bg-background lg:hidden"
+          >
+            <div className="flex shrink-0 items-center justify-between border-b border-border/60 px-4 py-3">
+              <div className="font-mono text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                Agent Topology
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 rounded-sm border-border/60 bg-background/40 font-mono text-[11px]"
+                onClick={onClose}
+              >
+                {t("chat.trace.collapse")}
+              </Button>
+            </div>
+            <div className="min-h-0 flex-1 overflow-hidden p-3">
+              <TopologyView key={conversationId ?? "topology-mobile"} />
+            </div>
+          </motion.aside>
+        </>
+      ) : null}
+    </AnimatePresence>
+  )
+})
+
 const ChatPanelInner = memo(function ChatPanelInner() {
   const t = useT()
   const provider = useAgentStore((s) => s.providers.active)
@@ -193,7 +248,12 @@ const ChatPanelInner = memo(function ChatPanelInner() {
   const renameConversation = useAgentStore((s) => s.actions.renameConversation)
   const clearCurrentConversation = useAgentStore((s) => s.actions.clearCurrentConversation)
   const [input, setInput] = useState("")
-  const [topologyOpen, setTopologyOpen] = useState(false)
+  const [topologyOpen, setTopologyOpen] = useState(() => {
+    if (typeof window === "undefined") return false
+    return window.matchMedia("(min-width: 1024px)").matches
+  })
+  const [exportBusy, setExportBusy] = useState<"word" | "pdf" | null>(null)
+  const showTopologyPanel = topologyOpen && !canvasOpen
   const [traceOpen, setTraceOpen] = useState<boolean>(showThinkingDefault)
   const [showScrollDown, setShowScrollDown] = useState(false)
   const scrollRef = useRef<HTMLDivElement | null>(null)
@@ -303,6 +363,51 @@ const ChatPanelInner = memo(function ChatPanelInner() {
     downloadTextFile(`${base}.ris`, exportSourcesAsRIS(sources), "application/x-research-info-systems;charset=utf-8")
     pushToast({ messageKey: "chat.export.citations.done", variant: "success", ttlMs: 2400 })
   }, [pushToast])
+
+  const getExportContext = useCallback(() => {
+    const st = useAgentStore.getState()
+    const exportable = st.chat.messages.filter((m) => m.role !== "system" || m.content.trim())
+    const conv = st.conversations.items.find((c) => c.id === st.conversations.currentId)
+    const title = conv?.title ?? t("chat.defaultTitle")
+    const base = sanitizeExportFilename(title).replace(/\.md$/, "")
+    return { exportable, title, base }
+  }, [t])
+
+  const onExportWord = useCallback(async () => {
+    const { exportable, title, base } = getExportContext()
+    if (exportable.length === 0) {
+      pushToast({ messageKey: "chat.export.empty", variant: "error", ttlMs: 3200 })
+      return
+    }
+    setExportBusy("word")
+    try {
+      await downloadConversationAsDocx(`${base}.docx`, title, exportable)
+      pushToast({ messageKey: "chat.export.word.done", variant: "success", ttlMs: 2400 })
+    } catch (e) {
+      console.error("[export word]", e)
+      pushToast({ messageKey: "chat.export.word.failed", variant: "error", ttlMs: 3200 })
+    } finally {
+      setExportBusy(null)
+    }
+  }, [getExportContext, pushToast])
+
+  const onExportPdf = useCallback(async () => {
+    const { exportable, title, base } = getExportContext()
+    if (exportable.length === 0) {
+      pushToast({ messageKey: "chat.export.empty", variant: "error", ttlMs: 3200 })
+      return
+    }
+    setExportBusy("pdf")
+    try {
+      await downloadConversationAsPdf(`${base}.pdf`, title, exportable)
+      pushToast({ messageKey: "chat.export.pdf.done", variant: "success", ttlMs: 2400 })
+    } catch (e) {
+      console.error("[export pdf]", e)
+      pushToast({ messageKey: "chat.export.pdf.failed", variant: "error", ttlMs: 3200 })
+    } finally {
+      setExportBusy(null)
+    }
+  }, [getExportContext, pushToast])
 
   const onImportDoi = useCallback(async () => {
     if (streaming) return
@@ -456,7 +561,12 @@ const ChatPanelInner = memo(function ChatPanelInner() {
   return (
     <div key={currentConversationId ?? "no-conv"} className="relative flex h-full min-h-0 flex-col overflow-hidden">
       <header className="sticky top-0 z-20 border-b border-border/60 bg-background/85 backdrop-blur-md dark:bg-[#0a0a0a]/85">
-        <div className="mx-auto flex w-full max-w-[1200px] items-center justify-between gap-3 px-4 py-3">
+        <div
+          className={cn(
+            "mx-auto flex w-full items-center justify-between gap-3 px-4 py-3",
+            !showTopologyPanel && !canvasOpen && "max-w-[1200px]"
+          )}
+        >
           <div className="min-w-0">
             <div className="flex items-center gap-2">
               <Radio className="h-4 w-4 text-emerald-400/90" />
@@ -543,6 +653,26 @@ const ChatPanelInner = memo(function ChatPanelInner() {
               variant="outline"
               size="sm"
               className="gap-2 rounded-sm border-border/60 bg-background/40 font-mono text-[11px]"
+              onClick={() => void onExportWord()}
+              disabled={streaming || exportBusy !== null || chatMessages.filter((m) => m.role !== "system").length === 0}
+            >
+              <FileText className="h-3.5 w-3.5" />
+              {t("chat.export.word")}
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-2 rounded-sm border-border/60 bg-background/40 font-mono text-[11px]"
+              onClick={() => void onExportPdf()}
+              disabled={streaming || exportBusy !== null || chatMessages.filter((m) => m.role !== "system").length === 0}
+            >
+              <FileDown className="h-3.5 w-3.5" />
+              {t("chat.export.pdf")}
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-2 rounded-sm border-border/60 bg-background/40 font-mono text-[11px]"
               onClick={onExportBibTeX}
               disabled={streaming}
             >
@@ -622,18 +752,22 @@ const ChatPanelInner = memo(function ChatPanelInner() {
         </div>
       ) : null}
 
-      <div
-        className={cn(
-          "mx-auto flex h-full min-h-0 w-full flex-1 gap-4 px-4 transition-all duration-300 ease-out",
-          canvasOpen ? "max-w-none" : "max-w-[1200px]"
-        )}
-      >
+      <div className="flex min-h-0 flex-1 overflow-hidden">
         <div
           className={cn(
-            "relative flex min-h-0 min-w-0 flex-col",
-            canvasOpen ? "min-w-0 flex-1 lg:w-[40%] lg:flex-none lg:shrink-0" : "flex-1"
+            "flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden px-4 transition-all duration-300 ease-out",
+            showTopologyPanel && "lg:pr-2"
           )}
         >
+          <div
+            className={cn(
+              "mx-auto flex h-full min-h-0 w-full flex-1 overflow-hidden transition-all duration-300 ease-out",
+              canvasOpen && activeDocument
+                ? "max-w-none lg:grid lg:grid-cols-[minmax(0,2fr)_minmax(0,3fr)] lg:gap-4"
+                : "max-w-[1200px] flex flex-col"
+            )}
+          >
+            <div className="relative flex min-h-0 min-w-0 flex-col">
           <div
             ref={scrollRef}
             className="flex-1 min-h-0 overflow-y-auto terminal-scrollbar px-4 py-6"
@@ -998,51 +1132,50 @@ const ChatPanelInner = memo(function ChatPanelInner() {
           </div>
         </div>
 
-        <AnimatePresence>
-          {canvasOpen && activeDocument ? (
-            <motion.aside
-              key="scholar-canvas"
-              initial={{ opacity: 0, x: 24 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: 16 }}
-              transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
-              className="hidden h-full min-h-0 w-[60%] shrink-0 flex-col overflow-hidden py-6 lg:flex"
-            >
-              <ScholarCanvas className="h-full" />
-            </motion.aside>
-          ) : null}
-        </AnimatePresence>
+        {activeDocument ? (
+          <aside
+            aria-hidden={!canvasOpen}
+            className={cn(
+              "hidden h-full min-h-0 min-w-0 flex-col overflow-hidden py-6 lg:flex",
+              !canvasOpen && "lg:hidden"
+            )}
+          >
+            <ScholarCanvas className="h-full" />
+          </aside>
+        ) : null}
+          </div>
+        </div>
 
-        <AnimatePresence>
-          {!canvasOpen && topologyOpen ? (
-            <motion.aside
-              key="topology"
-              initial={{ opacity: 0, x: 16 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: 12 }}
-              transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
-              className="hidden h-full w-[420px] shrink-0 flex-col overflow-hidden py-6 lg:flex"
-            >
-              <div className="mb-2 flex shrink-0 items-center justify-between">
-                <div className="font-mono text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-                  Agent Topology
-                </div>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="h-8 rounded-sm border-border/60 bg-background/40 font-mono text-[11px]"
-                  onClick={() => setTopologyOpen(false)}
-                >
-                  {t("chat.trace.collapse")}
-                </Button>
+        {showTopologyPanel ? (
+          <aside
+            aria-label="Agent topology"
+            className="hidden h-full min-h-0 w-96 shrink-0 flex-col overflow-hidden border-l border-border/60 bg-background/40 py-4 pl-4 pr-3 lg:flex"
+          >
+            <div className="mb-2 flex shrink-0 items-center justify-between gap-2 pr-1">
+              <div className="font-mono text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                Agent Topology
               </div>
-              <div className="min-h-[500px] flex-1 overflow-hidden">
-                <TopologyView key={currentConversationId ?? "topology"} />
-              </div>
-            </motion.aside>
-          ) : null}
-        </AnimatePresence>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 rounded-sm border-border/60 bg-background/40 font-mono text-[11px]"
+                onClick={() => setTopologyOpen(false)}
+              >
+                {t("chat.trace.collapse")}
+              </Button>
+            </div>
+            <div className="min-h-0 flex-1 overflow-hidden">
+              <TopologyView key={currentConversationId ?? "topology"} />
+            </div>
+          </aside>
+        ) : null}
       </div>
+
+      <TopologyMobileDrawer
+        open={topologyOpen && !canvasOpen}
+        onClose={() => setTopologyOpen(false)}
+        conversationId={currentConversationId}
+      />
       <ScholarCanvasMobileDrawer />
     </div>
   )
