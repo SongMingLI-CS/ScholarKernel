@@ -6,7 +6,7 @@ import { prisma } from "@/lib/prisma"
 type RouteCtx = { params: Promise<{ id: string; docId: string }> }
 
 async function findOwnedDocument(req: Request, conversationId: string, docId: string) {
-  const userId = resolveUserIdFromRequest(req)
+  const userId = await resolveUserIdFromRequest(req)
   if (!userId) return { userId: null as string | null, document: null }
 
   const conversation = await prisma.conversation.findFirst({

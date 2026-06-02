@@ -1,21 +1,26 @@
 import { describe, expect, it } from "vitest"
 
 import { exportMarkdownAsDocx } from "@/lib/export-utils"
-import { buildCanvasChatPlaceholder } from "@/lib/scholar-canvas"
-import { htmlToMarkdown, markdownToHtml } from "@/lib/markdown-bridge"
+import { buildCanvasChatPlaceholder, parseBubbleContentSegments } from "@/lib/scholar-canvas"
+import { htmlToMarkdown, markdownToCanvasHtml, markdownToHtml } from "@/lib/markdown-bridge"
 
 describe("buildCanvasChatPlaceholder", () => {
-  it("returns titled ready placeholder in zh", () => {
-    const text = buildCanvasChatPlaceholder("Transformer 综述", "zh", false)
-    expect(text).toContain("📝")
-    expect(text).toContain("《Transformer 综述》")
-    expect(text).toContain("请查阅并编辑")
+  it("returns titled ready card payload in zh", () => {
+    const text = buildCanvasChatPlaceholder("Transformer 综述", "zh", false, 900)
+    const segments = parseBubbleContentSegments(text)
+    expect(segments[0]).toMatchObject({
+      type: "canvas-card",
+      card: { title: "Transformer 综述", charCount: 900, streaming: false },
+    })
   })
 
-  it("returns streaming placeholder in en", () => {
-    const text = buildCanvasChatPlaceholder("Survey", "en", true)
-    expect(text).toContain("Drafting")
-    expect(text).toContain("Survey")
+  it("returns streaming card payload in en", () => {
+    const text = buildCanvasChatPlaceholder("Survey", "en", true, 12)
+    const segments = parseBubbleContentSegments(text)
+    expect(segments[0]).toMatchObject({
+      type: "canvas-card",
+      card: { title: "Survey", charCount: 12, streaming: true },
+    })
   })
 })
 
@@ -36,5 +41,10 @@ describe("markdown-bridge", () => {
     const back = htmlToMarkdown(html)
     expect(back).toContain("Section")
     expect(back).toContain("**world**")
+  })
+
+  it("renders inline LaTeX in canvas html via katex", () => {
+    const html = markdownToCanvasHtml("复杂度 $O(N \\log N)$ 分析")
+    expect(html).toContain('class="katex')
   })
 })

@@ -1,3 +1,4 @@
+import { jsonError, jsonOk, parseJsonBody } from "@/lib/api-utils"
 import {
   EMPTY_RUNTIME_KEYS,
   RUNTIME_KEY_FIELDS,
@@ -7,7 +8,6 @@ import {
 } from "@/store/useAgentStore"
 import { resolveUserIdFromRequest } from "@/lib/auth-user"
 import { decryptFromStorage, encryptForStorage } from "@/lib/crypto-server"
-import { jsonError, jsonOk, parseJsonBody } from "@/lib/api-utils"
 import type { SettingsPatchBody, SettingsResponse } from "@/lib/db-types"
 import { prisma } from "@/lib/prisma"
 
@@ -42,9 +42,7 @@ function encryptRuntimeKeys(keys: RuntimeKeys | null): string | null {
   return encryptForStorage(JSON.stringify(keys))
 }
 
-async function getOrCreateSettings(req: Request) {
-  const userId = resolveUserIdFromRequest(req)
-  if (!userId) throw new Error("Unauthorized")
+async function getOrCreateSettings(userId: string) {
   return prisma.userSetting.upsert({
     where: { userId },
     create: { userId, theme: "dark" },
@@ -68,9 +66,9 @@ function toSettingsResponse(row: {
 
 export async function GET(req: Request) {
   try {
-    const userId = resolveUserIdFromRequest(req)
+    const userId = await resolveUserIdFromRequest(req)
     if (!userId) return jsonError("Unauthorized", 401)
-    const row = await getOrCreateSettings(req)
+    const row = await getOrCreateSettings(userId)
     return jsonOk(toSettingsResponse(row))
   } catch (e) {
     console.error("[GET /api/settings]", e)
@@ -83,9 +81,9 @@ export async function PATCH(req: Request) {
   if (!body) return jsonError("Invalid body", 400)
 
   try {
-    const userId = resolveUserIdFromRequest(req)
+    const userId = await resolveUserIdFromRequest(req)
     if (!userId) return jsonError("Unauthorized", 401)
-    const current = await getOrCreateSettings(req)
+    const current = await getOrCreateSettings(userId)
     const currentKeys = decryptRuntimeKeys(current.runtimeKeys)
 
     const nextTheme: ThemeMode | undefined =

@@ -8,7 +8,7 @@ const { findMany, create } = vi.hoisted(() => ({
 }))
 
 vi.mock("@/lib/auth-user", () => ({
-  resolveUserIdFromRequest: vi.fn(() => "user-test"),
+  resolveUserIdFromRequest: vi.fn(async () => "user-test"),
   conversationOwnerWhere: (userId: string) => ({ userId }),
 }))
 
@@ -26,11 +26,11 @@ import { resolveUserIdFromRequest } from "@/lib/auth-user"
 describe("/api/conversations", () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    vi.mocked(resolveUserIdFromRequest).mockReturnValue("user-test")
+    vi.mocked(resolveUserIdFromRequest).mockResolvedValue("user-test")
   })
 
   it("GET returns 401 when unauthenticated", async () => {
-    vi.mocked(resolveUserIdFromRequest).mockReturnValueOnce(null)
+    vi.mocked(resolveUserIdFromRequest).mockResolvedValueOnce(null)
     const res = await GET(new Request("http://localhost/api/conversations"))
     expect(res.status).toBe(401)
   })

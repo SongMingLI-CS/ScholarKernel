@@ -12,7 +12,7 @@ const { findFirst, create, upsert, update, deleteMany, transaction } = vi.hoiste
 }))
 
 vi.mock("@/lib/auth-user", () => ({
-  resolveUserIdFromRequest: vi.fn(() => "user-test"),
+  resolveUserIdFromRequest: vi.fn(async () => "user-test"),
   conversationOwnerWhere: (userId: string) => ({ userId }),
 }))
 
@@ -38,7 +38,7 @@ const ctx = { params: Promise.resolve({ id: "conv-1" }) }
 describe("/api/conversations/[id]/messages", () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    vi.mocked(resolveUserIdFromRequest).mockReturnValue("user-test")
+    vi.mocked(resolveUserIdFromRequest).mockResolvedValue("user-test")
     transaction.mockImplementation(async (ops: unknown[]) => {
       const results = []
       for (const op of ops) results.push(await op)
@@ -57,7 +57,7 @@ describe("/api/conversations/[id]/messages", () => {
   })
 
   it("POST returns 401 when unauthenticated", async () => {
-    vi.mocked(resolveUserIdFromRequest).mockReturnValueOnce(null)
+    vi.mocked(resolveUserIdFromRequest).mockResolvedValueOnce(null)
     const req = new Request("http://localhost/api/conversations/conv-1/messages", {
       method: "POST",
       headers: { "Content-Type": "application/json" },

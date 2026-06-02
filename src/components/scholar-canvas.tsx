@@ -12,7 +12,13 @@ import { useT } from "@/lib/locales"
 import { cn } from "@/lib/utils"
 import { useAgentStore } from "@/store/useAgentStore"
 
-export const ScholarCanvas = memo(function ScholarCanvas({ className }: { className?: string }) {
+export const ScholarCanvas = memo(function ScholarCanvas({
+  className,
+  highlightPulse = false,
+}: {
+  className?: string
+  highlightPulse?: boolean
+}) {
   const t = useT()
   const doc = useAgentStore((s) => s.canvas.activeDocument)
   const closeCanvas = useAgentStore((s) => s.actions.closeCanvas)
@@ -50,13 +56,14 @@ export const ScholarCanvas = memo(function ScholarCanvas({ className }: { classN
     <div
       className={cn(
         "flex h-full min-h-0 flex-col overflow-hidden rounded-sm border border-border/60 bg-card/20 shadow-[inset_0_1px_0_oklch(1_0_0/0.04)]",
+        highlightPulse && "sk-canvas-panel-highlight ring-2 ring-emerald-400/40",
         className
       )}
     >
       <header className="flex shrink-0 items-center justify-between gap-3 border-b border-border/60 bg-background/70 px-4 py-3 backdrop-blur-md">
-        <div className="min-w-0">
+        <div className="min-w-0 flex-1">
           <div className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">{t("chat.canvas.title")}</div>
-          <h2 className="truncate font-sans text-base font-semibold text-foreground/95">{doc.title}</h2>
+          <h2 className="break-words font-sans text-base font-semibold leading-snug text-foreground/95">{doc.title}</h2>
         </div>
         <div className="flex shrink-0 items-center gap-1.5">
           <Button
@@ -94,14 +101,17 @@ export const ScholarCanvas = memo(function ScholarCanvas({ className }: { classN
         </div>
       </header>
 
-      <div className="min-h-0 flex-1 overflow-y-auto sk-scrollbar px-6 py-8 md:px-10">
+      <div
+        data-testid="scholar-canvas-scroll"
+        className="min-h-0 flex-1 overflow-y-auto sk-scrollbar px-6 py-8 md:px-10"
+      >
         {doc.content.trim() || doc.id ? (
           <CanvasEditor
             docId={doc.id}
             content={doc.content}
             onChange={onEditorChange}
             placeholder={t("chat.canvas.empty")}
-            className="text-[15px] leading-8"
+            className="text-[15px] leading-7"
           />
         ) : (
           <p className="font-mono text-sm text-muted-foreground">{t("chat.canvas.empty")}</p>
@@ -112,7 +122,11 @@ export const ScholarCanvas = memo(function ScholarCanvas({ className }: { classN
 })
 
 /** Mobile full-screen drawer for Scholar Canvas (< lg). */
-export const ScholarCanvasMobileDrawer = memo(function ScholarCanvasMobileDrawer() {
+export const ScholarCanvasMobileDrawer = memo(function ScholarCanvasMobileDrawer({
+  highlightPulse = false,
+}: {
+  highlightPulse?: boolean
+}) {
   const canvasOpen = useAgentStore((s) => s.canvas.canvasOpen)
   const activeDocument = useAgentStore((s) => s.canvas.activeDocument)
   const closeCanvas = useAgentStore((s) => s.actions.closeCanvas)
@@ -137,7 +151,7 @@ export const ScholarCanvasMobileDrawer = memo(function ScholarCanvasMobileDrawer
             transition={{ type: "spring", stiffness: 420, damping: 36 }}
             className="fixed inset-x-0 bottom-0 top-12 z-50 flex flex-col overflow-hidden bg-background lg:hidden"
           >
-            <ScholarCanvas className="h-full rounded-none border-0" />
+            <ScholarCanvas className="h-full rounded-none border-0" highlightPulse={highlightPulse} />
           </motion.div>
         </>
       ) : null}

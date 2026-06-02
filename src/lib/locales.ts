@@ -93,6 +93,11 @@ export const dictionary = {
     "chat.canvas.exportMd": "导出 Markdown",
     "chat.canvas.exportDoc": "导出 Word",
     "chat.canvas.empty": "等待模型生成长文内容…",
+    "chat.canvasCard.badge": "学术工坊",
+    "chat.canvasCard.streaming": "正在协作撰写",
+    "chat.canvasCard.ready": "文档已就绪",
+    "chat.canvasCard.chars": "{count} 字",
+    "chat.canvasCard.viewInPanel": "⚡ 查看文档",
     "chat.replanJsonOnlyHint":
       "【系统】刚才的任务规划 JSON 格式无效。请仅输出一个纯净的 JSON 数组（任务列表协议），不要包含任何解释、前后缀或 Markdown 代码块。",
     "chat.boot":
@@ -533,6 +538,11 @@ export const dictionary = {
     "chat.canvas.exportMd": "Export Markdown",
     "chat.canvas.exportDoc": "Export Word",
     "chat.canvas.empty": "Waiting for long-form content from the model…",
+    "chat.canvasCard.badge": "Scholar Canvas",
+    "chat.canvasCard.streaming": "Drafting in workspace",
+    "chat.canvasCard.ready": "Document ready",
+    "chat.canvasCard.chars": "{count} chars",
+    "chat.canvasCard.viewInPanel": "⚡ View document",
     "chat.replanJsonOnlyHint":
       "[SYSTEM] The previous workflow plan JSON was invalid. Output ONLY a raw JSON array (task list schema), with no prose, prefixes, or Markdown fences.",
     "chat.boot":

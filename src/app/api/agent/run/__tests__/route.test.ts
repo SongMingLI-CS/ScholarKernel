@@ -7,7 +7,7 @@ const { runAgentOnServer } = vi.hoisted(() => ({
 }))
 
 vi.mock("@/lib/auth-user", () => ({
-  resolveUserIdFromRequest: vi.fn(() => "user-test"),
+  resolveUserIdFromRequest: vi.fn(async () => "user-test"),
 }))
 
 vi.mock("@/lib/agent-server-run", () => ({
@@ -19,11 +19,11 @@ import { resolveUserIdFromRequest } from "@/lib/auth-user"
 describe("POST /api/agent/run", () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    vi.mocked(resolveUserIdFromRequest).mockReturnValue("user-test")
+    vi.mocked(resolveUserIdFromRequest).mockResolvedValue("user-test")
   })
 
   it("returns 401 when unauthenticated", async () => {
-    vi.mocked(resolveUserIdFromRequest).mockReturnValueOnce(null)
+    vi.mocked(resolveUserIdFromRequest).mockResolvedValueOnce(null)
     const res = await POST(
       new Request("http://localhost/api/agent/run", {
         method: "POST",

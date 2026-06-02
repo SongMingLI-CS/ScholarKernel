@@ -1,13 +1,7 @@
 import { jsonOk } from "@/lib/api-utils"
-import { buildSessionClearCookie } from "@/lib/session-auth"
+import { signOut } from "@/auth"
 
 export async function POST() {
-  return jsonOk(
-    { ok: true },
-    {
-      headers: {
-        "Set-Cookie": buildSessionClearCookie(),
-      },
-    }
-  )
+  await signOut({ redirect: false })
+  return jsonOk({ ok: true })
 }

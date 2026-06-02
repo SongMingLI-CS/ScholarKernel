@@ -19,7 +19,7 @@ export async function POST(req: Request, ctx: RouteCtx) {
   }
 
   try {
-    const userId = resolveUserIdFromRequest(req)
+    const userId = await resolveUserIdFromRequest(req)
     if (!userId) return jsonError("Unauthorized", 401)
     const conversation = await prisma.conversation.findFirst({
       where: { id: conversationId, ...conversationOwnerWhere(userId) },
@@ -74,7 +74,7 @@ export async function DELETE(req: Request, ctx: RouteCtx) {
   const { id: conversationId } = await ctx.params
 
   try {
-    const userId = resolveUserIdFromRequest(req)
+    const userId = await resolveUserIdFromRequest(req)
     if (!userId) return jsonError("Unauthorized", 401)
     const conversation = await prisma.conversation.findFirst({
       where: { id: conversationId, ...conversationOwnerWhere(userId) },

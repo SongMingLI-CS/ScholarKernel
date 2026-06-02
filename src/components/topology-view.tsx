@@ -102,7 +102,7 @@ function IndustrialNode({ data }: NodeProps<ProviderNodeData | WorkflowNodeData>
   return (
     <div
       className={cn(
-        "relative w-[200px] rounded-sm border px-3 py-2 text-sm font-semibold tracking-wide transition-shadow duration-300",
+        "relative w-full min-w-0 max-w-[220px] rounded-sm border px-3 py-2 text-sm font-semibold tracking-wide transition-shadow duration-300",
         statusClass(nodeStatus),
         isWarn && "border-amber-500/55 bg-amber-500/10 text-amber-100",
         energize && "sk-node-energy"
@@ -120,7 +120,7 @@ function IndustrialNode({ data }: NodeProps<ProviderNodeData | WorkflowNodeData>
             </span>
           ) : null}
         </div>
-        <div className="mt-1 leading-snug">{data.label}</div>
+        <div className="mt-1 break-words leading-snug [overflow-wrap:anywhere]">{data.label}</div>
       </div>
 
       {isWorkflow ? (
@@ -220,7 +220,7 @@ function workflowToFlow(nodes: WorkflowNode[], activeNodeId: string | null): { n
     type: "industrial",
     draggable: false,
     selectable: true,
-    style: { width: 220 },
+    style: { width: 220, minWidth: 0, maxWidth: "100%" },
   }))
 
   const flowEdges: Edge[] = []
@@ -266,6 +266,14 @@ function TopologyFlowCanvas({
   const [measured, setMeasured] = useState(false)
   const sizeRef = useRef({ width: 0, height: 0 })
 
+  const refitTopology = useCallback(
+    (duration = 480) => {
+      if (flowNodes.length === 0) return
+      fitView({ padding: 0.22, duration })
+    },
+    [fitView, flowNodes.length]
+  )
+
   useEffect(() => {
     const el = containerRef.current
     if (!el || typeof ResizeObserver === "undefined") {
@@ -283,7 +291,7 @@ function TopologyFlowCanvas({
       if (ok && changed && flowNodes.length > 0) {
         cancelAnimationFrame(raf)
         raf = requestAnimationFrame(() => {
-          fitView({ padding: 0.22, duration: changed ? 480 : 0 })
+          refitTopology(changed ? 480 : 0)
         })
       }
     }
@@ -295,7 +303,21 @@ function TopologyFlowCanvas({
       cancelAnimationFrame(raf)
       ro.disconnect()
     }
-  }, [fitView, flowNodes.length])
+  }, [flowNodes.length, refitTopology])
+
+  useEffect(() => {
+    if (flowNodes.length === 0) return
+    let raf = 0
+    const onWindowResize = () => {
+      cancelAnimationFrame(raf)
+      raf = requestAnimationFrame(() => refitTopology(320))
+    }
+    window.addEventListener("resize", onWindowResize)
+    return () => {
+      cancelAnimationFrame(raf)
+      window.removeEventListener("resize", onWindowResize)
+    }
+  }, [flowNodes.length, refitTopology])
 
   const statusSignature = useMemo(
     () => flowNodes.map((n) => `${n.id}:${(n.data as WorkflowNodeData).status ?? "pending"}`).join("|"),
@@ -304,11 +326,9 @@ function TopologyFlowCanvas({
 
   useEffect(() => {
     if (!measured || flowNodes.length === 0) return
-    const timer = window.setTimeout(() => {
-      fitView({ padding: 0.22, duration: 640 })
-    }, 48)
+    const timer = window.setTimeout(() => refitTopology(640), 48)
     return () => window.clearTimeout(timer)
-  }, [fitView, flowNodes.length, layoutKey, measured, statusSignature])
+  }, [flowNodes.length, layoutKey, measured, refitTopology, statusSignature])
 
   return (
     <div ref={containerRef} className="absolute inset-0 h-full w-full min-h-0">
@@ -362,7 +382,7 @@ export const TopologyView = memo(function TopologyView({ topology }: { topology?
       type: "industrial",
       draggable: false,
       selectable: true,
-      style: { width: 200 },
+      style: { width: 200, minWidth: 0, maxWidth: "100%" },
     }))
   }, [topology])
 

@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest"
 
 import {
+  buildCanvasChatPlaceholder,
   interceptScholarCanvasInAssistantBubble,
+  parseBubbleContentSegments,
   SCHOLAR_CANVAS_OUTPUT_DISCIPLINE,
   stripScholarCanvasBlocks,
 } from "@/lib/scholar-canvas"
@@ -42,5 +44,25 @@ describe("scholar-canvas", () => {
   it("SCHOLAR_CANVAS_OUTPUT_DISCIPLINE requires doctoral depth", () => {
     expect(SCHOLAR_CANVAS_OUTPUT_DISCIPLINE).toContain("博士级别")
     expect(SCHOLAR_CANVAS_OUTPUT_DISCIPLINE).toContain("算法复杂度")
+  })
+
+  it("buildCanvasChatPlaceholder embeds parseable card marker with char count", () => {
+    const marker = buildCanvasChatPlaceholder("文献综述", "zh", false, 1280)
+    const segments = parseBubbleContentSegments(marker)
+    expect(segments).toHaveLength(1)
+    expect(segments[0]).toMatchObject({
+      type: "canvas-card",
+      card: { title: "文献综述", charCount: 1280, streaming: false },
+    })
+  })
+
+  it("parseBubbleContentSegments splits prefix markdown and card", () => {
+    const raw = `简短说明\n\n${buildCanvasChatPlaceholder("报告", "zh", true, 42)}`
+    const segments = parseBubbleContentSegments(raw)
+    expect(segments[0]).toEqual({ type: "markdown", text: "简短说明" })
+    expect(segments[1]).toMatchObject({
+      type: "canvas-card",
+      card: { title: "报告", charCount: 42, streaming: true },
+    })
   })
 })

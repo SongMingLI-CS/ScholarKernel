@@ -8,7 +8,7 @@ const { upsert, update } = vi.hoisted(() => ({
 }))
 
 vi.mock("@/lib/auth-user", () => ({
-  resolveUserIdFromRequest: vi.fn(() => "user-test"),
+  resolveUserIdFromRequest: vi.fn(async () => "user-test"),
 }))
 
 vi.mock("@/lib/crypto-server", () => ({
@@ -30,7 +30,7 @@ import { resolveUserIdFromRequest } from "@/lib/auth-user"
 describe("/api/settings", () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    vi.mocked(resolveUserIdFromRequest).mockReturnValue("user-test")
+    vi.mocked(resolveUserIdFromRequest).mockResolvedValue("user-test")
     upsert.mockResolvedValue({
       userId: "user-test",
       theme: "dark",
@@ -40,7 +40,7 @@ describe("/api/settings", () => {
   })
 
   it("GET returns 401 when unauthenticated", async () => {
-    vi.mocked(resolveUserIdFromRequest).mockReturnValueOnce(null)
+    vi.mocked(resolveUserIdFromRequest).mockResolvedValueOnce(null)
     const res = await GET(new Request("http://localhost/api/settings"))
     expect(res.status).toBe(401)
   })

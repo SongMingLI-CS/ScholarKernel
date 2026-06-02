@@ -5,7 +5,7 @@ import { jsonError, jsonOk } from "@/lib/api-utils"
 type RouteCtx = { params: Promise<{ id: string }> }
 
 export async function GET(req: Request, ctx: RouteCtx) {
-  const userId = resolveUserIdFromRequest(req)
+  const userId = await resolveUserIdFromRequest(req)
   if (!userId) return jsonError("Unauthorized", 401)
 
   const { id } = await ctx.params

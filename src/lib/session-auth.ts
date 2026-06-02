@@ -4,7 +4,7 @@ export const AUTH_SESSION_COOKIE = "sk_session"
 export const AUTHENTICATED_USER_ID = "primary_user"
 const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000
 
-function readAuthPassword(): string | undefined {
+export function readAuthPassword(): string | undefined {
   const raw = process.env.AUTH_PASSWORD
   const trimmed = typeof raw === "string" ? raw.trim() : ""
   return trimmed.length > 0 ? trimmed : undefined
@@ -124,12 +124,14 @@ export function createAuthenticatedSessionToken(): string {
   return createSessionToken(readAuthenticatedUserId())
 }
 
-export function hasValidAuthSession(req: Request): boolean {
+export async function hasValidAuthSession(_req?: Request): Promise<boolean> {
   if (!isAuthEnabled()) return false
-  return resolveSessionUserIdFromRequest(req) != null
+  const { auth } = await import("@/auth")
+  const session = await auth()
+  return Boolean(session?.user?.id)
 }
 
 /** @deprecated use hasValidAuthSession */
-export function isValidSessionRequest(req: Request): boolean {
+export async function isValidSessionRequest(req: Request): Promise<boolean> {
   return hasValidAuthSession(req)
 }

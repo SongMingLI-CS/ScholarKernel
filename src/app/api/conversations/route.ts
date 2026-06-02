@@ -9,7 +9,7 @@ function parseLimit(raw: string | null, fallback = 50, max = 100) {
 }
 
 export async function GET(req: Request) {
-  const userId = resolveUserIdFromRequest(req)
+  const userId = await resolveUserIdFromRequest(req)
   if (!userId) return jsonError("Unauthorized", 401)
   try {
     const url = new URL(req.url)
@@ -49,7 +49,7 @@ export async function GET(req: Request) {
 }
 
 export async function POST(req: Request) {
-  const userId = resolveUserIdFromRequest(req)
+  const userId = await resolveUserIdFromRequest(req)
   if (!userId) return jsonError("Unauthorized", 401)
   try {
     const conversation = await prisma.conversation.create({

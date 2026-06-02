@@ -40,7 +40,7 @@ function processScholarCanvasIntercept(raw: string, lang: Lang): string {
     complete: hit.hasCompleteTag,
   })
 
-  const placeholder = buildCanvasChatPlaceholder(hit.title, lang, !hit.hasCompleteTag)
+  const placeholder = buildCanvasChatPlaceholder(hit.title, lang, !hit.hasCompleteTag, hit.content.length)
   const prefix = hit.cleanedText.trim()
   if (prefix.length > 0) return `${prefix}\n\n${placeholder}`
   return placeholder

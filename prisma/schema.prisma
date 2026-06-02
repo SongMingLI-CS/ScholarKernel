@@ -7,9 +7,61 @@ datasource db {
   provider = "postgresql"
 }
 
+// --- NextAuth.js standard models ---
+
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  email         String?   @unique
+  emailVerified DateTime?
+  image         String?
+  passwordHash  String?
+  accounts      Account[]
+  sessions      Session[]
+  conversations Conversation[]
+  settings      UserSetting?
+  agentJobs     AgentJob[]
+}
+
+model Account {
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([provider, providerAccountId])
+}
+
+model Session {
+  sessionToken String   @id
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@id([identifier, token])
+}
+
+// --- Application models ---
+
 model Conversation {
   id        String     @id @default(cuid())
   userId    String?
+  user      User?      @relation(fields: [userId], references: [id], onDelete: Cascade)
   title     String     @default("新对话")
   isPinned  Boolean    @default(false)
   createdAt DateTime   @default(now())
@@ -47,6 +99,7 @@ model Message {
 
 model UserSetting {
   userId      String   @id
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   theme       String   @default("dark")
   runtimeKeys String?
   updatedAt   DateTime @updatedAt
@@ -55,6 +108,7 @@ model UserSetting {
 model AgentJob {
   id         String   @id @default(cuid())
   userId     String?
+  user       User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
   status     String   @default("pending")
   input      String
   provider   Json?

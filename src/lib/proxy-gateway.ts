@@ -64,8 +64,8 @@ export function isProxyAuthRequired(): boolean {
   return isProductionEnv() || Boolean(readProxyAccessToken())
 }
 
-export function checkProxyAuth(req: Request): ProxyAuthResult {
-  if (hasValidAuthSession(req)) return { ok: true }
+export async function checkProxyAuth(req: Request): Promise<ProxyAuthResult> {
+  if (await hasValidAuthSession(req)) return { ok: true }
 
   const configured = readProxyAccessToken()
   if (isProductionEnv() && !configured) {

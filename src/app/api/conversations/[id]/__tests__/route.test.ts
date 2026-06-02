@@ -9,7 +9,7 @@ const { findFirst, update, deleteFn } = vi.hoisted(() => ({
 }))
 
 vi.mock("@/lib/auth-user", () => ({
-  resolveUserIdFromRequest: () => "user-test",
+  resolveUserIdFromRequest: async () => "user-test",
   conversationOwnerWhere: (userId: string) => ({ userId }),
 }))
 

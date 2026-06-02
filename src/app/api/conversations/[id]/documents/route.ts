@@ -10,7 +10,7 @@ export async function POST(req: Request, ctx: RouteCtx) {
   const body = await parseJsonBody<CreateDocumentBody>(req)
 
   try {
-    const userId = resolveUserIdFromRequest(req)
+    const userId = await resolveUserIdFromRequest(req)
     if (!userId) return jsonError("Unauthorized", 401)
 
     const conversation = await prisma.conversation.findFirst({

@@ -8,7 +8,7 @@ const { findFirst, create } = vi.hoisted(() => ({
 }))
 
 vi.mock("@/lib/auth-user", () => ({
-  resolveUserIdFromRequest: vi.fn(() => "user-test"),
+  resolveUserIdFromRequest: vi.fn(async () => "user-test"),
   conversationOwnerWhere: (userId: string) => ({ userId }),
 }))
 
@@ -26,11 +26,11 @@ const ctx = { params: Promise.resolve({ id: "conv-1" }) }
 describe("POST /api/conversations/[id]/documents", () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    vi.mocked(resolveUserIdFromRequest).mockReturnValue("user-test")
+    vi.mocked(resolveUserIdFromRequest).mockResolvedValue("user-test")
   })
 
   it("returns 401 when unauthenticated", async () => {
-    vi.mocked(resolveUserIdFromRequest).mockReturnValueOnce(null)
+    vi.mocked(resolveUserIdFromRequest).mockResolvedValueOnce(null)
     const req = new Request("http://localhost/api/conversations/conv-1/documents", {
       method: "POST",
       headers: { "Content-Type": "application/json" },

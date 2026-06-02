@@ -8,7 +8,7 @@ import { prisma } from "@/lib/prisma"
 type RouteCtx = { params: Promise<{ id: string }> }
 
 async function findOwnedConversation(req: Request, id: string) {
-  const userId = resolveUserIdFromRequest(req)
+  const userId = await resolveUserIdFromRequest(req)
   if (!userId) return { userId: null as string | null, row: null }
   const row = await prisma.conversation.findFirst({
     where: { id, ...conversationOwnerWhere(userId) },
@@ -25,7 +25,7 @@ function parseLimit(raw: string | null, fallback = 100, max = 200) {
 
 export async function GET(req: Request, ctx: RouteCtx) {
   const { id } = await ctx.params
-  const userId = resolveUserIdFromRequest(req)
+  const userId = await resolveUserIdFromRequest(req)
   if (!userId) return jsonError("Unauthorized", 401)
   try {
     const url = new URL(req.url)

@@ -4,6 +4,7 @@ import { memo, useEffect, useState } from "react"
 import { AnimatePresence, motion } from "framer-motion"
 import { Menu } from "lucide-react"
 
+import { AuthProvider } from "@/components/auth-provider"
 import { LoginGate } from "@/components/login-gate"
 import { OnboardingWizard } from "@/components/onboarding-wizard"
 import { ChatPanel } from "@/components/chat-panel"
@@ -47,6 +48,7 @@ export const AppShell = memo(function AppShell() {
   }, [heartbeat])
 
   return (
+    <AuthProvider>
     <LoginGate>
       <OnboardingWizard>
       <div className="relative h-screen w-full overflow-hidden bg-background text-foreground">
@@ -105,5 +107,6 @@ export const AppShell = memo(function AppShell() {
     </div>
       </OnboardingWizard>
     </LoginGate>
+    </AuthProvider>
   )
 })

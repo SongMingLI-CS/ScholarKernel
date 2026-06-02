@@ -21,7 +21,7 @@ function isValidProvider(p: unknown): p is ActiveProviderConfig {
 }
 
 export async function POST(req: Request) {
-  const userId = resolveUserIdFromRequest(req)
+  const userId = await resolveUserIdFromRequest(req)
   if (!userId) return jsonError("Unauthorized", 401)
 
   const body = await parseJsonBody<AgentRunBody>(req)

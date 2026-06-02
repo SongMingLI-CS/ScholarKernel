@@ -8,7 +8,7 @@ const { findFirst, update } = vi.hoisted(() => ({
 }))
 
 vi.mock("@/lib/auth-user", () => ({
-  resolveUserIdFromRequest: vi.fn(() => "user-test"),
+  resolveUserIdFromRequest: vi.fn(async () => "user-test"),
   conversationOwnerWhere: (userId: string) => ({ userId }),
 }))
 
@@ -26,7 +26,7 @@ const ctx = { params: Promise.resolve({ id: "conv-1", docId: "doc-1" }) }
 describe("PATCH /api/conversations/[id]/documents/[docId]", () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    vi.mocked(resolveUserIdFromRequest).mockReturnValue("user-test")
+    vi.mocked(resolveUserIdFromRequest).mockResolvedValue("user-test")
   })
 
   it("returns 400 for empty patch body", async () => {

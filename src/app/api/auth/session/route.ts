@@ -1,12 +1,14 @@
 import { jsonOk } from "@/lib/api-utils"
-import { isAuthEnabled, resolveSessionUserIdFromRequest } from "@/lib/session-auth"
+import { getServerSession } from "@/lib/auth-user"
+import { isAuthEnabled } from "@/lib/session-auth"
 
-export async function GET(req: Request) {
+export async function GET() {
   const authEnabled = isAuthEnabled()
-  const userId = resolveSessionUserIdFromRequest(req)
+  const session = authEnabled ? await getServerSession() : null
+  const userId = session?.user?.id ?? null
   return jsonOk({
     authEnabled,
     authenticated: authEnabled ? Boolean(userId) : true,
-    userId: userId ?? null,
+    userId,
   })
 }

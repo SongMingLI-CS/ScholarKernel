@@ -1,10 +1,12 @@
 "use client"
 
 import { memo, useEffect, useRef } from "react"
+import { Table, TableCell, TableHeader, TableRow } from "@tiptap/extension-table"
 import { EditorContent, useEditor } from "@tiptap/react"
 import StarterKit from "@tiptap/starter-kit"
 
-import { htmlToMarkdown, markdownToHtml } from "@/lib/markdown-bridge"
+import { CANVAS_EDITOR_PROSE_CLASS, CANVAS_EDITOR_ROOT_CLASS } from "@/lib/canvas-prose"
+import { htmlToMarkdown, markdownToCanvasHtml } from "@/lib/markdown-bridge"
 import { cn } from "@/lib/utils"
 
 type CanvasEditorProps = {
@@ -27,16 +29,17 @@ export const CanvasEditor = memo(function CanvasEditor({
 
   const editor = useEditor(
     {
-      extensions: [StarterKit],
-      content: markdownToHtml(content),
+      extensions: [
+        StarterKit,
+        Table.configure({ resizable: false }),
+        TableRow,
+        TableHeader,
+        TableCell,
+      ],
+      content: markdownToCanvasHtml(content),
       editorProps: {
         attributes: {
-          class: cn(
-            "prose prose-sm dark:prose-invert max-w-none min-h-[320px] focus:outline-none",
-            "prose-headings:font-semibold prose-p:leading-8 prose-li:leading-7",
-            "[&_table]:border-collapse [&_td]:border [&_td]:border-border/50 [&_td]:px-3 [&_td]:py-2",
-            "[&_th]:border [&_th]:border-border/50 [&_th]:px-3 [&_th]:py-2 [&_th]:bg-muted/30"
-          ),
+          class: CANVAS_EDITOR_PROSE_CLASS,
         },
       },
       onUpdate: ({ editor: ed }) => {
@@ -53,21 +56,21 @@ export const CanvasEditor = memo(function CanvasEditor({
     if (!editor || editor.isDestroyed) return
     if (content === lastEmittedRef.current) return
     externalSyncRef.current = true
-    editor.commands.setContent(markdownToHtml(content), { emitUpdate: false })
+    editor.commands.setContent(markdownToCanvasHtml(content), { emitUpdate: false })
     lastEmittedRef.current = content
     externalSyncRef.current = false
   }, [content, editor])
 
   if (!editor) {
     return (
-      <div className={cn("font-mono text-sm text-muted-foreground", className)}>
+      <div className={cn("font-mono text-sm text-muted-foreground break-words", className)}>
         {placeholder ?? "…"}
       </div>
     )
   }
 
   return (
-    <div className={cn("canvas-editor-root", className)}>
+    <div className={cn(CANVAS_EDITOR_ROOT_CLASS, "min-w-0 break-words", className)}>
       <EditorContent editor={editor} />
     </div>
   )

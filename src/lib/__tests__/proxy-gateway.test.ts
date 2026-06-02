@@ -24,26 +24,26 @@ describe("proxy-gateway", () => {
     resetProxyRateLimitsForTests()
   })
 
-  it("allows dev requests when PROXY_ACCESS_TOKEN is unset", () => {
+  it("allows dev requests when PROXY_ACCESS_TOKEN is unset", async () => {
     const req = new Request("http://localhost/api/proxy/openai/v1/models")
-    expect(checkProxyAuth(req)).toEqual({ ok: true })
+    await expect(checkProxyAuth(req)).resolves.toEqual({ ok: true })
   })
 
-  it("requires bearer token when PROXY_ACCESS_TOKEN is set", () => {
+  it("requires bearer token when PROXY_ACCESS_TOKEN is set", async () => {
     process.env.PROXY_ACCESS_TOKEN = "secret-proxy-token"
     const unauth = new Request("http://localhost/api/proxy/openai/v1/models")
-    expect(checkProxyAuth(unauth)).toEqual({ ok: false, status: 401, message: "Unauthorized proxy access" })
+    await expect(checkProxyAuth(unauth)).resolves.toEqual({ ok: false, status: 401, message: "Unauthorized proxy access" })
 
     const authed = new Request("http://localhost/api/proxy/openai/v1/models", {
       headers: { Authorization: "Bearer secret-proxy-token" },
     })
-    expect(checkProxyAuth(authed)).toEqual({ ok: true })
+    await expect(checkProxyAuth(authed)).resolves.toEqual({ ok: true })
   })
 
-  it("rejects proxy in production when PROXY_ACCESS_TOKEN is unset", () => {
+  it("rejects proxy in production when PROXY_ACCESS_TOKEN is unset", async () => {
     process.env.NODE_ENV = "production"
     const req = new Request("http://localhost/api/proxy/openai/v1/models")
-    expect(checkProxyAuth(req)).toEqual({
+    await expect(checkProxyAuth(req)).resolves.toEqual({
       ok: false,
       status: 503,
       message: "PROXY_ACCESS_TOKEN is not configured",

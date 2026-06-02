@@ -5,6 +5,7 @@ import { AnimatePresence, motion } from "framer-motion"
 import { ArrowDown, ArrowUp, Bolt, Check, Copy, Download, Eraser, FileDown, FileText, Link2, Paperclip, Radio, RotateCcw, Square } from "lucide-react"
 
 import { AcademicMarkdown, safeMarkdownContent } from "@/components/academic-markdown"
+import { AssistantBubbleContent } from "@/components/assistant-bubble-content"
 import { ScholarCanvas, ScholarCanvasMobileDrawer } from "@/components/scholar-canvas"
 import { TopologyView } from "@/components/topology-view"
 import { Button } from "@/components/ui/button"
@@ -20,6 +21,7 @@ import { collectSourcesFromMessages, exportSourcesAsBibTeX, exportSourcesAsRIS }
 import { downloadConversationAsDocx, downloadConversationAsPdf } from "@/lib/export-utils"
 import { formatFileAttachmentBlock, readBrowserFileAsText } from "@/lib/browser-file"
 import { connKey, looksLikeWorkflowPlanJson } from "@/lib/chat-bubble-utils"
+import { bubbleContentToPlainText } from "@/lib/scholar-canvas"
 import { useChatSend } from "@/hooks/use-chat-send"
 import { extractDoi, fetchMetadataByDoi, formatReferenceBlock } from "@/lib/reference-import"
 import { useT, t as tGlobal } from "@/lib/locales"
@@ -256,6 +258,8 @@ const ChatPanelInner = memo(function ChatPanelInner() {
   const showTopologyPanel = topologyOpen && !canvasOpen
   const [traceOpen, setTraceOpen] = useState<boolean>(showThinkingDefault)
   const [showScrollDown, setShowScrollDown] = useState(false)
+  const [canvasHighlight, setCanvasHighlight] = useState(false)
+  const canvasHighlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const bottomAnchorRef = useRef<HTMLDivElement | null>(null)
   const followBottomRef = useRef(true)
@@ -265,6 +269,27 @@ const ChatPanelInner = memo(function ChatPanelInner() {
   const notifyCopied = useCallback(() => {
     pushToast({ messageKey: "chat.copy.done", variant: "success", ttlMs: 1800 })
   }, [pushToast])
+
+  const focusCanvasPanel = useCallback(() => {
+    useAgentStore.getState().actions.setCanvasOpen(true)
+    setCanvasHighlight(true)
+    if (canvasHighlightTimerRef.current) clearTimeout(canvasHighlightTimerRef.current)
+    canvasHighlightTimerRef.current = setTimeout(() => {
+      canvasHighlightTimerRef.current = null
+      setCanvasHighlight(false)
+    }, 2200)
+  }, [])
+
+  useEffect(() => {
+    return () => {
+      if (canvasHighlightTimerRef.current) clearTimeout(canvasHighlightTimerRef.current)
+    }
+  }, [])
+
+  const assistantCopyText = useCallback(
+    (raw: unknown) => bubbleContentToPlainText(displayMessageContent(raw, t), lang),
+    [lang, t]
+  )
 
   const maybeAutoTitle = useCallback(
     (userText: string) => {
@@ -752,7 +777,7 @@ const ChatPanelInner = memo(function ChatPanelInner() {
         </div>
       ) : null}
 
-      <div className="flex min-h-0 flex-1 overflow-hidden">
+      <div className="sk-split-pane flex min-h-0 min-w-0 flex-1 overflow-hidden">
         <div
           className={cn(
             "flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden px-4 transition-all duration-300 ease-out",
@@ -767,7 +792,7 @@ const ChatPanelInner = memo(function ChatPanelInner() {
                 : "max-w-[1200px] flex flex-col"
             )}
           >
-            <div className="relative flex min-h-0 min-w-0 flex-col">
+            <div className="relative flex min-h-0 min-w-0 flex-col break-words">
           <div
             ref={scrollRef}
             className="flex-1 min-h-0 overflow-y-auto terminal-scrollbar px-4 py-6"
@@ -936,16 +961,17 @@ const ChatPanelInner = memo(function ChatPanelInner() {
                             {t("chat.workflowRunningPlaceholder" as LocaleKey)}
                           </div>
                         ) : (
-                          <AcademicMarkdown
+                          <AssistantBubbleContent
                             content={displayMessageContent(m.content, t)}
                             fallbackPrefix={t("chat.replyRenderFailed")}
+                            onViewInCanvas={focusCanvasPanel}
                           />
                         )}
                         {m.role === "assistant" ? (
                           <>
                             <div className="absolute right-2 top-2 z-10 flex gap-1">
                               <MessageCopyButton
-                                content={displayMessageContent(m.content, t)}
+                                content={assistantCopyText(m.content)}
                                 label={t("chat.copy")}
                                 onCopied={notifyCopied}
                               />
@@ -1136,11 +1162,11 @@ const ChatPanelInner = memo(function ChatPanelInner() {
           <aside
             aria-hidden={!canvasOpen}
             className={cn(
-              "hidden h-full min-h-0 min-w-0 flex-col overflow-hidden py-6 lg:flex",
+              "hidden h-full min-h-0 min-w-0 flex-col overflow-hidden break-words py-6 lg:flex",
               !canvasOpen && "lg:hidden"
             )}
           >
-            <ScholarCanvas className="h-full" />
+            <ScholarCanvas className="h-full" highlightPulse={canvasHighlight} />
           </aside>
         ) : null}
           </div>
@@ -1149,7 +1175,7 @@ const ChatPanelInner = memo(function ChatPanelInner() {
         {showTopologyPanel ? (
           <aside
             aria-label="Agent topology"
-            className="hidden h-full min-h-0 w-96 shrink-0 flex-col overflow-hidden border-l border-border/60 bg-background/40 py-4 pl-4 pr-3 lg:flex"
+            className="hidden h-full min-h-0 w-96 min-w-0 shrink flex-col overflow-hidden break-words border-l border-border/60 bg-background/40 py-4 pl-4 pr-3 lg:flex lg:max-w-[min(24rem,38vw)]"
           >
             <div className="mb-2 flex shrink-0 items-center justify-between gap-2 pr-1">
               <div className="font-mono text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
@@ -1176,7 +1202,7 @@ const ChatPanelInner = memo(function ChatPanelInner() {
         onClose={() => setTopologyOpen(false)}
         conversationId={currentConversationId}
       />
-      <ScholarCanvasMobileDrawer />
+      <ScholarCanvasMobileDrawer highlightPulse={canvasHighlight} />
     </div>
   )
 })

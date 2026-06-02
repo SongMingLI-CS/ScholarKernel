@@ -27,8 +27,8 @@ async function handleProxy(req: Request, ctx: RouteCtx) {
     return jsonError("Unknown proxy provider", 404)
   }
 
-  const auth = checkProxyAuth(req)
-  if (!auth.ok) return jsonError(auth.message, auth.status)
+  const authResult = await checkProxyAuth(req)
+  if (!authResult.ok) return jsonError(authResult.message, authResult.status)
 
   const clientIp = resolveClientIp(req)
   const rate = checkRateLimit(clientIp)
