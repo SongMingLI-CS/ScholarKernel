@@ -10,7 +10,7 @@ export function looksLikeWorkflowPlanJson(content: string): boolean {
   if (c.length < 24) return false
   if (!c.startsWith("{") && !c.startsWith("[")) return false
   if (/"\s*tasks\s*"\s*:\s*\[/.test(c)) return true
-  if (/^\s*\[\s*\{/.test(c) && /"(read_file|reasoning|audit|research)"/.test(c)) return true
+  if (/^\s*\[\s*\{/.test(c) && /"(read_file|reasoning|audit|research|peer_review)"/.test(c)) return true
   return false
 }
 

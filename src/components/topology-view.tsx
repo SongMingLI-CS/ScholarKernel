@@ -1,6 +1,6 @@
 "use client"
 
-import React, { Component, type ErrorInfo, type ReactNode, memo, useCallback, useEffect, useMemo, useRef, useState } from "react"
+import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import ReactFlow, {
   Background,
   Controls,
@@ -15,6 +15,10 @@ import ReactFlow, {
 } from "reactflow"
 import "reactflow/dist/style.css"
 
+import { ComponentSandbox } from "@/components/component-sandbox"
+import { WelcomeEmptyState } from "@/components/welcome-empty-state"
+import { t as tGlobal } from "@/lib/locales"
+import { findPeerReviewGroups, peerReviewGroupToFlowLayout } from "@/lib/agent/topology-layout"
 import { cn } from "@/lib/utils"
 import { useAgentStore, type TopologyState, type WorkflowNode, type WorkflowNodeStatus } from "@/store/useAgentStore"
 
@@ -124,7 +128,7 @@ function IndustrialNode({ data }: NodeProps<ProviderNodeData | WorkflowNodeData>
       </div>
 
       {isWorkflow ? (
-        <div className="mt-2 max-h-[120px] overflow-auto rounded-sm border border-border/50 bg-background/40 p-2 font-mono text-[10px] leading-snug text-muted-foreground">
+        <div className="mt-2 max-h-[120px] overflow-auto sk-scrollbar rounded-sm border border-border/50 bg-background/40 p-2 font-mono text-[10px] leading-snug text-muted-foreground">
           {isFallback ? (
             <div className="mb-2 whitespace-pre-wrap rounded-sm border border-amber-500/30 bg-amber-500/10 p-2 text-amber-100/90">
               Fallback：{fallbackReason}
@@ -164,35 +168,10 @@ function IndustrialNode({ data }: NodeProps<ProviderNodeData | WorkflowNodeData>
 
 const nodeTypes = { industrial: IndustrialNode }
 
-class TopologyFlowErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
-  state: { error: Error | null } = { error: null }
-
-  static getDerivedStateFromError(e: unknown) {
-    return { error: e instanceof Error ? e : new Error(String(e)) }
-  }
-
-  componentDidCatch(error: Error, info: ErrorInfo) {
-    console.error("[TopologyView] render failed", error, info.componentStack)
-  }
-
-  render() {
-    if (this.state.error) {
-      return (
-        <div className="flex h-full min-h-[500px] w-full flex-col items-center justify-center gap-2 rounded-sm border border-rose-500/30 bg-rose-500/10 px-4 text-center font-mono text-[12px] text-rose-100/95">
-          <div>拓扑图渲染失败</div>
-          <div className="max-w-md text-[11px] text-rose-100/80">{this.state.error.message}</div>
-          <button
-            type="button"
-            className="mt-2 rounded-sm border border-border/60 bg-background/60 px-3 py-1.5 text-[11px] text-foreground hover:bg-background"
-            onClick={() => this.setState({ error: null })}
-          >
-            重试
-          </button>
-        </div>
-      )
-    }
-    return this.props.children
-  }
+function workflowNodeLabel(n: WorkflowNode): string {
+  if (n.type === "research") return "全球检索 (Global Search)"
+  if (n.type === "peer_review") return n.title ?? "Peer Review"
+  return n.title ?? n.id
 }
 
 function workflowToFlow(nodes: WorkflowNode[], activeNodeId: string | null): { nodes: Node[]; edges: Edge[] } {
@@ -204,29 +183,120 @@ function workflowToFlow(nodes: WorkflowNode[], activeNodeId: string | null): { n
   const yMain = 140
   const yBranch = 40
 
-  const flowNodes: Node[] = nodes.map((n, idx) => ({
-    id: n.id,
-    position: { x: startX + idx * gapX, y: n.type === "research" ? yBranch : yMain },
-    data: {
-      label: n.type === "research" ? "全球检索 (Global Search)" : (n.title ?? n.id),
-      status: n.status,
-      provider: n.provider,
-      type: n.type,
-      logs: n.logs ?? [],
-      active: n.id === activeNodeId,
-      error: typeof n.error === "string" ? n.error : undefined,
-      metadata: n.metadata,
-    } satisfies WorkflowNodeData,
-    type: "industrial",
-    draggable: false,
-    selectable: true,
-    style: { width: 220, minWidth: 0, maxWidth: "100%" },
-  }))
+  const peerGroups = findPeerReviewGroups(nodes)
+  const peerGroupByStart = new Map(peerGroups.map((g) => [g.start, g]))
+  const peerNodeIds = new Set(peerGroups.flatMap((g) => g.nodes.map((n) => n.id)))
+  const peerLayouts = new Map<number, ReturnType<typeof peerReviewGroupToFlowLayout>>()
+  for (const g of peerGroups) {
+    peerLayouts.set(g.start, peerReviewGroupToFlowLayout(g.nodes, g.start, { gapX, startX, yMain, yBranch }))
+  }
+
+  const flowNodes: Node[] = nodes.map((n, idx) => {
+    const peerGroup = peerGroupByStart.get(idx)
+    const inPeerGroup = peerNodeIds.has(n.id)
+    let position = { x: startX + idx * gapX, y: n.type === "research" ? yBranch : yMain }
+
+    if (peerGroup) {
+      const layout = peerLayouts.get(peerGroup.start)
+      position = layout?.positions[n.id] ?? position
+    } else if (inPeerGroup) {
+      for (const g of peerGroups) {
+        if (g.nodes.some((pn) => pn.id === n.id)) {
+          const layout = peerLayouts.get(g.start)
+          position = layout?.positions[n.id] ?? position
+          break
+        }
+      }
+    }
+
+    return {
+      id: n.id,
+      position,
+      data: {
+        label: workflowNodeLabel(n),
+        status: n.status,
+        provider: n.provider,
+        type: n.type,
+        logs: n.logs ?? [],
+        active: n.id === activeNodeId,
+        error: typeof n.error === "string" ? n.error : undefined,
+        metadata: n.metadata,
+      } satisfies WorkflowNodeData,
+      type: "industrial",
+      draggable: false,
+      selectable: true,
+      style: { width: 220, minWidth: 0, maxWidth: "100%" },
+    }
+  })
 
   const flowEdges: Edge[] = []
+  const peerEdgeKeys = new Set<string>()
+
+  for (const g of peerGroups) {
+    const layout = peerLayouts.get(g.start)
+    if (!layout) continue
+    for (const e of layout.edges) {
+      if (e.source.startsWith("__prev")) continue
+      peerEdgeKeys.add(`${e.source}->${e.target}`)
+      flowEdges.push({
+        id: e.id,
+        source: e.source,
+        target: e.target,
+        markerEnd: { type: MarkerType.ArrowClosed, width: 18, height: 18 },
+        style: {
+          stroke: "oklch(0.556 0 0 / 0.55)",
+          strokeWidth: 1.25,
+          ...(e.dashed ? { strokeDasharray: "4 4" } : {}),
+        },
+      })
+    }
+    if (g.start > 0) {
+      const prev = nodes[g.start - 1]!
+      const r1 = g.nodes[0]
+      const r2 = g.nodes[1]
+      if (r1) {
+        flowEdges.push({
+          id: `wf-peer-in-${g.start}-r1`,
+          source: prev.id,
+          target: r1.id,
+          markerEnd: { type: MarkerType.ArrowClosed, width: 18, height: 18 },
+          style: { stroke: "oklch(0.556 0 0 / 0.55)", strokeWidth: 1.25 },
+        })
+      }
+      if (r2) {
+        flowEdges.push({
+          id: `wf-peer-in-${g.start}-r2`,
+          source: prev.id,
+          target: r2.id,
+          markerEnd: { type: MarkerType.ArrowClosed, width: 18, height: 18 },
+          style: { stroke: "oklch(0.556 0 0 / 0.35)", strokeWidth: 1.1, strokeDasharray: "4 4" },
+        })
+      }
+    }
+    const afterIdx = g.end + 1
+    if (afterIdx < nodes.length) {
+      const r3 = g.nodes[g.nodes.length - 1]
+      const next = nodes[afterIdx]!
+      if (r3) {
+        flowEdges.push({
+          id: `wf-peer-out-${g.end}`,
+          source: r3.id,
+          target: next.id,
+          markerEnd: { type: MarkerType.ArrowClosed, width: 18, height: 18 },
+          style: { stroke: "oklch(0.556 0 0 / 0.55)", strokeWidth: 1.25 },
+        })
+      }
+    }
+  }
+
   for (let i = 1; i < nodes.length; i++) {
     const prev = nodes[i - 1]!
     const cur = nodes[i]!
+    const edgeKey = `${prev.id}->${cur.id}`
+    if (peerEdgeKeys.has(edgeKey)) continue
+    if (peerNodeIds.has(prev.id) && peerNodeIds.has(cur.id)) continue
+    if (peerNodeIds.has(cur.id) && peerGroupByStart.has(i)) continue
+
     flowEdges.push({
       id: `wf-e-${i - 1}`,
       source: prev.id,
@@ -250,6 +320,8 @@ function workflowToFlow(nodes: WorkflowNode[], activeNodeId: string | null): { n
   return { nodes: flowNodes, edges: flowEdges }
 }
 
+const FIT_VIEW_OPTS = { padding: 0.2, duration: 400 } as const
+
 function TopologyFlowCanvas({
   flowNodes,
   flowEdges,
@@ -265,11 +337,24 @@ function TopologyFlowCanvas({
   const { fitView } = useReactFlow()
   const [measured, setMeasured] = useState(false)
   const sizeRef = useRef({ width: 0, height: 0 })
+  const mountedRef = useRef(true)
+  const prevNodeCountRef = useRef(0)
 
-  const refitTopology = useCallback(
-    (duration = 480) => {
-      if (flowNodes.length === 0) return
-      fitView({ padding: 0.22, duration })
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+    }
+  }, [])
+
+  const safeFitView = useCallback(
+    (duration: number = FIT_VIEW_OPTS.duration) => {
+      if (!mountedRef.current || flowNodes.length === 0) return
+      try {
+        fitView({ padding: FIT_VIEW_OPTS.padding, duration })
+      } catch {
+        // React Flow may throw if the pane is tearing down — ignore.
+      }
     },
     [fitView, flowNodes.length]
   )
@@ -291,7 +376,7 @@ function TopologyFlowCanvas({
       if (ok && changed && flowNodes.length > 0) {
         cancelAnimationFrame(raf)
         raf = requestAnimationFrame(() => {
-          refitTopology(changed ? 480 : 0)
+          safeFitView(changed ? FIT_VIEW_OPTS.duration : 0)
         })
       }
     }
@@ -303,21 +388,34 @@ function TopologyFlowCanvas({
       cancelAnimationFrame(raf)
       ro.disconnect()
     }
-  }, [flowNodes.length, refitTopology])
+  }, [flowNodes.length, safeFitView])
 
   useEffect(() => {
     if (flowNodes.length === 0) return
     let raf = 0
     const onWindowResize = () => {
       cancelAnimationFrame(raf)
-      raf = requestAnimationFrame(() => refitTopology(320))
+      raf = requestAnimationFrame(() => safeFitView(FIT_VIEW_OPTS.duration))
     }
     window.addEventListener("resize", onWindowResize)
     return () => {
       cancelAnimationFrame(raf)
       window.removeEventListener("resize", onWindowResize)
     }
-  }, [flowNodes.length, refitTopology])
+  }, [flowNodes.length, safeFitView])
+
+  useEffect(() => {
+    if (!measured || flowNodes.length === 0) {
+      prevNodeCountRef.current = flowNodes.length
+      return
+    }
+    const grew = flowNodes.length > prevNodeCountRef.current
+    prevNodeCountRef.current = flowNodes.length
+    if (!grew) return
+    let raf = 0
+    raf = requestAnimationFrame(() => safeFitView(FIT_VIEW_OPTS.duration))
+    return () => cancelAnimationFrame(raf)
+  }, [flowNodes.length, measured, safeFitView])
 
   const statusSignature = useMemo(
     () => flowNodes.map((n) => `${n.id}:${(n.data as WorkflowNodeData).status ?? "pending"}`).join("|"),
@@ -326,9 +424,9 @@ function TopologyFlowCanvas({
 
   useEffect(() => {
     if (!measured || flowNodes.length === 0) return
-    const timer = window.setTimeout(() => refitTopology(640), 48)
+    const timer = window.setTimeout(() => safeFitView(FIT_VIEW_OPTS.duration), 48)
     return () => window.clearTimeout(timer)
-  }, [flowNodes.length, layoutKey, measured, refitTopology, statusSignature])
+  }, [flowNodes.length, layoutKey, measured, safeFitView, statusSignature])
 
   return (
     <div ref={containerRef} className="absolute inset-0 h-full w-full min-h-0">
@@ -401,6 +499,7 @@ export const TopologyView = memo(function TopologyView({ topology }: { topology?
   }, [streaming, topology])
 
   const anyRunning = shouldShowWorkflow ? wfNodes.some((n) => n.status === "running") : Boolean(streaming)
+  const isIdle = !shouldShowWorkflow && !streaming
   const flowNodes = shouldShowWorkflow ? workflow.nodes : providerNodes
   const flowEdges = useMemo(() => {
     const edges = shouldShowWorkflow ? workflow.edges : providerEdges
@@ -445,13 +544,13 @@ export const TopologyView = memo(function TopologyView({ topology }: { topology?
   }
 
   return (
-    <div
-      className={cn(
-        "h-full min-h-0 w-full overflow-hidden rounded-sm border border-border/60 bg-card/20",
-        anyRunning && "sk-topology-live"
-      )}
-    >
-      <TopologyFlowErrorBoundary>
+    <ComponentSandbox moduleName={tGlobal("topology.moduleName")} className="h-full min-h-0 w-full">
+      <div
+        className={cn(
+          "h-full min-h-0 w-full overflow-hidden rounded-sm border border-border/60 bg-card/20",
+          anyRunning && "sk-topology-live"
+        )}
+      >
         <div className="relative h-full min-h-0 w-full overflow-hidden">
           <ReactFlowProvider>
             <TopologyFlowCanvas
@@ -461,8 +560,13 @@ export const TopologyView = memo(function TopologyView({ topology }: { topology?
               layoutKey={layoutKey}
             />
           </ReactFlowProvider>
+          {isIdle ? (
+            <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center bg-background/50 p-3 backdrop-blur-[2px]">
+              <WelcomeEmptyState variant="topology" className="pointer-events-auto w-full max-w-[18rem]" />
+            </div>
+          ) : null}
         </div>
-      </TopologyFlowErrorBoundary>
-    </div>
+      </div>
+    </ComponentSandbox>
   )
 })

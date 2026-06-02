@@ -20,6 +20,7 @@ import {
 import { createFileTool } from "@/lib/tools/file-tool"
 import { isAbortError } from "@/lib/run-abort"
 import { streamDirectChat } from "@/lib/agent/direct-chat"
+import { executePeerReviewGroup, isPeerReviewGroupStart, collectPeerReviewGroup } from "@/lib/agent/peer-review-runner"
 import { executeReasoningNode } from "@/lib/agent/reasoning-runner"
 import type { AgentExecutorDeps, AgentExecutorHooks, ChatHistoryEntry, LlmHistoryMessage } from "@/lib/agent/executor-types"
 export type { AgentExecutorDeps, AgentExecutorHooks, ChatHistoryEntry, LlmHistoryMessage } from "@/lib/agent/executor-types"
@@ -30,6 +31,7 @@ import {
   buildPaperDetailSearchQuery,
   correctMisplacedReadFileNodes,
   ensureMultiSourceResearchPlan,
+  ensurePeerReviewPlan,
   isDirectChatInput,
   needsPaperDetailIntent,
   needsResearchIntent,
@@ -158,7 +160,10 @@ export class AgentExecutor {
   }
 
   private pushResearchIntoSessionContext(out: AcademicSearchResponse, citationsMarkdown: string, nodeId: string) {
-    const content = formatResearchResultsForSessionContext(out, citationsMarkdown)
+    const cl = this.inferenceCfg().contextLimit
+    const blockBudget =
+      typeof cl === "number" && Number.isFinite(cl) && cl > 0 ? Math.min(Math.floor(cl * 0.45), 32_000) : 32_000
+    const content = clampTextByChars(formatResearchResultsForSessionContext(out, citationsMarkdown), blockBudget)
     this.sessionContextMessages.push({ role: "assistant", content })
     this.hooks.onResearchResultsSynced?.({
       nodeId,
@@ -179,7 +184,7 @@ export class AgentExecutor {
     const planMessages = this.buildConversationMessages(userInput, planPrompt)
     const strictJsonLine = "Output ONLY raw JSON. No markdown blocks. No explanations."
     const rules = [
-      "每个子任务必须符合协议：{ id, type: read_file|reasoning|audit|research, provider: cloud, status }。",
+      "每个子任务必须符合协议：{ id, type: read_file|reasoning|audit|research|peer_review, provider: cloud, status }。",
       'All tasks in the "tasks" array MUST use "provider": "cloud". Do not use "local" under any circumstances.',
       "OUTPUT ONLY RAW JSON. NO CONVERSATIONAL TEXT.",
       PLAN_TOOL_ENFORCEMENT,
@@ -193,6 +198,7 @@ export class AgentExecutor {
       "- 推理整合用 reasoning",
       "- 代码或安全审计用 audit",
       "- 需要全球资料检索/论文对比/最新信息时，用 research（会调用 academicSearch）",
+      "- 用户提交论文摘要/实验设计或要求模拟审稿时，用 peer_review（系统将并行派生 Reviewer #1/#2 激辩并由 Area Chair 汇总）",
       "- 所有子任务的 provider 必须为 cloud（不得输出 local）",
       "- status 初始必须是 pending",
       '- id 必须为字符串（例如 "1"、"read-1"）；若你使用数字 id，系统会自动转为字符串。',
@@ -368,6 +374,7 @@ export class AgentExecutor {
     const historyForCorrection = this.deps.getChatHistory?.() ?? []
     nodes = correctMisplacedReadFileNodes(nodes, userInput, historyForCorrection)
     nodes = ensureMultiSourceResearchPlan(nodes, userInput)
+    nodes = ensurePeerReviewPlan(nodes, userInput)
 
     if (needsPaperDetailIntent(userInput) && !nodes.some((n) => n.type === "research")) {
       const paperQuery =
@@ -576,7 +583,8 @@ export class AgentExecutor {
     let sources: AcademicSearchHit[] = []
     let citationsMarkdown = ""
 
-    for (const n of nodes) {
+    for (let ni = 0; ni < nodes.length; ni++) {
+      const n = nodes[ni]!
       this.throwIfAborted()
       this.hooks.onNodeLog?.(n.id, `进入节点：${n.id}`)
       this.hooks.onNodePatch?.(n.id, { status: "running" })
@@ -584,6 +592,22 @@ export class AgentExecutor {
       const nodeStartedAt = performance.now()
 
       try {
+        if (n.type === "peer_review" && isPeerReviewGroupStart(nodes, ni)) {
+          const group = collectPeerReviewGroup(nodes, ni)
+          const groupResults = await executePeerReviewGroup({
+            groupNodes: group,
+            userInput,
+            deps: this.deps,
+            hooks: this.hooks,
+          })
+          results.push(...groupResults)
+          ni += group.length - 1
+          continue
+        }
+        if (n.type === "peer_review") {
+          continue
+        }
+
         if (n.type === "research") {
           const payload = asRecord(n.input ?? {})
           const draftQuery =

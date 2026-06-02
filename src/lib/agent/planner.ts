@@ -3,7 +3,7 @@ import { z } from "zod"
 import { SCHOLAR_CANVAS_OUTPUT_DISCIPLINE } from "@/lib/scholar-canvas"
 import { buildDualSearchQueries, isSurveyOrProgressTopic } from "@/lib/tools/academic-search-strategy"
 
-export type WorkflowTaskType = "read_file" | "reasoning" | "audit" | "research"
+export type WorkflowTaskType = "read_file" | "reasoning" | "audit" | "research" | "peer_review"
 export type WorkflowProvider = "local" | "cloud"
 export type WorkflowStatus = "pending" | "running" | "done" | "error"
 
@@ -50,7 +50,7 @@ const TaskSchema = z.object({
     .union([z.string(), z.number()])
     .transform((val) => String(val))
     .refine((s) => s.trim().length > 0, "id must be non-empty"),
-  type: z.enum(["read_file", "reasoning", "audit", "research"]),
+  type: z.enum(["read_file", "reasoning", "audit", "research", "peer_review"]),
   provider: z.enum(["local", "cloud"]),
   status: z.enum(["pending", "running", "done", "error"]).optional().default("pending"),
   title: z.string().optional(),
@@ -277,7 +277,7 @@ function unwrapWorkflowPlanPayload(data: unknown): unknown {
   return tasks.length > 0 ? tasks : data
 }
 
-const WORKFLOW_TASK_TYPES = ["read_file", "reasoning", "audit", "research"] as const
+const WORKFLOW_TASK_TYPES = ["read_file", "reasoning", "audit", "research", "peer_review"] as const
 
 /** 规划彻底失败或任务数组为空时的保底单节点，避免右侧拓扑留空。 */
 const FALLBACK_TASK_LIST: z.infer<typeof TaskListSchema> = [
@@ -390,6 +390,56 @@ export function needsPaperDetailIntent(text: string): boolean {
   return /详解|详细解读|深入分析|展开讲|详细说明|上一篇|刚才那篇|那篇论文|这篇论文|上一轮|刚才介绍|刚才提到|全文|full\s*text|paper\s+details?|explain.*paper|解读.*论文|分析.*论文/i.test(
     text
   )
+}
+
+/** 用户提交论文摘要 / 实验设计 / 明确要求模拟审稿 → 触发 Multi-Agent Peer Review。 */
+export function needsPeerReviewIntent(text: string): boolean {
+  return /模拟评审|模拟审稿|peer\s*review|multi[\s-]?agent\s*review|审稿意见|评审报告|meta[\s-]?review|投.*(会|刊|稿)|submit.*(conference|journal)|论文摘要|摘要如下|abstract\s*[:：]|实验设计|experiment\s*design|ablation\s*study\s*plan|请.*(评审|审稿|review)/i.test(
+    text
+  )
+}
+
+/** 构建多智能体模拟评审三连节点（R1∥R2 → R3 Area Chair）。 */
+export function buildPeerReviewWorkflowNodes(): WorkflowNode[] {
+  return [
+    {
+      id: "peer-r1",
+      type: "peer_review",
+      provider: "cloud",
+      status: "pending",
+      title: "Reviewer #1 · Methodology Critic",
+      input: { phase: "parallel_review" },
+      logs: [],
+      metadata: { personaId: "methodology_critic", peerReviewRole: "reviewer" },
+    },
+    {
+      id: "peer-r2",
+      type: "peer_review",
+      provider: "cloud",
+      status: "pending",
+      title: "Reviewer #2 · Innovation Scout",
+      input: { phase: "parallel_review" },
+      logs: [],
+      metadata: { personaId: "innovation_scout", peerReviewRole: "reviewer" },
+    },
+    {
+      id: "peer-r3",
+      type: "peer_review",
+      provider: "cloud",
+      status: "pending",
+      title: "Reviewer #3 · Area Chair",
+      input: { phase: "meta_review" },
+      logs: [],
+      metadata: { personaId: "area_chair", peerReviewRole: "meta_review" },
+    },
+  ]
+}
+
+/** 检测到 peer review 意图时注入评审拓扑（若规划中尚无 peer_review 节点）。 */
+export function ensurePeerReviewPlan(nodes: WorkflowNode[], userInput: string): WorkflowNode[] {
+  if (!needsPeerReviewIntent(userInput)) return nodes
+  if (nodes.some((n) => n.type === "peer_review")) return nodes
+  return buildPeerReviewWorkflowNodes()
 }
 
 /** 用户意图需要走 research 工具（含上下文续搜「再找一篇」、详解上一轮论文等）。 */
@@ -682,6 +732,7 @@ export const ACADEMIC_OUTPUT_DISCIPLINE = [
 export function isDirectChatInput(raw: string): boolean {
   const s = raw.trim()
   if (!s) return false
+  if (needsPeerReviewIntent(s)) return false
   if (s.length > 120) return false
   if (DIRECT_CHAT_TASK_HINT.test(s)) return false
 
@@ -845,7 +896,9 @@ function recordToTaskItem(rec: Record<string, unknown>, index: number): z.infer<
           ? "读取文件"
           : type === "audit"
             ? "代码审计"
-            : "处理请求"
+            : type === "peer_review"
+              ? "多智能体模拟评审"
+              : "处理请求"
 
   const metadata =
     rec.metadata && typeof rec.metadata === "object" && !Array.isArray(rec.metadata)

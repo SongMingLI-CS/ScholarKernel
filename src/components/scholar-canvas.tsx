@@ -1,10 +1,12 @@
 "use client"
 
-import { memo, useCallback, useState } from "react"
+import { memo, useCallback, useMemo, useState } from "react"
 import { Download, FileText, X } from "lucide-react"
 import { AnimatePresence, motion } from "framer-motion"
 
 import { CanvasEditor } from "@/components/canvas-editor"
+import { ActionTabBar } from "@/components/action-tab-bar"
+import { WelcomeEmptyState } from "@/components/welcome-empty-state"
 import { Button } from "@/components/ui/button"
 import { downloadMarkdownAsDocx } from "@/lib/export-utils"
 import { downloadTextFile, sanitizeExportFilename } from "@/lib/conversation-utils"
@@ -50,6 +52,32 @@ export const ScholarCanvas = memo(function ScholarCanvas({
     [updateCanvasContent]
   )
 
+  const canvasExportGroups = useMemo(
+    () => [
+      {
+        id: "export",
+        label: t("actionTabs.export"),
+        items: [
+          {
+            id: "md",
+            label: t("chat.canvas.exportMd"),
+            icon: <Download className="h-3.5 w-3.5" />,
+            onClick: onExportMd,
+            disabled: !doc?.content.trim(),
+          },
+          {
+            id: "doc",
+            label: t("chat.canvas.exportDoc"),
+            icon: <FileText className="h-3.5 w-3.5" />,
+            onClick: () => void onExportDoc(),
+            disabled: !doc?.content.trim() || exporting,
+          },
+        ],
+      },
+    ],
+    [doc?.content, exporting, onExportDoc, onExportMd, t]
+  )
+
   if (!doc) return null
 
   return (
@@ -65,29 +93,8 @@ export const ScholarCanvas = memo(function ScholarCanvas({
           <div className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">{t("chat.canvas.title")}</div>
           <h2 className="break-words font-sans text-base font-semibold leading-snug text-foreground/95">{doc.title}</h2>
         </div>
-        <div className="flex shrink-0 items-center gap-1.5">
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            className="h-8 gap-1.5 rounded-sm border-border/60 bg-background/40 font-mono text-[10px]"
-            onClick={onExportMd}
-            disabled={!doc.content.trim()}
-          >
-            <Download className="h-3.5 w-3.5" />
-            {t("chat.canvas.exportMd")}
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            className="h-8 gap-1.5 rounded-sm border-border/60 bg-background/40 font-mono text-[10px]"
-            onClick={() => void onExportDoc()}
-            disabled={!doc.content.trim() || exporting}
-          >
-            <FileText className="h-3.5 w-3.5" />
-            {t("chat.canvas.exportDoc")}
-          </Button>
+        <div className="flex shrink-0 items-start gap-1.5">
+          <ActionTabBar groups={canvasExportGroups} size="xs" className="items-end" />
           <Button
             type="button"
             variant="ghost"
@@ -114,7 +121,9 @@ export const ScholarCanvas = memo(function ScholarCanvas({
             className="text-[15px] leading-7"
           />
         ) : (
-          <p className="font-mono text-sm text-muted-foreground">{t("chat.canvas.empty")}</p>
+          <div className="flex min-h-[280px] items-center justify-center">
+            <WelcomeEmptyState variant="canvas" />
+          </div>
         )}
       </div>
     </div>

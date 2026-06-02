@@ -70,7 +70,7 @@ export type TopologyState = {
 }
 
 export type WorkflowNodeStatus = "pending" | "running" | "done" | "error"
-export type WorkflowNodeType = "read_file" | "reasoning" | "audit" | "research"
+export type WorkflowNodeType = "read_file" | "reasoning" | "audit" | "research" | "peer_review"
 export type WorkflowNodeProvider = "local" | "cloud"
 
 export type WorkflowNode = {
