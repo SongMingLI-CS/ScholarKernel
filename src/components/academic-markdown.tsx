@@ -70,7 +70,7 @@ const CodeBlockWithCopy = memo(function CodeBlockWithCopy({
       <pre
         ref={preRef}
         className={cn(
-          "overflow-x-auto whitespace-pre rounded-sm border border-border/60 bg-[#0d1117] p-3 pr-16 text-[12px] leading-6",
+          "overflow-x-auto whitespace-pre rounded-md border border-border/60 bg-[#0d1117] p-3 pr-16 text-[12px] leading-6",
           "[&_.hljs]:bg-transparent",
           className
         )}
@@ -144,11 +144,11 @@ const components: Components = {
   ol: ({ className, ...props }) => (
     <ol className={cn("my-2 list-decimal pl-5 leading-7 text-foreground/95", className)} {...props} />
   ),
-  li: ({ className, ...props }) => <li className={cn("my-0.5 leading-7 marker:text-gray-500", className)} {...props} />,
+  li: ({ className, ...props }) => <li className={cn("my-0.5 leading-7 marker:text-muted-foreground", className)} {...props} />,
   blockquote: ({ className, ...props }) => (
     <blockquote
       className={cn(
-        "my-2 border-l-2 border-sidebar-primary/50 bg-muted/15 py-1 pl-3 italic leading-7 text-muted-foreground",
+        "my-2 rounded-md border-l-2 border-sidebar-primary/50 bg-muted/15 px-3 py-2 italic leading-7 text-muted-foreground",
         className
       )}
       {...props}
@@ -228,7 +228,7 @@ export const AcademicMarkdown = memo(function AcademicMarkdown({
           "prose-table:w-full prose-table:border-collapse",
           "prose-th:border prose-th:border-gray-600 prose-th:bg-gray-800 prose-th:p-2",
           "prose-td:border prose-td:border-gray-700 prose-td:p-2",
-          "prose-li:marker:text-gray-500 prose-code:before:content-none prose-code:after:content-none",
+          "prose-li:marker:text-muted-foreground prose-code:before:content-none prose-code:after:content-none",
           className
         )}
       >

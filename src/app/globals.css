@@ -89,7 +89,7 @@
   --sidebar-border: oklch(0.922 0 0);
   --sidebar-ring: oklch(0.708 0 0);
 
-  --sk-flow-grid: oklch(0.145 0 0 / 0.06);
+  --sk-flow-grid: oklch(0.145 0 0 / 0.08);
 }
 
 .dark {
@@ -125,7 +125,7 @@
   --sidebar-border: oklch(1 0 0 / 10%);
   --sidebar-ring: oklch(0.556 0 0);
 
-  --sk-flow-grid: oklch(1 0 0 / 0.06);
+  --sk-flow-grid: oklch(1 0 0 / 0.085);
 }
 
 @layer base {
@@ -187,35 +187,43 @@ html.sk-compact body {
 
 .sk-scrollbar {
   scrollbar-width: thin;
-  scrollbar-color: oklch(0.35 0 0 / 0.55) transparent;
+  scrollbar-color: oklch(0.35 0 0 / 0.35) transparent;
 }
 
 .sk-scrollbar::-webkit-scrollbar {
   width: 6px;
   height: 6px;
 }
-.sk-scrollbar::-webkit-scrollbar-thumb {
-  background: oklch(0.35 0 0 / 0.55);
-  border-radius: 999px;
+.sk-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
 }
-.sk-scrollbar::-webkit-scrollbar-thumb:hover {
+.sk-scrollbar::-webkit-scrollbar-thumb {
+  background: oklch(0.35 0 0 / 0.35);
+  border-radius: 999px;
+  transition: background 0.2s ease;
+}
+.sk-scrollbar:hover::-webkit-scrollbar-thumb {
   background: oklch(0.45 0 0 / 0.65);
 }
 
 .terminal-scrollbar {
   scrollbar-width: thin;
-  scrollbar-color: oklch(0.35 0 0 / 0.55) transparent;
+  scrollbar-color: oklch(0.35 0 0 / 0.35) transparent;
 }
 
 .terminal-scrollbar::-webkit-scrollbar {
   width: 6px;
   height: 6px;
 }
-.terminal-scrollbar::-webkit-scrollbar-thumb {
-  background: oklch(0.35 0 0 / 0.55);
-  border-radius: 999px;
+.terminal-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
 }
-.terminal-scrollbar::-webkit-scrollbar-thumb:hover {
+.terminal-scrollbar::-webkit-scrollbar-thumb {
+  background: oklch(0.35 0 0 / 0.35);
+  border-radius: 999px;
+  transition: background 0.2s ease;
+}
+.terminal-scrollbar:hover::-webkit-scrollbar-thumb {
   background: oklch(0.45 0 0 / 0.65);
 }
 
@@ -528,13 +536,30 @@ html.sk-compact body {
 }
 
 .sk-md-root .katex-display {
-  margin: 0.5rem 0;
+  margin: 0.65rem 0;
   overflow-x: auto;
   overflow-y: hidden;
   padding: 0.75rem 1rem;
-  border-radius: 0.125rem;
+  border-radius: 0.375rem;
   border: 1px solid oklch(1 0 0 / 0.08);
   background: oklch(0.18 0.02 264 / 0.35);
+}
+
+.sk-md-root blockquote {
+  margin: 0.65rem 0;
+  padding: 0.65rem 1rem 0.65rem 0.85rem;
+  border-radius: 0.375rem;
+  overflow-x: auto;
+}
+
+.sk-md-root :not(pre) > code {
+  padding: 0.15rem 0.4rem;
+  border-radius: 0.25rem;
+}
+
+.sk-md-root pre {
+  margin: 0.65rem 0;
+  border-radius: 0.375rem;
 }
 
 .sk-md-root .katex-display > .katex {

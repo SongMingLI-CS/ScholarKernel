@@ -5,6 +5,7 @@ import { memo, useCallback, useEffect, useMemo, useState } from "react"
 import { Eye, EyeOff, KeyRound, Lock, ShieldCheck, Trash2 } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
+import { ActionTabBar } from "@/components/action-tab-bar"
 import { clearEncryptedKeysFromStorage, hasEncryptedKeysInStorage } from "@/lib/crypto"
 import { cn } from "@/lib/utils"
 import { useT } from "@/lib/locales"
@@ -123,6 +124,50 @@ export const KeysPanel = memo(function KeysPanel() {
     return { text: t("keys.badge.unsaved"), cls: "border-border/60 bg-muted/20 text-muted-foreground" }
   }, [configuredCount, keyStatus.hasEncryptedKeys, runtimeKeys, t])
 
+  const sessionKeyGroups = useMemo(
+    () => [
+      {
+        id: "session",
+        label: t("keys.sessionKeys"),
+        items: [
+          {
+            id: "apply",
+            label: t("keys.applyToSession"),
+            onClick: onApplyKeys,
+            disabled: !canApply || busy,
+          },
+          {
+            id: "clear",
+            label: t("keys.clearSession"),
+            onClick: onClearSessionKeys,
+            disabled: busy || !runtimeKeys,
+          },
+          ...(keyStatus.hasEncryptedKeys
+            ? [
+                {
+                  id: "legacy",
+                  label: t("keys.clearLegacyLocal"),
+                  icon: <Trash2 className="h-4 w-4" />,
+                  onClick: onClearLegacyEncrypted,
+                  disabled: busy,
+                },
+              ]
+            : []),
+        ],
+      },
+    ],
+    [
+      busy,
+      canApply,
+      keyStatus.hasEncryptedKeys,
+      onApplyKeys,
+      onClearLegacyEncrypted,
+      onClearSessionKeys,
+      runtimeKeys,
+      t,
+    ]
+  )
+
   return (
     <div className="mx-auto w-full max-w-[1200px] px-4 py-6">
       <div className="flex items-start justify-between gap-3">
@@ -154,29 +199,8 @@ export const KeysPanel = memo(function KeysPanel() {
             <Lock className="h-3.5 w-3.5" />
             {t("keys.sessionKeys")}
           </div>
-          <div className="mt-3 flex flex-wrap items-center gap-2">
-            <Button onClick={onApplyKeys} className="gap-2" disabled={!canApply || busy}>
-              {t("keys.applyToSession")}
-            </Button>
-            <Button
-              onClick={onClearSessionKeys}
-              variant="outline"
-              className="gap-2 border-border/60 bg-background/30"
-              disabled={busy || !runtimeKeys}
-            >
-              {t("keys.clearSession")}
-            </Button>
-            {keyStatus.hasEncryptedKeys ? (
-              <Button
-                onClick={onClearLegacyEncrypted}
-                variant="outline"
-                className="gap-2 border-border/60 bg-background/30"
-                disabled={busy}
-              >
-                <Trash2 className="h-4 w-4" />
-                {t("keys.clearLegacyLocal")}
-              </Button>
-            ) : null}
+          <div className="mt-3">
+            <ActionTabBar groups={sessionKeyGroups} size="xs" />
           </div>
           {error ? (
             <div className="mt-3 rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-300">

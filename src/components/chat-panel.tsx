@@ -1,13 +1,17 @@
 "use client"
 
-import { memo, useCallback, useEffect, useMemo, useRef, useState, Component, type ErrorInfo, type ReactNode } from "react"
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { AnimatePresence, motion } from "framer-motion"
 import { ArrowDown, ArrowUp, Bolt, Check, Copy, Download, Eraser, FileDown, FileText, Link2, Paperclip, Radio, RotateCcw, Square } from "lucide-react"
 
+import { ComponentSandbox } from "@/components/component-sandbox"
 import { AcademicMarkdown, safeMarkdownContent } from "@/components/academic-markdown"
+import { AcademicThinkingSkeleton } from "@/components/academic-thinking-skeleton"
+import { ActionTabBar, type ActionTabGroup } from "@/components/action-tab-bar"
 import { AssistantBubbleContent } from "@/components/assistant-bubble-content"
 import { ScholarCanvas, ScholarCanvasMobileDrawer } from "@/components/scholar-canvas"
 import { TopologyView } from "@/components/topology-view"
+import { WelcomeEmptyState } from "@/components/welcome-empty-state"
 import { Button } from "@/components/ui/button"
 import {
   copyTextToClipboard,
@@ -136,45 +140,11 @@ const MessageCopyButton = memo(function MessageCopyButton({
 
 export const ChatPanel = memo(function ChatPanel() {
   return (
-    <ChatPanelErrorBoundary>
+    <ComponentSandbox moduleName={tGlobal("chat.panelModuleName")} className="h-full min-h-0">
       <ChatPanelInner />
-    </ChatPanelErrorBoundary>
+    </ComponentSandbox>
   )
 })
-
-class ChatPanelErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
-  state: { error: Error | null } = { error: null }
-
-  static getDerivedStateFromError(e: unknown) {
-    return { error: e instanceof Error ? e : new Error(String(e)) }
-  }
-
-  componentDidCatch(error: Error, info: ErrorInfo) {
-    console.error("[ChatPanel] render failed", error, info.componentStack)
-  }
-
-  render() {
-    if (this.state.error) {
-      return (
-        <div className="flex h-full min-h-0 flex-col items-center justify-center gap-3 px-6 text-center">
-          <div className="rounded-sm border border-rose-500/35 bg-rose-500/10 px-4 py-3 font-mono text-[13px] text-rose-100/95">
-            {tGlobal("chat.panelError")}
-          </div>
-          <div className="max-w-md font-mono text-[11px] text-muted-foreground">{this.state.error.message}</div>
-          <Button
-            type="button"
-            variant="outline"
-            className="rounded-sm font-mono text-[11px]"
-            onClick={() => this.setState({ error: null })}
-          >
-            {tGlobal("chat.panelReload")}
-          </Button>
-        </div>
-      )
-    }
-    return this.props.children
-  }
-}
 
 const TopologyMobileDrawer = memo(function TopologyMobileDrawer({
   open,
@@ -492,6 +462,11 @@ const ChatPanelInner = memo(function ChatPanelInner() {
     return null
   }, [chatMessages])
 
+  const hasUserFacingMessages = useMemo(
+    () => chatMessages.some((m) => m.role === "user" || m.role === "assistant"),
+    [chatMessages]
+  )
+
   useEffect(() => {
     if (wfNodes.length > 0) setTopologyOpen(true)
   }, [wfNodes.length, wfVersion])
@@ -521,6 +496,111 @@ const ChatPanelInner = memo(function ChatPanelInner() {
     const localized = t(key)
     return localized === (key as unknown as string) ? provider.providerId : localized
   }, [provider.providerId, t])
+
+  const hasExportableContent = chatMessages.filter((m) => m.role !== "system").length > 0
+  const exportDisabled = streaming || exportBusy !== null || !hasExportableContent
+
+  const headerActionGroups = useMemo((): ActionTabGroup[] => {
+    return [
+      {
+        id: "session",
+        label: t("actionTabs.session"),
+        items: [
+          {
+            id: "clear",
+            label: t("chat.clear"),
+            icon: <Eraser className="h-3.5 w-3.5" />,
+            onClick: onClearChat,
+            disabled: streaming || !hasExportableContent,
+          },
+          {
+            id: "regenerate",
+            label: t("chat.regenerate"),
+            icon: <RotateCcw className="h-3.5 w-3.5" />,
+            onClick: onRegenerate,
+            disabled: streaming || !lastAssistantId,
+          },
+        ],
+      },
+      {
+        id: "export",
+        label: t("actionTabs.export"),
+        items: [
+          {
+            id: "md",
+            label: t("chat.export"),
+            icon: <Download className="h-3.5 w-3.5" />,
+            onClick: onExportConversation,
+            disabled: !hasExportableContent,
+          },
+          {
+            id: "word",
+            label: t("chat.export.word"),
+            icon: <FileText className="h-3.5 w-3.5" />,
+            onClick: () => void onExportWord(),
+            disabled: exportDisabled,
+          },
+          {
+            id: "pdf",
+            label: t("chat.export.pdf"),
+            icon: <FileDown className="h-3.5 w-3.5" />,
+            onClick: () => void onExportPdf(),
+            disabled: exportDisabled,
+          },
+          {
+            id: "bibtex",
+            label: t("chat.export.bibtex"),
+            onClick: onExportBibTeX,
+            disabled: streaming,
+          },
+          {
+            id: "ris",
+            label: t("chat.export.ris"),
+            onClick: onExportRIS,
+            disabled: streaming,
+          },
+        ],
+      },
+      {
+        id: "view",
+        label: t("actionTabs.view"),
+        items: [
+          {
+            id: "quick",
+            label: t("chat.quickMode"),
+            icon: <Bolt className="h-3.5 w-3.5" />,
+          },
+          {
+            id: "trace",
+            label: traceOpen ? t("chat.trace.hide") : t("chat.trace.show"),
+            onClick: () => setTraceOpen((v) => !v),
+            active: traceOpen,
+          },
+          {
+            id: "topology",
+            label: topologyOpen ? t("chat.topology.hide") : t("chat.topology.show"),
+            onClick: () => setTopologyOpen((v) => !v),
+            active: topologyOpen,
+          },
+        ],
+      },
+    ]
+  }, [
+    exportDisabled,
+    hasExportableContent,
+    lastAssistantId,
+    onClearChat,
+    onExportBibTeX,
+    onExportConversation,
+    onExportPdf,
+    onExportRIS,
+    onExportWord,
+    onRegenerate,
+    streaming,
+    t,
+    topologyOpen,
+    traceOpen,
+  ])
 
   const liveStatusText = useMemo(() => {
     const running = wfNodes.find((n) => n.status === "running")
@@ -643,95 +723,8 @@ const ChatPanelInner = memo(function ChatPanelInner() {
             ) : null}
           </div>
 
-          <div className="hidden shrink-0 items-center gap-2 md:flex">
-            <Button
-              variant="outline"
-              size="sm"
-              className="gap-2 rounded-sm border-border/60 bg-background/40 font-mono text-[11px]"
-              onClick={onClearChat}
-              disabled={streaming || chatMessages.filter((m) => m.role !== "system").length === 0}
-            >
-              <Eraser className="h-3.5 w-3.5" />
-              {t("chat.clear")}
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              className="gap-2 rounded-sm border-border/60 bg-background/40 font-mono text-[11px]"
-              onClick={onRegenerate}
-              disabled={streaming || !lastAssistantId}
-            >
-              <RotateCcw className="h-3.5 w-3.5" />
-              {t("chat.regenerate")}
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              className="gap-2 rounded-sm border-border/60 bg-background/40 font-mono text-[11px]"
-              onClick={onExportConversation}
-              disabled={chatMessages.filter((m) => m.role !== "system").length === 0}
-            >
-              <Download className="h-3.5 w-3.5" />
-              {t("chat.export")}
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              className="gap-2 rounded-sm border-border/60 bg-background/40 font-mono text-[11px]"
-              onClick={() => void onExportWord()}
-              disabled={streaming || exportBusy !== null || chatMessages.filter((m) => m.role !== "system").length === 0}
-            >
-              <FileText className="h-3.5 w-3.5" />
-              {t("chat.export.word")}
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              className="gap-2 rounded-sm border-border/60 bg-background/40 font-mono text-[11px]"
-              onClick={() => void onExportPdf()}
-              disabled={streaming || exportBusy !== null || chatMessages.filter((m) => m.role !== "system").length === 0}
-            >
-              <FileDown className="h-3.5 w-3.5" />
-              {t("chat.export.pdf")}
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              className="gap-2 rounded-sm border-border/60 bg-background/40 font-mono text-[11px]"
-              onClick={onExportBibTeX}
-              disabled={streaming}
-            >
-              {t("chat.export.bibtex")}
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              className="gap-2 rounded-sm border-border/60 bg-background/40 font-mono text-[11px]"
-              onClick={onExportRIS}
-              disabled={streaming}
-            >
-              {t("chat.export.ris")}
-            </Button>
-            <Button variant="outline" size="sm" className="gap-2 rounded-sm border-border/60 bg-background/40 font-mono text-[11px]">
-              <Bolt className="h-3.5 w-3.5" />
-              {t("chat.quickMode")}
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              className="rounded-sm border-border/60 bg-background/40 font-mono text-[11px]"
-              onClick={() => setTraceOpen((v) => !v)}
-            >
-              {traceOpen ? t("chat.trace.hide") : t("chat.trace.show")}
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              className="rounded-sm border-border/60 bg-background/40 font-mono text-[11px]"
-              onClick={() => setTopologyOpen((v) => !v)}
-            >
-              {topologyOpen ? t("chat.topology.hide") : t("chat.topology.show")}
-            </Button>
+          <div className="flex min-w-0 shrink-0 flex-col items-end">
+            <ActionTabBar groups={headerActionGroups} defaultGroupId="export" className="max-w-[min(100vw-2rem,26rem)]" />
           </div>
         </div>
       </header>
@@ -807,8 +800,19 @@ const ChatPanelInner = memo(function ChatPanelInner() {
             }}
           >
             <div className="space-y-3 pb-10">
+              {!hasUserFacingMessages && !streaming ? (
+                <div className="flex min-h-[40vh] items-center justify-center py-8">
+                  <WelcomeEmptyState variant="chat" />
+                </div>
+              ) : null}
               {chatMessages.map((m) => {
                 const isLiveAssistant = streaming && m.role === "assistant" && m.id === lastAssistantId
+                const assistantDisplay = m.role === "assistant" ? displayMessageContent(m.content, t) : ""
+                const showAcademicSkeleton =
+                  isLiveAssistant &&
+                  streaming &&
+                  assistantDisplay.trim().length === 0 &&
+                  (streamMetrics?.firstTokenAt == null || hasRunningWorkflow)
                 return (
                   <motion.div
                     key={m.id}
@@ -844,16 +848,8 @@ const ChatPanelInner = memo(function ChatPanelInner() {
                         </div>
                       </>
 
-                    ) : displayMessageContent(m.content, t).length === 0 && isLiveAssistant && streamMetrics?.directChat ? (
-                      <span className="inline-flex items-center gap-1 font-mono text-[11px] text-muted-foreground">
-                        <span className="inline-block h-3 w-1 animate-pulse bg-sky-400/80" />
-                        {t("chat.directChatComposing" as LocaleKey)}
-                      </span>
-                    ) : displayMessageContent(m.content, t).length === 0 && isLiveAssistant ? (
-                      <span className="inline-flex items-center gap-1 font-mono text-[11px] text-muted-foreground">
-                        <span className="inline-block h-3 w-1 animate-pulse bg-emerald-400/80" />
-                        {t("chat.awaitingTokens")}
-                      </span>
+                    ) : showAcademicSkeleton ? (
+                      <AcademicThinkingSkeleton />
                     ) : (
                       <motion.div
                         animate={isLiveAssistant ? { opacity: [0.88, 1] } : { opacity: 1 }}

@@ -94,7 +94,7 @@ export const DashboardPanel = memo(function DashboardPanel() {
                     {t("setup.modal.close")}
                   </Button>
                 </div>
-                <div className="max-h-[78vh] overflow-auto px-5 py-4">
+                <div className="max-h-[78vh] overflow-auto sk-scrollbar px-5 py-4">
                   <SetupGuide compact />
                 </div>
               </div>

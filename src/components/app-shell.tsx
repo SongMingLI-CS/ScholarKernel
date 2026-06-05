@@ -39,6 +39,7 @@ function PanelBody({ panel }: { panel: PanelId }) {
 export const AppShell = memo(function AppShell() {
   const active = useAgentStore((s) => s.ui.activePanel)
   const heartbeat = useAgentStore((s) => s.actions.heartbeatSessionKeys)
+  const pushToast = useAgentStore((s) => s.actions.pushToast)
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
 
   useEffect(() => {
@@ -46,6 +47,14 @@ export const AppShell = memo(function AppShell() {
     const id = window.setInterval(() => heartbeat(), 30 * 60 * 1000)
     return () => window.clearInterval(id)
   }, [heartbeat])
+
+  useEffect(() => {
+    const onExpired = () => {
+      pushToast({ messageKey: "session.heartbeat.expired", variant: "error", ttlMs: 6200 })
+    }
+    window.addEventListener("sk:session-expired", onExpired)
+    return () => window.removeEventListener("sk:session-expired", onExpired)
+  }, [pushToast])
 
   return (
     <AuthProvider>

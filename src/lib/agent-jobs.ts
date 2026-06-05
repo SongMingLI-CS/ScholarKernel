@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma"
+import { serializeAgentJobError } from "@/lib/agent-job-errors"
 import type { Prisma } from "../../generated/prisma/client"
 import type { ActiveProviderConfig } from "@/lib/agent/planner"
 
@@ -14,6 +15,12 @@ export type AgentJobProvider = ActiveProviderConfig
 export type AgentJobCreateInput = {
   userInput: string
   provider: AgentJobProvider
+}
+
+export type AgentJobFailInput = {
+  jobId?: string
+  userInput?: string
+  provider?: AgentJobProvider
 }
 
 export async function createAgentJob(userId: string, input: AgentJobCreateInput) {
@@ -55,14 +62,81 @@ export async function completeAgentJob(
   })
 }
 
-export async function failAgentJob(id: string, error: string, checkpoint?: AgentJobCheckpoint) {
+export async function failAgentJob(
+  id: string,
+  error: unknown,
+  checkpoint?: AgentJobCheckpoint
+) {
+  const { errorMessage, errorStack } = serializeAgentJobError(error)
   return prisma.agentJob.update({
     where: { id },
     data: {
       status: "error",
-      error,
+      error: errorMessage,
+      errorMessage,
+      errorStack: errorStack || null,
       ...(checkpoint ? { checkpoint: checkpoint as Prisma.InputJsonValue } : {}),
     },
+  })
+}
+
+/** 异步写入 AgentJob 可观测性字段；不阻塞 API 响应。 */
+export function persistAgentJobError(userId: string, error: unknown, ctx: AgentJobFailInput = {}) {
+  const { errorMessage, errorStack } = serializeAgentJobError(error)
+  const write = async () => {
+    if (ctx.jobId) {
+      const owned = await prisma.agentJob.findFirst({ where: { id: ctx.jobId, userId } })
+      if (owned) {
+        await prisma.agentJob.update({
+          where: { id: ctx.jobId },
+          data: {
+            status: "error",
+            error: errorMessage,
+            errorMessage,
+            errorStack: errorStack || null,
+            checkpoint: { phase: "error" } as Prisma.InputJsonValue,
+          },
+        })
+        return
+      }
+    }
+
+    const active = await prisma.agentJob.findFirst({
+      where: { userId, status: { in: ["pending", "running"] } },
+      orderBy: { updatedAt: "desc" },
+    })
+    if (active) {
+      await prisma.agentJob.update({
+        where: { id: active.id },
+        data: {
+          status: "error",
+          error: errorMessage,
+          errorMessage,
+          errorStack: errorStack || null,
+          checkpoint: { phase: "error" } as Prisma.InputJsonValue,
+        },
+      })
+      return
+    }
+
+    if (ctx.userInput?.trim()) {
+      await prisma.agentJob.create({
+        data: {
+          userId,
+          status: "error",
+          input: ctx.userInput.trim(),
+          provider: ctx.provider ?? undefined,
+          error: errorMessage,
+          errorMessage,
+          errorStack: errorStack || null,
+          checkpoint: { phase: "error" } as Prisma.InputJsonValue,
+        },
+      })
+    }
+  }
+
+  return write().catch((e) => {
+    console.error("[persistAgentJobError]", e)
   })
 }
 

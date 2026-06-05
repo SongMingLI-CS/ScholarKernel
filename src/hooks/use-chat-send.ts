@@ -22,6 +22,7 @@ import type { LocaleKey } from "@/lib/locales"
 import { isLikelyCorsBlocked } from "@/lib/network-errors"
 import { isAbortError } from "@/lib/run-abort"
 import { formatUserFacingErrorMessage } from "@/lib/user-facing-errors"
+import { isApiUnauthorizedError } from "@/lib/conversation-api"
 import { buildTopologyForActiveProvider, useAgentStore } from "@/store/useAgentStore"
 
 const OLLAMA_DEFAULT = { providerId: "ollama" as const, model: "llama3.1", baseUrl: "http://localhost:11434" }
@@ -357,6 +358,13 @@ export function useChatSend({
         } else {
           const msg = e instanceof Error ? e.message : "StreamFailed"
           errMsg = formatUserFacingErrorMessage(e, lang)
+          if (isApiUnauthorizedError(e) || /Unauthorized|HTTP 401/i.test(msg)) {
+            useAgentStore.getState().actions.pushToast({
+              messageKey: "session.heartbeat.expired",
+              variant: "error",
+              ttlMs: 6200,
+            })
+          }
           if (msg.includes("MissingSearchApiKey") && runtimeKeys != null) {
             useAgentStore.getState().actions.pushToast({
               messageKey: "search.toast.unauthorizedWhenLockOn",

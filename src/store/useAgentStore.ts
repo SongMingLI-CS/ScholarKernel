@@ -12,6 +12,7 @@ import {
   fetchConversation,
   fetchConversations,
   fetchSettings,
+  isApiUnauthorizedError,
   patchConversation as apiPatchConversation,
   patchDocument as apiPatchDocument,
 } from "@/lib/conversation-api"
@@ -693,6 +694,13 @@ export const useAgentStore = create<AgentStore>()(
             }
           } catch (e) {
             console.error("[initializeCloud]", e)
+            if (isApiUnauthorizedError(e)) {
+              get().actions.pushToast({
+                messageKey: "session.heartbeat.expired",
+                variant: "error",
+                ttlMs: 6200,
+              })
+            }
             set((s) => ({
               ...s,
               conversations: { ...s.conversations, loading: false, cloudReady: true },

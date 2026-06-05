@@ -39,13 +39,13 @@ export const CanvasChatPlaceholderCard = memo(function CanvasChatPlaceholderCard
           {streaming ? <Loader2 className="h-5 w-5 animate-spin" /> : <FileText className="h-5 w-5" />}
         </div>
         <div className="min-w-0 flex-1">
-          <p className="font-mono text-[10px] uppercase tracking-wider text-gray-400">
+          <p className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
             {streaming ? t("chat.canvasCard.streaming") : t("chat.canvasCard.ready")}
           </p>
           <h3 className="mt-1.5 truncate font-sans text-[15px] font-semibold leading-snug text-gray-100">
             {card.title}
           </h3>
-          <p className="mt-1 font-mono text-[11px] text-gray-400">
+          <p className="mt-1 font-mono text-[11px] text-muted-foreground">
             {t("chat.canvasCard.chars", { count: card.charCount.toLocaleString() })}
           </p>
           <Button

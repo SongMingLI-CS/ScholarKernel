@@ -74,7 +74,7 @@ export async function POST(req: Request) {
     return jsonOk(done)
   } catch (e) {
     const message = e instanceof Error ? e.message : "Agent job failed"
-    const failed = await failAgentJob(job.id, message, { phase: "error" })
+    const failed = await failAgentJob(job.id, e, { phase: "error" })
     console.error("[POST /api/agent/jobs]", e)
     return jsonOk(failed, { status: 500 })
   }

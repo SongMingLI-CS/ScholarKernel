@@ -57,10 +57,27 @@ describe("agent-jobs", () => {
     expect(job.status).toBe("done")
   })
 
-  it("failAgentJob stores error message", async () => {
-    update.mockResolvedValueOnce({ id: "j1", status: "error", error: "boom" })
-    const job = await failAgentJob("j1", "boom")
-    expect(job.error).toBe("boom")
+  it("failAgentJob stores error message and stack", async () => {
+    const err = new Error("boom")
+    err.stack = "Error: boom\n    at x.ts:1:1"
+    update.mockResolvedValueOnce({
+      id: "j1",
+      status: "error",
+      error: "boom",
+      errorMessage: "boom",
+      errorStack: "Error: boom\n    at x.ts:1:1",
+    })
+    const job = await failAgentJob("j1", err)
+    expect(job.errorMessage).toBe("boom")
+    expect(update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          status: "error",
+          errorMessage: "boom",
+          errorStack: expect.stringContaining("boom"),
+        }),
+      })
+    )
   })
 
   it("markAgentJobRunning sets running", async () => {

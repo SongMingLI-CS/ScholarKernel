@@ -37,6 +37,14 @@ export const LoginGate = memo(function LoginGate({ children }: { children: React
     void refreshSession()
   }, [refreshSession])
 
+  useEffect(() => {
+    const onExpired = () => {
+      void refreshSession()
+    }
+    window.addEventListener("sk:session-expired", onExpired)
+    return () => window.removeEventListener("sk:session-expired", onExpired)
+  }, [refreshSession])
+
   const onLogin = useCallback(async () => {
     setBusy(true)
     setError(null)

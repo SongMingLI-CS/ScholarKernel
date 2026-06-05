@@ -6,7 +6,9 @@ import { proxyAwareFetch } from "@/lib/proxy-client"
 
 import {
   DEFAULT_ACADEMIC_SEARCH_MAX_RESULTS,
+  DEFAULT_SNIPPET_CONTEXT_CHARS,
   mergeAcademicSearchHits,
+  truncateSnippet,
 } from "@/lib/tools/academic-search-strategy"
 
 export type AcademicSearchProvider = "tavily" | "serper"
@@ -43,6 +45,16 @@ const AcademicSearchInputSchema = z.object({
   /** 关键词多样化：并行检索多组 query（Planner 对宽泛主题应输出此字段） */
   search_queries: z.array(z.string().min(1)).min(1).max(4).optional(),
 })
+
+const SEARCH_FETCH_TIMEOUT_MS = 45_000
+const RAW_SNIPPET_MAX_CHARS = DEFAULT_SNIPPET_CONTEXT_CHARS * 2
+
+function searchFetchTimeoutSignal(): AbortSignal | undefined {
+  if (typeof AbortSignal !== "undefined" && "timeout" in AbortSignal) {
+    return AbortSignal.timeout(SEARCH_FETCH_TIMEOUT_MS)
+  }
+  return undefined
+}
 
 const ACADEMIC_DOMAINS = [
   "arxiv.org",
@@ -207,6 +219,7 @@ async function tavilySearch(apiKey: string, query: string, maxResults: number): 
       Authorization: `Bearer ${normalizedKey}`,
     },
     body: JSON.stringify(requestBody),
+    signal: searchFetchTimeoutSignal(),
   })
   if (!res.ok) {
     const txt = await res.text().catch(() => "")
@@ -240,7 +253,10 @@ async function tavilySearch(apiKey: string, query: string, maxResults: number): 
         source_id: "",
         title: typeof rr["title"] === "string" ? rr["title"] : String(rr["title"] ?? ""),
         url: typeof rr["url"] === "string" ? rr["url"] : String(rr["url"] ?? ""),
-        snippet: typeof rr["content"] === "string" ? (rr["content"] as string) : undefined,
+        snippet:
+          typeof rr["content"] === "string"
+            ? truncateSnippet(rr["content"] as string, RAW_SNIPPET_MAX_CHARS)
+            : undefined,
         publishedAt: typeof rr["published_date"] === "string" ? (rr["published_date"] as string) : undefined,
         source: "tavily" as const,
       }
@@ -267,6 +283,7 @@ async function serperSearch(apiKey: string, query: string, maxResults: number): 
     method: "POST",
     headers: { "content-type": "application/json", "X-API-KEY": normalizedKey },
     body: JSON.stringify({ q: query, num: maxResults }),
+    signal: searchFetchTimeoutSignal(),
   })
   if (!res.ok) {
     const txt = await res.text().catch(() => "")
@@ -282,7 +299,10 @@ async function serperSearch(apiKey: string, query: string, maxResults: number): 
         source_id: "",
         title: typeof rr["title"] === "string" ? rr["title"] : String(rr["title"] ?? ""),
         url: typeof rr["link"] === "string" ? rr["link"] : String(rr["link"] ?? ""),
-        snippet: typeof rr["snippet"] === "string" ? (rr["snippet"] as string) : undefined,
+        snippet:
+          typeof rr["snippet"] === "string"
+            ? truncateSnippet(rr["snippet"] as string, RAW_SNIPPET_MAX_CHARS)
+            : undefined,
         publishedAt: typeof rr["date"] === "string" ? (rr["date"] as string) : undefined,
         source: "serper" as const,
       }

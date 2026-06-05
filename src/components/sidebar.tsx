@@ -25,6 +25,7 @@ import { AnimatePresence, motion } from "framer-motion"
 
 import { FeatureManifestDialog } from "@/components/feature-manifest"
 import { SetupGuide } from "@/components/setup-guide"
+import { WelcomeEmptyState } from "@/components/welcome-empty-state"
 import { Button } from "@/components/ui/button"
 import { CloudMetrics } from "@/components/cloud-metrics"
 import { useT, type LocaleKey } from "@/lib/locales"
@@ -401,7 +402,7 @@ export const Sidebar = memo(function Sidebar({ onNavigate }: { onNavigate?: () =
           {conversationsLoading && conversations.length === 0 ? (
             <div className="px-2 py-3 font-mono text-[11px] text-muted-foreground">加载会话…</div>
           ) : conversations.length === 0 ? (
-            <div className="px-2 py-3 font-mono text-[11px] text-muted-foreground">暂无对话，点击上方开始</div>
+            <WelcomeEmptyState variant="sidebar" className="mx-1" />
           ) : searchActive && filteredConversations.length === 0 ? (
             <div className="px-2 py-3 font-mono text-[11px] text-muted-foreground">{t("sidebar.search.empty")}</div>
           ) : (
@@ -604,7 +605,7 @@ export const Sidebar = memo(function Sidebar({ onNavigate }: { onNavigate?: () =
                 </Button>
               </div>
 
-              <div className="max-h-[78vh] overflow-auto px-5 py-4">
+              <div className="max-h-[78vh] overflow-auto sk-scrollbar px-5 py-4">
                 <SetupGuide compact />
                 <div className="mt-4 flex justify-end gap-2 border-t border-border/60 pt-4">
                   <Button variant="outline" className="border-border/60 bg-background/30" onClick={() => setQuickStartOpen(false)}>

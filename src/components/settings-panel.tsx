@@ -4,6 +4,7 @@ import { memo, useCallback, useMemo, useRef, useState } from "react"
 import { BookOpen, Download, Flame, Gauge, Import, LayoutGrid, Moon, Settings, ShieldAlert, SlidersHorizontal, Sun, Trash2, Workflow } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
+import { ActionTabBar } from "@/components/action-tab-bar"
 import { SetupGuide } from "@/components/setup-guide"
 import { useT } from "@/lib/locales"
 import { cn } from "@/lib/utils"
@@ -655,31 +656,10 @@ export const SettingsPanel = memo(function SettingsPanel() {
                 <div className="rounded-xl border border-zinc-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-950 lg:col-span-2">
                   <div className="flex items-center gap-2">
                     <Download className="h-4 w-4 text-muted-foreground" />
-                    <div className="text-xs font-semibold tracking-wide text-muted-foreground">{t("settings.export.title")}</div>
+                    <div className="text-xs font-semibold tracking-wide text-muted-foreground">
+                      {t("settings.export.title")} / {t("settings.import.title")}
+                    </div>
                   </div>
-                  <div className="mt-2 text-xs text-muted-foreground">{t("settings.export.hint")}</div>
-                  <div className="mt-3 flex items-center gap-2">
-                    <input
-                      value={exportPass}
-                      onChange={(e) => setExportPass(e.target.value)}
-                      type="password"
-                      placeholder={t("settings.export.passPlaceholder")}
-                      className="h-10 min-w-0 flex-1 rounded-sm border border-zinc-200 bg-zinc-50 px-3 font-mono text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-3 focus-visible:ring-ring/40 dark:border-neutral-800 dark:bg-neutral-900"
-                    />
-                    <Button onClick={onExport} className="gap-2" disabled={busy !== "idle"}>
-                      <Download className="h-4 w-4" />
-                      {busy === "export" ? t("settings.export.working") : t("settings.export.btn")}
-                    </Button>
-                  </div>
-                </div>
-
-                <div className="rounded-xl border border-zinc-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-950 lg:col-span-2">
-                  <div className="flex items-center gap-2">
-                    <Import className="h-4 w-4 text-muted-foreground" />
-                    <div className="text-xs font-semibold tracking-wide text-muted-foreground">{t("settings.import.title")}</div>
-                  </div>
-                  <div className="mt-2 text-xs text-muted-foreground">{t("settings.import.hint")}</div>
-
                   <input
                     ref={fileRef}
                     type="file"
@@ -687,25 +667,62 @@ export const SettingsPanel = memo(function SettingsPanel() {
                     className="hidden"
                     onChange={(e) => onImportFile(e.target.files?.[0] ?? null)}
                   />
-
-                  <div className="mt-3 flex items-center gap-2">
-                    <input
-                      value={importPass}
-                      onChange={(e) => setImportPass(e.target.value)}
-                      type="password"
-                      placeholder={t("settings.import.passPlaceholder")}
-                      className="h-10 min-w-0 flex-1 rounded-sm border border-zinc-200 bg-zinc-50 px-3 font-mono text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-3 focus-visible:ring-ring/40 dark:border-neutral-800 dark:bg-neutral-900"
-                    />
-                    <Button
-                      onClick={onPickImportFile}
-                      variant="outline"
-                      className="gap-2 rounded-sm border-zinc-200 bg-zinc-50 font-mono text-xs hover:bg-zinc-100 dark:border-neutral-800 dark:bg-neutral-900 dark:hover:bg-neutral-800"
-                      disabled={busy !== "idle"}
-                    >
-                      <Import className="h-4 w-4" />
-                      {busy === "import" ? t("settings.import.working") : t("settings.import.btn")}
-                    </Button>
-                  </div>
+                  <ActionTabBar
+                    className="mt-3"
+                    hideGroupTabsWhenSingle={false}
+                    defaultGroupId="export"
+                    groups={[
+                      {
+                        id: "export",
+                        label: t("settings.export.title"),
+                        panel: (
+                          <div className="space-y-2">
+                            <div className="text-xs text-muted-foreground">{t("settings.export.hint")}</div>
+                            <div className="flex flex-wrap items-center gap-2">
+                              <input
+                                value={exportPass}
+                                onChange={(e) => setExportPass(e.target.value)}
+                                type="password"
+                                placeholder={t("settings.export.passPlaceholder")}
+                                className="h-10 min-w-0 flex-1 rounded-sm border border-zinc-200 bg-zinc-50 px-3 font-mono text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-3 focus-visible:ring-ring/40 dark:border-neutral-800 dark:bg-neutral-900"
+                              />
+                              <Button onClick={onExport} className="gap-2" disabled={busy !== "idle"}>
+                                <Download className="h-4 w-4" />
+                                {busy === "export" ? t("settings.export.working") : t("settings.export.btn")}
+                              </Button>
+                            </div>
+                          </div>
+                        ),
+                      },
+                      {
+                        id: "import",
+                        label: t("settings.import.title"),
+                        panel: (
+                          <div className="space-y-2">
+                            <div className="text-xs text-muted-foreground">{t("settings.import.hint")}</div>
+                            <div className="flex flex-wrap items-center gap-2">
+                              <input
+                                value={importPass}
+                                onChange={(e) => setImportPass(e.target.value)}
+                                type="password"
+                                placeholder={t("settings.import.passPlaceholder")}
+                                className="h-10 min-w-0 flex-1 rounded-sm border border-zinc-200 bg-zinc-50 px-3 font-mono text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-3 focus-visible:ring-ring/40 dark:border-neutral-800 dark:bg-neutral-900"
+                              />
+                              <Button
+                                onClick={onPickImportFile}
+                                variant="outline"
+                                className="gap-2 rounded-sm border-zinc-200 bg-zinc-50 font-mono text-xs hover:bg-zinc-100 dark:border-neutral-800 dark:bg-neutral-900 dark:hover:bg-neutral-800"
+                                disabled={busy !== "idle"}
+                              >
+                                <Import className="h-4 w-4" />
+                                {busy === "import" ? t("settings.import.working") : t("settings.import.btn")}
+                              </Button>
+                            </div>
+                          </div>
+                        ),
+                      },
+                    ]}
+                  />
                 </div>
 
                 <div className="rounded-xl border border-zinc-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-950 lg:col-span-2">
@@ -723,27 +740,50 @@ export const SettingsPanel = memo(function SettingsPanel() {
                     className="hidden"
                     onChange={(e) => void onImportConversations(e.target.files?.[0] ?? null)}
                   />
-                  <div className="mt-3 flex flex-wrap items-center gap-2">
+                  <div className="mt-3">
                     <input
                       value={convBackupPass}
                       onChange={(e) => setConvBackupPass(e.target.value)}
                       type="password"
                       placeholder={t("settings.export.passPlaceholder")}
-                      className="h-10 min-w-0 flex-1 rounded-sm border border-zinc-200 bg-zinc-50 px-3 font-mono text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-3 focus-visible:ring-ring/40 dark:border-neutral-800 dark:bg-neutral-900"
+                      className="h-10 w-full rounded-sm border border-zinc-200 bg-zinc-50 px-3 font-mono text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-3 focus-visible:ring-ring/40 dark:border-neutral-800 dark:bg-neutral-900"
                     />
-                    <Button onClick={() => void onExportConversations()} className="gap-2" disabled={busy !== "idle"}>
-                      <Download className="h-4 w-4" />
-                      {busy === "conv-export" ? t("settings.export.working") : t("settings.conversations.backup.export")}
-                    </Button>
-                    <Button
-                      onClick={() => convFileRef.current?.click()}
-                      variant="outline"
-                      className="gap-2 rounded-sm border-zinc-200 bg-zinc-50 font-mono text-xs hover:bg-zinc-100 dark:border-neutral-800 dark:bg-neutral-900 dark:hover:bg-neutral-800"
-                      disabled={busy !== "idle"}
-                    >
-                      <Import className="h-4 w-4" />
-                      {busy === "conv-import" ? t("settings.import.working") : t("settings.conversations.backup.import")}
-                    </Button>
+                    <ActionTabBar
+                      className="mt-2"
+                      hideGroupTabsWhenSingle={false}
+                      defaultGroupId="export"
+                      groups={[
+                        {
+                          id: "export",
+                          label: t("settings.conversations.backup.export"),
+                          panel: (
+                            <Button
+                              onClick={() => void onExportConversations()}
+                              className="gap-2"
+                              disabled={busy !== "idle"}
+                            >
+                              <Download className="h-4 w-4" />
+                              {busy === "conv-export" ? t("settings.export.working") : t("settings.conversations.backup.export")}
+                            </Button>
+                          ),
+                        },
+                        {
+                          id: "import",
+                          label: t("settings.conversations.backup.import"),
+                          panel: (
+                            <Button
+                              onClick={() => convFileRef.current?.click()}
+                              variant="outline"
+                              className="gap-2 rounded-sm border-zinc-200 bg-zinc-50 font-mono text-xs hover:bg-zinc-100 dark:border-neutral-800 dark:bg-neutral-900 dark:hover:bg-neutral-800"
+                              disabled={busy !== "idle"}
+                            >
+                              <Import className="h-4 w-4" />
+                              {busy === "conv-import" ? t("settings.import.working") : t("settings.conversations.backup.import")}
+                            </Button>
+                          ),
+                        },
+                      ]}
+                    />
                   </div>
                 </div>
               </div>

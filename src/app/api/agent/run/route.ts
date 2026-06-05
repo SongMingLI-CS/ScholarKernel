@@ -1,10 +1,12 @@
 import { resolveUserIdFromRequest } from "@/lib/auth-user"
+import { persistAgentJobError } from "@/lib/agent-jobs"
 import { runAgentOnServer } from "@/lib/agent-server-run"
 import { jsonError, jsonOk, parseJsonBody } from "@/lib/api-utils"
 import type { ActiveProviderConfig, ChatHistoryEntry } from "@/lib/agent/planner"
 import type { AgentExecutorDeps } from "@/lib/agent/executor-types"
 
 type AgentRunBody = {
+  jobId?: string
   userInput?: string
   provider?: ActiveProviderConfig
   chatHistory?: ChatHistoryEntry[]
@@ -47,6 +49,11 @@ export async function POST(req: Request) {
     return jsonOk(result)
   } catch (e) {
     const message = e instanceof Error ? e.message : "Agent run failed"
+    void persistAgentJobError(userId, e, {
+      jobId: body.jobId,
+      userInput: body.userInput?.trim(),
+      provider: body.provider,
+    })
     console.error("[POST /api/agent/run]", e)
     return jsonError(message, 500)
   }
