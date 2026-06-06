@@ -19,6 +19,12 @@ import { ComponentSandbox } from "@/components/component-sandbox"
 import { WelcomeEmptyState } from "@/components/welcome-empty-state"
 import { t as tGlobal } from "@/lib/locales"
 import { findPeerReviewGroups, peerReviewGroupToFlowLayout } from "@/lib/agent/topology-layout"
+import {
+  peerReviewStreamStyle,
+  personaIdFromMetadata,
+  readStreamDrafts,
+  readStreamStatusLines,
+} from "@/lib/agent/peer-review-stream-ui"
 import { cn } from "@/lib/utils"
 import { useAgentStore, type TopologyState, type WorkflowNode, type WorkflowNodeStatus } from "@/store/useAgentStore"
 
@@ -102,6 +108,12 @@ function IndustrialNode({ data }: NodeProps<ProviderNodeData | WorkflowNodeData>
     isFallback || (isWorkflow && (data as WorkflowNodeData).status === "error") || Boolean((data as WorkflowNodeData).error)
   const progress = isWorkflow ? extractProgress((data as WorkflowNodeData).metadata) : null
   const nodeStatus = (data.status === "idle" ? "pending" : data.status) as FlowStatus
+  const streamDrafts = isWorkflow ? readStreamDrafts((data as WorkflowNodeData).metadata) : {}
+  const streamStatusLines = isWorkflow ? readStreamStatusLines((data as WorkflowNodeData).metadata) : {}
+  const personaId = isWorkflow ? personaIdFromMetadata((data as WorkflowNodeData).metadata) : null
+  const personaDraft = personaId ? streamDrafts[personaId] : undefined
+  const personaStatus = personaId ? streamStatusLines[personaId] : undefined
+  const streamStyle = personaId ? peerReviewStreamStyle(personaId) : null
 
   return (
     <div
@@ -139,7 +151,21 @@ function IndustrialNode({ data }: NodeProps<ProviderNodeData | WorkflowNodeData>
               {(data as WorkflowNodeData).error}
             </div>
           ) : null}
-          {(data as WorkflowNodeData).logs.length === 0 ? (
+          {wf?.type === "peer_review" && (personaDraft || personaStatus?.length) && streamStyle ? (
+            <div className={cn("rounded-sm border p-1.5", streamStyle.border, streamStyle.bg)}>
+              <div className={cn("font-mono text-[9px] font-semibold", streamStyle.text)}>{streamStyle.label}</div>
+              {personaStatus?.slice(-4).map((line, i) => (
+                <div key={`s-${i}`} className={cn("mt-0.5 whitespace-pre-wrap text-[9px] opacity-90", streamStyle.text)}>
+                  {line}
+                </div>
+              ))}
+              {personaDraft ? (
+                <div className={cn("mt-1 max-h-[72px] overflow-auto whitespace-pre-wrap text-[9px]", streamStyle.text)}>
+                  {personaDraft}
+                </div>
+              ) : null}
+            </div>
+          ) : (data as WorkflowNodeData).logs.length === 0 ? (
             <div className="opacity-70">（暂无日志）</div>
           ) : (
             (data as WorkflowNodeData).logs.slice(-12).map((l, i) => (
@@ -320,18 +346,21 @@ function workflowToFlow(nodes: WorkflowNode[], activeNodeId: string | null): { n
   return { nodes: flowNodes, edges: flowEdges }
 }
 
-const FIT_VIEW_OPTS = { padding: 0.2, duration: 400 } as const
+const FIT_VIEW_DEFAULT_PADDING = 0.2
+const FIT_VIEW_DURATION = 400
 
 function TopologyFlowCanvas({
   flowNodes,
   flowEdges,
   onNodeClick,
   layoutKey,
+  fitPadding = FIT_VIEW_DEFAULT_PADDING,
 }: {
   flowNodes: Node[]
   flowEdges: Edge[]
   onNodeClick: (_: unknown, node: Node) => void
   layoutKey: string
+  fitPadding?: number
 }) {
   const containerRef = useRef<HTMLDivElement>(null)
   const { fitView } = useReactFlow()
@@ -348,15 +377,15 @@ function TopologyFlowCanvas({
   }, [])
 
   const safeFitView = useCallback(
-    (duration: number = FIT_VIEW_OPTS.duration) => {
+    (duration: number = FIT_VIEW_DURATION) => {
       if (!mountedRef.current || flowNodes.length === 0) return
       try {
-        fitView({ padding: FIT_VIEW_OPTS.padding, duration })
+        fitView({ padding: fitPadding, duration })
       } catch {
         // React Flow may throw if the pane is tearing down — ignore.
       }
     },
-    [fitView, flowNodes.length]
+    [fitPadding, fitView, flowNodes.length]
   )
 
   useEffect(() => {
@@ -376,7 +405,7 @@ function TopologyFlowCanvas({
       if (ok && changed && flowNodes.length > 0) {
         cancelAnimationFrame(raf)
         raf = requestAnimationFrame(() => {
-          safeFitView(changed ? FIT_VIEW_OPTS.duration : 0)
+          safeFitView(changed ? FIT_VIEW_DURATION : 0)
         })
       }
     }
@@ -395,7 +424,7 @@ function TopologyFlowCanvas({
     let raf = 0
     const onWindowResize = () => {
       cancelAnimationFrame(raf)
-      raf = requestAnimationFrame(() => safeFitView(FIT_VIEW_OPTS.duration))
+      raf = requestAnimationFrame(() => safeFitView(FIT_VIEW_DURATION))
     }
     window.addEventListener("resize", onWindowResize)
     return () => {
@@ -413,7 +442,7 @@ function TopologyFlowCanvas({
     prevNodeCountRef.current = flowNodes.length
     if (!grew) return
     let raf = 0
-    raf = requestAnimationFrame(() => safeFitView(FIT_VIEW_OPTS.duration))
+    raf = requestAnimationFrame(() => safeFitView(FIT_VIEW_DURATION))
     return () => cancelAnimationFrame(raf)
   }, [flowNodes.length, measured, safeFitView])
 
@@ -424,7 +453,7 @@ function TopologyFlowCanvas({
 
   useEffect(() => {
     if (!measured || flowNodes.length === 0) return
-    const timer = window.setTimeout(() => safeFitView(FIT_VIEW_OPTS.duration), 48)
+    const timer = window.setTimeout(() => safeFitView(FIT_VIEW_DURATION), 48)
     return () => window.clearTimeout(timer)
   }, [flowNodes.length, layoutKey, measured, safeFitView, statusSignature])
 
@@ -457,7 +486,14 @@ function TopologyFlowCanvas({
   )
 }
 
-export const TopologyView = memo(function TopologyView({ topology }: { topology?: TopologyState }) {
+export const TopologyView = memo(function TopologyView({
+  topology,
+  fitPadding,
+}: {
+  topology?: TopologyState
+  /** Tighter fit for narrow mobile viewports (e.g. 0.1). */
+  fitPadding?: number
+}) {
   const streaming = useAgentStore((s) => s.inference.streaming?.active)
   const wfNodesRaw = useAgentStore((s) => s.workflow.nodes)
   const wfNodes = useMemo(() => (Array.isArray(wfNodesRaw) ? wfNodesRaw : []), [wfNodesRaw])
@@ -558,6 +594,7 @@ export const TopologyView = memo(function TopologyView({ topology }: { topology?
               flowEdges={flowEdges}
               onNodeClick={onNodeClick}
               layoutKey={layoutKey}
+              fitPadding={fitPadding}
             />
           </ReactFlowProvider>
           {isIdle ? (

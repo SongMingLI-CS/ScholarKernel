@@ -5,7 +5,14 @@ import {
   failAgentJob,
   markAgentJobRunning,
   updateAgentJobCheckpoint,
+  updateAgentJobPeerReviewCheckpoint,
+  type AgentJobCheckpoint,
 } from "@/lib/agent-jobs"
+import {
+  mergePeerReviewCheckpoint,
+  parsePeerReviewCheckpoint,
+  peerReviewCheckpointToJobPatch,
+} from "@/lib/agent/peer-review-checkpoint"
 import { runAgentOnServer } from "@/lib/agent-server-run"
 import { jsonError, jsonOk, parseJsonBody } from "@/lib/api-utils"
 import type { ActiveProviderConfig } from "@/lib/agent/planner"
@@ -46,10 +53,23 @@ export async function POST(req: Request) {
 
   try {
     await markAgentJobRunning(job.id)
+    let jobCheckpoint: AgentJobCheckpoint = {
+      phase: "running",
+      ...(job.checkpoint && typeof job.checkpoint === "object" ? (job.checkpoint as AgentJobCheckpoint) : {}),
+    }
+    let peerReviewCheckpoint = parsePeerReviewCheckpoint(jobCheckpoint)
+
     const result = await runAgentOnServer(
       {
         userInput: body.userInput.trim(),
         activeProvider: body.provider,
+        jobId: job.id,
+        peerReviewCheckpoint,
+        onPeerReviewCheckpoint: (patch) => {
+          peerReviewCheckpoint = mergePeerReviewCheckpoint(peerReviewCheckpoint, patch)
+          jobCheckpoint = { ...jobCheckpoint, ...peerReviewCheckpointToJobPatch(peerReviewCheckpoint) }
+          void updateAgentJobPeerReviewCheckpoint(job.id, jobCheckpoint, patch)
+        },
         chatHistory: body.chatHistory,
         inference: body.inference,
         localOnly: body.localOnly,
@@ -60,13 +80,16 @@ export async function POST(req: Request) {
       },
       {
         onWorkflowPlanned: (nodes) => {
-          void updateAgentJobCheckpoint(job.id, { phase: "planning", nodes })
+          jobCheckpoint = { ...jobCheckpoint, phase: "planning", nodes }
+          void updateAgentJobCheckpoint(job.id, jobCheckpoint)
         },
         onNodePatch: (id, patch) => {
-          void updateAgentJobCheckpoint(job.id, {
+          jobCheckpoint = {
+            ...jobCheckpoint,
             phase: "running",
             nodes: [{ id, patch }],
-          })
+          }
+          void updateAgentJobCheckpoint(job.id, jobCheckpoint)
         },
       }
     )

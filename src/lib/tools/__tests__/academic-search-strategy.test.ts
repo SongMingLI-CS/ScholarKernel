@@ -8,12 +8,20 @@ import {
   isSurveyOrProgressTopic,
   mergeAcademicSearchHits,
   mergeAcademicSearchResponses,
+  RERANK_FINAL_TOP_K,
   resolveResearchQueryList,
+  RETRIEVAL_RECALL_TOP_K,
   serializeResearchOutputForReasoning,
 } from "@/lib/tools/academic-search-strategy"
 import type { AcademicSearchHit, AcademicSearchResponse } from "@/lib/tools/search-tool"
 
 describe("academic-search-strategy", () => {
+  it("exports two-stage retrieval constants", () => {
+    expect(RETRIEVAL_RECALL_TOP_K).toBeGreaterThanOrEqual(25)
+    expect(RETRIEVAL_RECALL_TOP_K).toBeLessThanOrEqual(30)
+    expect(RERANK_FINAL_TOP_K).toBe(5)
+  })
+
   it("detects broad LLM topics", () => {
     expect(isBroadTopicQuery("LLM", "大语言模型最新进展")).toBe(true)
     expect(isBroadTopicQuery("SELF: Simple Efficient Language Model full paper arxiv", "")).toBe(false)

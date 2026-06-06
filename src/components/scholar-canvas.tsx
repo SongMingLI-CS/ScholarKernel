@@ -10,6 +10,7 @@ import { WelcomeEmptyState } from "@/components/welcome-empty-state"
 import { Button } from "@/components/ui/button"
 import { downloadMarkdownAsDocx } from "@/lib/export-utils"
 import { downloadTextFile, sanitizeExportFilename } from "@/lib/conversation-utils"
+import { useMediaQuery } from "@/hooks/use-media-query"
 import { useT } from "@/lib/locales"
 import { cn } from "@/lib/utils"
 import { useAgentStore } from "@/store/useAgentStore"
@@ -130,7 +131,7 @@ export const ScholarCanvas = memo(function ScholarCanvas({
   )
 })
 
-/** Mobile full-screen drawer for Scholar Canvas (< lg). */
+/** Tablet drawer for Scholar Canvas (md–lg, not phone tabs). */
 export const ScholarCanvasMobileDrawer = memo(function ScholarCanvasMobileDrawer({
   highlightPulse = false,
 }: {
@@ -139,10 +140,11 @@ export const ScholarCanvasMobileDrawer = memo(function ScholarCanvasMobileDrawer
   const canvasOpen = useAgentStore((s) => s.canvas.canvasOpen)
   const activeDocument = useAgentStore((s) => s.canvas.activeDocument)
   const closeCanvas = useAgentStore((s) => s.actions.closeCanvas)
+  const isTablet = useMediaQuery("(min-width: 768px) and (max-width: 1023px)")
 
   return (
     <AnimatePresence>
-      {canvasOpen && activeDocument ? (
+      {isTablet && canvasOpen && activeDocument ? (
         <>
           <motion.button
             type="button"

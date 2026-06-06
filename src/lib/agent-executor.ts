@@ -8,6 +8,7 @@ import {
   DEFAULT_ACADEMIC_SEARCH_MAX_RESULTS,
   mergeAcademicSearchHits,
   mergeAcademicSearchResponses,
+  RERANK_FINAL_TOP_K,
   resolveResearchQueryList,
 } from "@/lib/tools/academic-search-strategy"
 import {
@@ -599,6 +600,8 @@ export class AgentExecutor {
             userInput,
             deps: this.deps,
             hooks: this.hooks,
+            checkpoint: this.deps.peerReviewCheckpoint ?? null,
+            onCheckpoint: this.deps.onPeerReviewCheckpoint,
           })
           results.push(...groupResults)
           ni += group.length - 1
@@ -645,6 +648,7 @@ export class AgentExecutor {
                   search_query: queryList[0] ?? search_query,
                   academicOnly,
                   maxResults: DEFAULT_ACADEMIC_SEARCH_MAX_RESULTS,
+                  rerankTopK: RERANK_FINAL_TOP_K,
                 },
                 toolOpts
               )) as AcademicSearchResponse
@@ -653,7 +657,12 @@ export class AgentExecutor {
               const outs = await Promise.all(
                 queryList.map((q) =>
                   exec(
-                    { search_query: q, academicOnly, maxResults: DEFAULT_ACADEMIC_SEARCH_MAX_RESULTS },
+                    {
+                      search_query: q,
+                      academicOnly,
+                      maxResults: DEFAULT_ACADEMIC_SEARCH_MAX_RESULTS,
+                      rerankTopK: RERANK_FINAL_TOP_K,
+                    },
                     toolOpts
                   )
                 )

@@ -1,7 +1,14 @@
 import type { AcademicSearchHit, AcademicSearchResponse } from "@/lib/tools/search-tool"
+import {
+  RERANK_FINAL_TOP_K,
+  RETRIEVAL_RECALL_TOP_K,
+} from "@/lib/document/rerank-gateway"
 
-/** Tavily advanced 检索默认召回条数 */
-export const DEFAULT_ACADEMIC_SEARCH_MAX_RESULTS = 10
+/** 第一阶段宽召回 TopK（Tavily advanced） */
+export const DEFAULT_ACADEMIC_SEARCH_MAX_RESULTS = RETRIEVAL_RECALL_TOP_K
+
+/** 第二阶段重排后写入上下文的精选条数 */
+export { RERANK_FINAL_TOP_K, RETRIEVAL_RECALL_TOP_K }
 
 /** 单条摘要写入上下文时的最大字符数（仅截断 snippet，不截断 title/url） */
 export const DEFAULT_SNIPPET_CONTEXT_CHARS = 480

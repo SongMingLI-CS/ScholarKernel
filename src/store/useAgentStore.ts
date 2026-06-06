@@ -103,6 +103,7 @@ type AgentStore = {
     activePanel: PanelId
     corsHelp: CorsHelpState
     toast: ToastState
+    sidebarDrawerOpen: boolean
   }
   chat: {
     messages: ChatMessage[]
@@ -141,6 +142,7 @@ type AgentStore = {
 
   actions: {
     setActivePanel: (panel: PanelId) => void
+    setSidebarDrawerOpen: (open: boolean) => void
     setTheme: (theme: ThemeMode) => void
     setLang: (lang: Lang) => void
     patchSettings: (patch: Partial<Omit<AgentSettings, "inference" | "behavior" | "ui">>) => void
@@ -183,6 +185,7 @@ type AgentStore = {
     updateNodeStatus: (id: string, status: WorkflowNodeStatus, metadata?: Record<string, unknown>) => void
     patchWorkflowNode: (id: string, patch: Partial<WorkflowNode>) => void
     appendNodeLog: (id: string, line: string) => void
+    applyNodeProgress: (payload: import("@/lib/agent/executor-types").NodeProgressPayload) => void
     startInferenceStream: (input: StartInferenceStreamInput) => void
     patchActiveInferenceStream: (input: {
       runId: string
@@ -369,7 +372,7 @@ export const useAgentStore = create<AgentStore>()(
           behavior: { autoSearch: true, maxRetries: 1, planningDepth: "balanced", localOnly: false },
           ui: { compactMode: false, showThinking: true },
         },
-        ui: { activePanel: "chat", corsHelp: { open: false }, toast: { open: false } },
+        ui: { activePanel: "chat", corsHelp: { open: false }, toast: { open: false }, sidebarDrawerOpen: false },
         chat: {
           messages: [],
         },
@@ -404,6 +407,7 @@ export const useAgentStore = create<AgentStore>()(
         actions: {
           // State guard: only change activePanel string; no side effects.
           setActivePanel: (panel) => set((s) => ({ ...s, ui: { ...s.ui, activePanel: panel } })),
+          setSidebarDrawerOpen: (open) => set((s) => ({ ...s, ui: { ...s.ui, sidebarDrawerOpen: open } })),
         setTheme: (theme) =>
           set((s) => {
             applyThemeToDom(theme)
@@ -917,6 +921,37 @@ export const useAgentStore = create<AgentStore>()(
             scheduleLogFlush()
             return s
           }),
+        applyNodeProgress: (payload) =>
+          set((s) => ({
+            ...s,
+            workflow: {
+              ...s.workflow,
+              version: Date.now(),
+              nodes: s.workflow.nodes.map((n) => {
+                if (n.id !== payload.nodeId) return n
+                const meta = { ...(n.metadata ?? {}) }
+                const drafts = (meta["streamDrafts"] as Record<string, string> | undefined) ?? {}
+                const statusLines = (meta["streamStatusLines"] as Record<string, string[]> | undefined) ?? {}
+
+                if (
+                  (payload.kind === "stream_delta" || payload.kind === "stream_complete") &&
+                  typeof payload.text === "string"
+                ) {
+                  meta["streamDrafts"] = { ...drafts, [payload.streamId]: payload.text }
+                  meta["activeStreamId"] = payload.streamId
+                }
+
+                if (payload.kind === "status_line" && payload.line) {
+                  meta["streamStatusLines"] = {
+                    ...statusLines,
+                    [payload.streamId]: [...(statusLines[payload.streamId] ?? []), payload.line].slice(-32),
+                  }
+                }
+
+                return { ...n, metadata: meta }
+              }),
+            },
+          })),
         startInferenceStream: (input) =>
           set((s) => ({
             ...s,

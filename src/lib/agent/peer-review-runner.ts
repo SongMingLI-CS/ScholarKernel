@@ -1,4 +1,4 @@
-import { generateText } from "ai"
+import { streamText } from "ai"
 import {
   AREA_CHAIR_PERSONA,
   buildPeerReviewCanvasOutput,
@@ -7,9 +7,21 @@ import {
   METHODOLOGY_CRITIC_PERSONA,
   type PeerReviewPersonaId,
 } from "@/lib/agent/agent-personas"
-import type { AgentExecutorDeps, AgentExecutorHooks, SubtaskResult } from "@/lib/agent/executor-types"
+import type {
+  AgentExecutorDeps,
+  AgentExecutorHooks,
+  NodeProgressPayload,
+  PeerReviewStreamProgress,
+  SubtaskResult,
+} from "@/lib/agent/executor-types"
+import {
+  isStageComplete,
+  mergePeerReviewCheckpoint,
+  type PeerReviewCheckpointData,
+} from "@/lib/agent/peer-review-checkpoint"
 import {
   buildGenModelForCloudInference,
+  consumeStreamTextOutput,
   llmCallSettings,
   logLlmCallFailure,
   providerSelfIntro,
@@ -20,6 +32,14 @@ export type PeerReviewGenerateFn = (input: {
   personaId: PeerReviewPersonaId
   systemPrompt: string
   userPrompt: string
+  onProgress?: (payload: PeerReviewStreamProgress) => void
+}) => Promise<string>
+
+export type PeerReviewGenerateStreamFn = (input: {
+  personaId: PeerReviewPersonaId
+  systemPrompt: string
+  userPrompt: string
+  onProgress?: (payload: PeerReviewStreamProgress) => void
 }) => Promise<string>
 
 export type PeerReviewDebateFn = (input: {
@@ -31,9 +51,12 @@ export type ExecutePeerReviewGroupInput = {
   groupNodes: WorkflowNode[]
   userInput: string
   deps: AgentExecutorDeps
-  hooks: Pick<AgentExecutorHooks, "onNodePatch" | "onNodeLog">
+  hooks: Pick<AgentExecutorHooks, "onNodePatch" | "onNodeLog" | "onProgress">
   generateReview?: PeerReviewGenerateFn
+  generateReviewStream?: PeerReviewGenerateStreamFn
   generateDebate?: PeerReviewDebateFn
+  checkpoint?: PeerReviewCheckpointData | null
+  onCheckpoint?: (patch: Partial<PeerReviewCheckpointData> & { markComplete?: PeerReviewCheckpointData["completedStages"][number] }) => void | Promise<void>
 }
 
 export function isPeerReviewGroupStart(nodes: WorkflowNode[], index: number): boolean {
@@ -67,12 +90,29 @@ function personaIdFromNode(node: WorkflowNode, fallback: PeerReviewPersonaId): P
   return fallback
 }
 
-async function defaultGenerateReview(
+function emitProgress(
+  hooks: ExecutePeerReviewGroupInput["hooks"],
+  payload: NodeProgressPayload
+) {
+  hooks.onProgress?.(payload)
+}
+
+function streamDraftPatch(streamId: string, text: string): Partial<WorkflowNode> {
+  return {
+    metadata: {
+      streamDrafts: { [streamId]: text },
+      activeStreamId: streamId,
+    },
+  }
+}
+
+async function defaultGenerateReviewStream(
   deps: AgentExecutorDeps,
   node: WorkflowNode,
   personaId: PeerReviewPersonaId,
   systemPrompt: string,
-  userPrompt: string
+  userPrompt: string,
+  onProgress?: (payload: PeerReviewStreamProgress) => void
 ): Promise<string> {
   const persona = getPersonaById(personaId)
   if (!persona) throw new Error(`UnknownPersona:${personaId}`)
@@ -81,7 +121,7 @@ async function defaultGenerateReview(
   const runtimeKeys = deps.getRuntimeKeys?.() ?? deps.runtimeKeys
   const model = buildGenModelForCloudInference(active, runtimeKeys, node)
 
-  const { text } = await generateText({
+  const streamed = streamText({
     model,
     system: [providerSelfIntro(active), "", systemPrompt].join("\n"),
     prompt: userPrompt,
@@ -89,7 +129,39 @@ async function defaultGenerateReview(
     ...llmCallSettings(deps.signal),
   })
 
+  let prevLen = 0
+  const text = await consumeStreamTextOutput(
+    streamed,
+    (acc) => {
+      const delta = acc.length > prevLen ? acc.slice(prevLen) : ""
+      prevLen = acc.length
+      onProgress?.({ streamId: personaId, text: acc, delta: delta || undefined })
+    },
+    deps.signal
+  )
+
   return text.trim()
+}
+
+async function defaultGenerateReview(
+  deps: AgentExecutorDeps,
+  node: WorkflowNode,
+  personaId: PeerReviewPersonaId,
+  systemPrompt: string,
+  userPrompt: string,
+  onProgress?: (payload: PeerReviewStreamProgress) => void
+): Promise<string> {
+  return defaultGenerateReviewStream(deps, node, personaId, systemPrompt, userPrompt, onProgress)
+}
+
+async function persistStageCheckpoint(
+  input: ExecutePeerReviewGroupInput,
+  state: PeerReviewCheckpointData,
+  patch: Partial<PeerReviewCheckpointData> & { markComplete?: PeerReviewCheckpointData["completedStages"][number] }
+) {
+  const merged = mergePeerReviewCheckpoint(state, patch)
+  Object.assign(state, merged)
+  await input.onCheckpoint?.(patch)
 }
 
 async function runSingleReviewer(
@@ -98,11 +170,40 @@ async function runSingleReviewer(
   subject: string,
   deps: AgentExecutorDeps,
   hooks: ExecutePeerReviewGroupInput["hooks"],
-  generateReview: PeerReviewGenerateFn,
-  nodeStartedAt: number
-): Promise<{ node: WorkflowNode; text: string }> {
+  generateStream: PeerReviewGenerateStreamFn,
+  nodeStartedAt: number,
+  cachedText?: string
+): Promise<{ node: WorkflowNode; text: string; skipped: boolean }> {
   const persona = getPersonaById(personaId) ?? METHODOLOGY_CRITIC_PERSONA
+
+  if (cachedText?.trim()) {
+    hooks.onNodePatch?.(node.id, {
+      status: "done",
+      output: { text: cachedText, personaId, resumed: true },
+      metadata: {
+        durationMs: 0,
+        personaId,
+        streamDrafts: { [personaId]: cachedText },
+        resumedFromCheckpoint: true,
+      },
+    })
+    emitProgress(hooks, {
+      nodeId: node.id,
+      streamId: personaId,
+      kind: "stream_complete",
+      text: cachedText,
+    })
+    hooks.onNodeLog?.(node.id, `${persona.label} 从快照恢复（跳过 LLM）`)
+    return { node, text: cachedText, skipped: true }
+  }
+
   hooks.onNodePatch?.(node.id, { status: "running" })
+  emitProgress(hooks, {
+    nodeId: node.id,
+    streamId: personaId,
+    kind: "status_line",
+    line: `${persona.label} 开始独立评审…`,
+  })
   hooks.onNodeLog?.(node.id, `${persona.label} 开始独立评审…`)
 
   const userPrompt = [
@@ -114,14 +215,40 @@ async function runSingleReviewer(
   ].join("\n")
 
   try {
-    const text = await generateReview({ personaId, systemPrompt: persona.systemPrompt, userPrompt })
+    const text = await generateStream({
+      personaId,
+      systemPrompt: persona.systemPrompt,
+      userPrompt,
+      onProgress: (p) => {
+        emitProgress(hooks, {
+          nodeId: node.id,
+          streamId: p.streamId,
+          kind: "stream_delta",
+          text: p.text,
+          delta: p.delta,
+        })
+        hooks.onNodePatch?.(node.id, streamDraftPatch(p.streamId, p.text))
+      },
+    })
+
+    emitProgress(hooks, {
+      nodeId: node.id,
+      streamId: personaId,
+      kind: "stream_complete",
+      text,
+    })
+
     hooks.onNodeLog?.(node.id, `${persona.label} 评审完成（${text.length} chars）`)
     hooks.onNodePatch?.(node.id, {
       status: "done",
       output: { text, personaId },
-      metadata: { durationMs: Math.round(performance.now() - nodeStartedAt), personaId },
+      metadata: {
+        durationMs: Math.round(performance.now() - nodeStartedAt),
+        personaId,
+        streamDrafts: { [personaId]: text },
+      },
     })
-    return { node, text }
+    return { node, text, skipped: false }
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
     logLlmCallFailure(`peer-review: ${node.id}`, e)
@@ -132,9 +259,16 @@ async function runSingleReviewer(
 
 export async function executePeerReviewGroup(input: ExecutePeerReviewGroupInput): Promise<SubtaskResult[]> {
   const { groupNodes, userInput, deps, hooks } = input
+
+  const generateStream =
+    input.generateReviewStream ??
+    input.generateReview ??
+    ((args) =>
+      defaultGenerateReviewStream(deps, groupNodes[0]!, args.personaId, args.systemPrompt, args.userPrompt, args.onProgress))
+
   const generateReview =
     input.generateReview ??
-    ((args) => defaultGenerateReview(deps, groupNodes[0]!, args.personaId, args.systemPrompt, args.userPrompt))
+    ((args) => defaultGenerateReview(deps, groupNodes[2] ?? groupNodes[0]!, args.personaId, args.systemPrompt, args.userPrompt))
 
   const generateDebate =
     input.generateDebate ??
@@ -168,33 +302,72 @@ export async function executePeerReviewGroup(input: ExecutePeerReviewGroupInput)
   const subject = resolveSubjectText(userInput, groupNodes)
   const groupStartedAt = performance.now()
 
+  const cpState = mergePeerReviewCheckpoint(input.checkpoint ?? null, { subject })
+
   hooks.onNodeLog?.(r1Node!.id, "【Peer Review】并行启动 Reviewer #1 & #2…")
   hooks.onNodeLog?.(r2Node!.id, "【Peer Review】并行启动 Reviewer #1 & #2…")
-
-  hooks.onNodePatch?.(r1Node!.id, { status: "running" })
-  hooks.onNodePatch?.(r2Node!.id, { status: "running" })
 
   const r1PersonaId = personaIdFromNode(r1Node!, "methodology_critic")
   const r2PersonaId = personaIdFromNode(r2Node!, "innovation_scout")
 
+  const r1Cached = isStageComplete(cpState, "r1") ? cpState.methodologyReview : undefined
+  const r2Cached = isStageComplete(cpState, "r2") ? cpState.innovationReview : undefined
+
+  if (!r1Cached || !r2Cached) {
+    hooks.onNodePatch?.(r1Node!.id, { status: r1Cached ? "done" : "running" })
+    hooks.onNodePatch?.(r2Node!.id, { status: r2Cached ? "done" : "running" })
+  }
+
   const [r1Out, r2Out] = await Promise.all([
-    runSingleReviewer(r1Node!, r1PersonaId, subject, deps, hooks, generateReview, groupStartedAt),
-    runSingleReviewer(r2Node!, r2PersonaId, subject, deps, hooks, generateReview, groupStartedAt),
+    runSingleReviewer(r1Node!, r1PersonaId, subject, deps, hooks, generateStream, groupStartedAt, r1Cached),
+    runSingleReviewer(r2Node!, r2PersonaId, subject, deps, hooks, generateStream, groupStartedAt, r2Cached),
   ])
+
+  if (!r1Out.skipped) {
+    await persistStageCheckpoint(input, cpState, {
+      methodologyReview: r1Out.text,
+      markComplete: "r1",
+    })
+  }
+  if (!r2Out.skipped) {
+    await persistStageCheckpoint(input, cpState, {
+      innovationReview: r2Out.text,
+      markComplete: "r2",
+    })
+  }
 
   hooks.onNodeLog?.(r1Node!.id, "【Debate Stream】Reviewer #1 批判意见已提交，进入激辩…")
   hooks.onNodeLog?.(r2Node!.id, "【Debate Stream】等待 Reviewer #2 回应…")
 
-  const debateText = await generateDebate({
-    methodologyReview: r1Out.text,
-    innovationReview: r2Out.text,
-  })
+  let debateText = isStageComplete(cpState, "debate") ? cpState.debate ?? "" : ""
 
-  const debateLines = debateText.split("\n").filter(Boolean)
-  for (const line of debateLines.slice(0, 24)) {
-    hooks.onNodeLog?.(r1Node!.id, `[Debate] ${line}`)
-    hooks.onNodeLog?.(r2Node!.id, `[Debate] ${line}`)
+  if (!debateText.trim()) {
+    debateText = await generateDebate({
+      methodologyReview: r1Out.text,
+      innovationReview: r2Out.text,
+    })
+
+    const debateLines = debateText.split("\n").filter(Boolean)
+    for (const line of debateLines.slice(0, 24)) {
+      emitProgress(hooks, {
+        nodeId: r2Node!.id,
+        streamId: "debate",
+        kind: "status_line",
+        line: `[Debate] ${line}`,
+      })
+      hooks.onNodeLog?.(r1Node!.id, `[Debate] ${line}`)
+      hooks.onNodeLog?.(r2Node!.id, `[Debate] ${line}`)
+    }
+
+    await persistStageCheckpoint(input, cpState, {
+      debate: debateText,
+      markComplete: "debate",
+    })
+  } else {
+    hooks.onNodeLog?.(r1Node!.id, "【Debate Stream】从快照恢复激辩记录")
+    hooks.onNodeLog?.(r2Node!.id, "【Debate Stream】从快照恢复激辩记录")
   }
+
   hooks.onNodeLog?.(r1Node!.id, "【Debate Stream】激辩回合完成")
   hooks.onNodeLog?.(r2Node!.id, "【Debate Stream】激辩回合完成")
 
@@ -219,18 +392,34 @@ export async function executePeerReviewGroup(input: ExecutePeerReviewGroupInput)
     "请按顶会 Area Chair 标准输出最终 meta-review（Markdown）。",
   ].join("\n")
 
-  let metaReviewRaw = ""
-  try {
-    metaReviewRaw = await generateReview({
-      personaId: "area_chair",
-      systemPrompt: chairPersona.systemPrompt,
-      userPrompt: metaPrompt,
-    })
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e)
-    logLlmCallFailure(`peer-review: ${r3Node!.id}`, e)
-    hooks.onNodePatch?.(r3Node!.id, { status: "error", error: msg })
-    throw e
+  let metaReviewRaw = cpState.metaReview?.trim() ? cpState.metaReview : ""
+
+  if (!metaReviewRaw.trim()) {
+    try {
+      metaReviewRaw = await generateReview({
+        personaId: "area_chair",
+        systemPrompt: chairPersona.systemPrompt,
+        userPrompt: metaPrompt,
+        onProgress: (p) => {
+          emitProgress(hooks, {
+            nodeId: r3Node!.id,
+            streamId: "area_chair",
+            kind: "stream_delta",
+            text: p.text,
+            delta: p.delta,
+          })
+          hooks.onNodePatch?.(r3Node!.id, streamDraftPatch("area_chair", p.text))
+        },
+      })
+      await persistStageCheckpoint(input, cpState, { metaReview: metaReviewRaw, markComplete: "r3" })
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      logLlmCallFailure(`peer-review: ${r3Node!.id}`, e)
+      hooks.onNodePatch?.(r3Node!.id, { status: "error", error: msg })
+      throw e
+    }
+  } else {
+    hooks.onNodeLog?.(r3Node!.id, "Meta-Review 从快照恢复")
   }
 
   const canvasWrapped = buildPeerReviewCanvasOutput(metaReviewRaw)
@@ -239,7 +428,7 @@ export async function executePeerReviewGroup(input: ExecutePeerReviewGroupInput)
   hooks.onNodePatch?.(r3Node!.id, {
     status: "done",
     output: { text: canvasWrapped, metaReview: metaReviewRaw, debate: debateText },
-    metadata: { durationMs, personaId: r3PersonaId, canvasInjected: true },
+    metadata: { durationMs, personaId: r3PersonaId, canvasInjected: true, streamDrafts: { area_chair: metaReviewRaw } },
   })
   hooks.onNodeLog?.(r3Node!.id, "Meta-Review 已生成并注入 Scholar Canvas")
 

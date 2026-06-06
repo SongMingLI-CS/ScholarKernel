@@ -1,11 +1,15 @@
 import { AgentExecutor } from "@/lib/agent-executor"
 import { runtimeKeysFromEnv } from "@/lib/agent/llm-utils"
 import type { AgentExecutorDeps, AgentExecutorHooks } from "@/lib/agent/executor-types"
+import type { PeerReviewCheckpointData } from "@/lib/agent/peer-review-checkpoint"
 import type { ActiveProviderConfig, ChatHistoryEntry } from "@/lib/agent/planner"
 
 export type AgentRunInput = {
   userInput: string
   activeProvider: ActiveProviderConfig
+  jobId?: string
+  peerReviewCheckpoint?: PeerReviewCheckpointData | null
+  onPeerReviewCheckpoint?: AgentExecutorDeps["onPeerReviewCheckpoint"]
   chatHistory?: ChatHistoryEntry[]
   inference?: AgentExecutorDeps["inference"]
   localOnly?: boolean
@@ -39,6 +43,9 @@ export async function runAgentOnServer(
   const executor = new AgentExecutor(
     {
       activeProvider: input.activeProvider,
+      jobId: input.jobId,
+      peerReviewCheckpoint: input.peerReviewCheckpoint,
+      onPeerReviewCheckpoint: input.onPeerReviewCheckpoint,
       inference: input.inference,
       runtimeKeys,
       getRuntimeKeys: () => runtimeKeys,

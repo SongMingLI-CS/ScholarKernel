@@ -1,3 +1,4 @@
+import type { PeerReviewCheckpointData } from "@/lib/agent/peer-review-checkpoint"
 import type { AcademicSearchHit } from "@/lib/tools/search-tool"
 import type { ChatHistoryEntry, ActiveProviderConfig, WorkflowNode } from "@/lib/agent/planner"
 
@@ -8,8 +9,30 @@ export type LlmHistoryMessage = {
   content: string
 }
 
+export type NodeProgressKind = "stream_delta" | "stream_complete" | "status_line"
+
+export type NodeProgressPayload = {
+  nodeId: string
+  streamId: string
+  kind: NodeProgressKind
+  text?: string
+  delta?: string
+  line?: string
+}
+
+export type PeerReviewStreamProgress = {
+  streamId: string
+  text: string
+  delta?: string
+}
+
 export type AgentExecutorDeps = {
   activeProvider: ActiveProviderConfig
+  jobId?: string
+  peerReviewCheckpoint?: PeerReviewCheckpointData | null
+  onPeerReviewCheckpoint?: (
+    patch: Partial<PeerReviewCheckpointData> & { markComplete?: PeerReviewCheckpointData["completedStages"][number] }
+  ) => void | Promise<void>
   getChatHistory?: () => ChatHistoryEntry[]
   runtimeKeys?: {
     openai?: string
@@ -31,6 +54,7 @@ export type AgentExecutorHooks = {
   onWorkflowPlanned?: (nodes: WorkflowNode[]) => void
   onNodePatch?: (id: string, patch: Partial<WorkflowNode>) => void
   onNodeLog?: (id: string, line: string) => void
+  onProgress?: (payload: NodeProgressPayload) => void
   onPlanHttpError?: (message: string) => void
   onDirectChatStart?: () => void
   onDirectChatStream?: (accumulated: string) => void

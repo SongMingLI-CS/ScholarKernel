@@ -1,13 +1,22 @@
 import { prisma } from "@/lib/prisma"
 import { serializeAgentJobError } from "@/lib/agent-job-errors"
+import {
+  mergePeerReviewCheckpoint,
+  parsePeerReviewCheckpoint,
+  peerReviewCheckpointToJobPatch,
+  type PeerReviewCheckpointData,
+} from "@/lib/agent/peer-review-checkpoint"
 import type { Prisma } from "../../generated/prisma/client"
 import type { ActiveProviderConfig } from "@/lib/agent/planner"
+
+export type { PeerReviewCheckpointData } from "@/lib/agent/peer-review-checkpoint"
 
 export type AgentJobCheckpoint = {
   phase: "planning" | "running" | "done" | "error"
   nodes?: unknown[]
   partialResults?: unknown[]
   sources?: unknown[]
+  peerReview?: PeerReviewCheckpointData
 }
 
 export type AgentJobProvider = ActiveProviderConfig
@@ -46,6 +55,22 @@ export async function updateAgentJobCheckpoint(id: string, checkpoint: AgentJobC
     where: { id },
     data: { checkpoint: checkpoint as Prisma.InputJsonValue },
   })
+}
+
+/** 合并写入 Multi-Agent Peer Review 阶段快照（秒级持久化，供断点续跑）。 */
+export async function updateAgentJobPeerReviewCheckpoint(
+  id: string,
+  baseCheckpoint: unknown,
+  patch: Partial<PeerReviewCheckpointData> & { markComplete?: PeerReviewCheckpointData["completedStages"][number] }
+) {
+  const existing = parsePeerReviewCheckpoint(
+    baseCheckpoint && typeof baseCheckpoint === "object" ? baseCheckpoint : { peerReview: null }
+  )
+  const merged = mergePeerReviewCheckpoint(existing, patch)
+  const jobPatch = peerReviewCheckpointToJobPatch(merged)
+  const prev =
+    baseCheckpoint && typeof baseCheckpoint === "object" ? (baseCheckpoint as AgentJobCheckpoint) : ({} as AgentJobCheckpoint)
+  return updateAgentJobCheckpoint(id, { ...prev, ...jobPatch })
 }
 
 export async function completeAgentJob(

@@ -1,6 +1,6 @@
 "use client"
 
-import { memo, useEffect, useState } from "react"
+import { memo, useEffect } from "react"
 import { AnimatePresence, motion } from "framer-motion"
 import { Menu } from "lucide-react"
 
@@ -38,9 +38,10 @@ function PanelBody({ panel }: { panel: PanelId }) {
 
 export const AppShell = memo(function AppShell() {
   const active = useAgentStore((s) => s.ui.activePanel)
+  const mobileNavOpen = useAgentStore((s) => s.ui.sidebarDrawerOpen)
+  const setMobileNavOpen = useAgentStore((s) => s.actions.setSidebarDrawerOpen)
   const heartbeat = useAgentStore((s) => s.actions.heartbeatSessionKeys)
   const pushToast = useAgentStore((s) => s.actions.pushToast)
-  const [mobileNavOpen, setMobileNavOpen] = useState(false)
 
   useEffect(() => {
     heartbeat()
@@ -67,7 +68,7 @@ export const AppShell = memo(function AppShell() {
         {mobileNavOpen ? (
           <button
             type="button"
-            className="fixed inset-0 z-30 bg-black/50 lg:hidden"
+            className="fixed inset-0 z-40 bg-black/50 lg:hidden"
             aria-label="Close navigation"
             onClick={() => setMobileNavOpen(false)}
           />
@@ -75,7 +76,7 @@ export const AppShell = memo(function AppShell() {
         <aside
           className={cn(
             "flex h-full w-[min(360px,100vw)] shrink-0 flex-col overflow-hidden border-border/60 bg-sidebar text-sidebar-foreground",
-            "fixed inset-y-0 left-0 z-40 transition-transform duration-200 ease-out lg:relative lg:translate-x-0 lg:border-r",
+            "fixed inset-y-0 left-0 z-50 transition-transform duration-200 ease-out lg:relative lg:translate-x-0 lg:border-r",
             mobileNavOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"
           )}
         >
@@ -83,19 +84,21 @@ export const AppShell = memo(function AppShell() {
             <Sidebar onNavigate={() => setMobileNavOpen(false)} />
           </div>
         </aside>
-        <main className="relative flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-background">
-          <div className="flex shrink-0 items-center gap-2 border-b border-border/60 px-3 py-2 lg:hidden">
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-sm"
-              aria-label="Open navigation"
-              onClick={() => setMobileNavOpen(true)}
-            >
-              <Menu className="h-5 w-5" />
-            </Button>
-            <span className="font-mono text-xs text-muted-foreground">ScholarKernel</span>
-          </div>
+        <main className="relative flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background">
+          {active !== "chat" ? (
+            <div className="flex shrink-0 items-center gap-2 border-b border-border/60 px-3 py-2 lg:hidden">
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                aria-label="Open navigation"
+                onClick={() => setMobileNavOpen(true)}
+              >
+                <Menu className="h-5 w-5" />
+              </Button>
+              <span className="font-mono text-xs text-muted-foreground">ScholarKernel</span>
+            </div>
+          ) : null}
           <AnimatePresence mode="wait">
             <motion.div
               key={active}

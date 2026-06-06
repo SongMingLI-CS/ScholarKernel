@@ -4,10 +4,12 @@ import { z } from "zod"
 import { useAgentStore } from "@/store/useAgentStore"
 import { proxyAwareFetch } from "@/lib/proxy-client"
 
+import { rerankAcademicHits } from "@/lib/document/rerank-gateway"
 import {
   DEFAULT_ACADEMIC_SEARCH_MAX_RESULTS,
   DEFAULT_SNIPPET_CONTEXT_CHARS,
   mergeAcademicSearchHits,
+  RERANK_FINAL_TOP_K,
   truncateSnippet,
 } from "@/lib/tools/academic-search-strategy"
 
@@ -41,7 +43,9 @@ export type AcademicSearchResponse = {
 const AcademicSearchInputSchema = z.object({
   search_query: z.string().min(1),
   academicOnly: z.boolean().optional().default(true),
-  maxResults: z.number().int().min(1).max(20).optional().default(DEFAULT_ACADEMIC_SEARCH_MAX_RESULTS),
+  maxResults: z.number().int().min(1).max(30).optional().default(DEFAULT_ACADEMIC_SEARCH_MAX_RESULTS),
+  /** 重排后保留条数；0 表示跳过重排（调试用） */
+  rerankTopK: z.number().int().min(0).max(15).optional().default(RERANK_FINAL_TOP_K),
   /** 关键词多样化：并行检索多组 query（Planner 对宽泛主题应输出此字段） */
   search_queries: z.array(z.string().min(1)).min(1).max(4).optional(),
 })
@@ -325,11 +329,11 @@ export function createAcademicSearchTool(input: {
 }) {
   return tool({
     description:
-      "深度学术检索（Tavily advanced / max_results=10）：返回标题/链接/摘要/发布日期。" +
+      "深度学术检索（两阶段：宽召回 28 条 + BGE/Cohere 重排精选 5 条）：返回标题/链接/摘要/发布日期。" +
       "search_query 须为纯英文学术关键词；宽泛主题请用 search_queries 数组并行多路检索。" +
       "可开启 academicOnly 过滤学术域名。",
     inputSchema: zodSchema(AcademicSearchInputSchema),
-    execute: async ({ search_query, search_queries, academicOnly, maxResults }) => {
+    execute: async ({ search_query, search_queries, academicOnly, maxResults, rerankTopK }) => {
       const queryList =
         Array.isArray(search_queries) && search_queries.length
           ? search_queries.map((q) => sanitizeSearchQuery(q)).filter(Boolean)
@@ -369,11 +373,24 @@ export function createAcademicSearchTool(input: {
       const raw = mergeAcademicSearchHits([], batches.flat())
 
       const filtered0 = wantAcademicOnly ? filterAcademicOnly(raw) : raw
-      // Attach stable source_id (1-based) for citation tracking.
-      const filtered: AcademicSearchHit[] = filtered0.map((r, idx) => ({
+
+      const rerankQuery = queryList[0] ?? query
+      const wantRerank = (rerankTopK ?? RERANK_FINAL_TOP_K) > 0 && filtered0.length > 0
+      let filtered: AcademicSearchHit[] = filtered0.map((r, idx) => ({
         ...r,
         source_id: String(idx + 1),
       }))
+
+      if (wantRerank) {
+        const reranked = await rerankAcademicHits(rerankQuery, filtered0, {
+          finalTopK: rerankTopK ?? RERANK_FINAL_TOP_K,
+          recallLimit: n,
+        })
+        filtered = reranked.hits
+        input.onLog?.(
+          `【Rerank】召回 ${reranked.recallCount} 条 → 精选 ${filtered.length} 条（${reranked.rerankProvider}）`
+        )
+      }
 
       if (raw.length > 0 && filtered.length === 0 && wantAcademicOnly) {
         console.warn(

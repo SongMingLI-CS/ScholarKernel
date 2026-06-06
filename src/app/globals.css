@@ -369,6 +369,20 @@ html.sk-compact body {
   font-weight: 600;
 }
 
+/* Canvas tables: horizontal scroll on narrow viewports */
+.sk-canvas-editor .sk-canvas-prose .ProseMirror > table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.sk-canvas-editor .sk-canvas-prose .ProseMirror > table > thead,
+.sk-canvas-editor .sk-canvas-prose .ProseMirror > table > tbody {
+  display: table;
+  width: 100%;
+}
+
 /* Academic three-line table: top rule, header rule, bottom rule — no vertical lines */
 .sk-canvas-prose table {
   width: 100%;

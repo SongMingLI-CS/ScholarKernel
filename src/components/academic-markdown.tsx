@@ -155,7 +155,7 @@ const components: Components = {
     />
   ),
   table: ({ className, ...props }) => (
-    <div className="my-2 overflow-x-auto rounded-sm border border-gray-600/80 shadow-[inset_0_0_0_1px_oklch(1_0_0/0.04)]">
+    <div className="my-2 w-full overflow-x-auto select-text rounded-sm border border-gray-600/80 shadow-[inset_0_0_0_1px_oklch(1_0_0/0.04)]">
       <table className={cn("w-full border-collapse text-left text-[13px]", className)} {...props} />
     </div>
   ),

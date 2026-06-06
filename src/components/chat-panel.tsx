@@ -2,7 +2,7 @@
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { AnimatePresence, motion } from "framer-motion"
-import { ArrowDown, ArrowUp, Bolt, Check, Copy, Download, Eraser, FileDown, FileText, Link2, Paperclip, Radio, RotateCcw, Square } from "lucide-react"
+import { ArrowDown, ArrowUp, Bolt, Check, Copy, Download, Eraser, FileDown, FileText, Link2, Menu, Paperclip, Radio, RotateCcw, Square } from "lucide-react"
 
 import { ComponentSandbox } from "@/components/component-sandbox"
 import { AcademicMarkdown, safeMarkdownContent } from "@/components/academic-markdown"
@@ -11,6 +11,8 @@ import { ActionTabBar, type ActionTabGroup } from "@/components/action-tab-bar"
 import { AssistantBubbleContent } from "@/components/assistant-bubble-content"
 import { ScholarCanvas, ScholarCanvasMobileDrawer } from "@/components/scholar-canvas"
 import { TopologyView } from "@/components/topology-view"
+import { isParallelPeerReviewActive, PeerReviewStreamPanels } from "@/components/peer-review-stream-panels"
+import { MobileWorkspaceTabBar, type MobileWorkspaceTab } from "@/components/mobile-workspace-tabs"
 import { WelcomeEmptyState } from "@/components/welcome-empty-state"
 import { Button } from "@/components/ui/button"
 import {
@@ -27,6 +29,7 @@ import { formatFileAttachmentBlock, readBrowserFileAsText } from "@/lib/browser-
 import { connKey, looksLikeWorkflowPlanJson } from "@/lib/chat-bubble-utils"
 import { bubbleContentToPlainText } from "@/lib/scholar-canvas"
 import { useChatSend } from "@/hooks/use-chat-send"
+import { useMediaQuery } from "@/hooks/use-media-query"
 import { extractDoi, fetchMetadataByDoi, formatReferenceBlock } from "@/lib/reference-import"
 import { useT, t as tGlobal } from "@/lib/locales"
 import { QUICK_PROMPTS } from "@/lib/quick-prompts"
@@ -156,10 +159,11 @@ const TopologyMobileDrawer = memo(function TopologyMobileDrawer({
   conversationId: string | null
 }) {
   const t = useT()
+  const isTablet = useMediaQuery("(min-width: 768px) and (max-width: 1023px)")
 
   return (
     <AnimatePresence>
-      {open ? (
+      {isTablet && open ? (
         <>
           <motion.button
             type="button"
@@ -219,7 +223,10 @@ const ChatPanelInner = memo(function ChatPanelInner() {
   const pushToast = useAgentStore((s) => s.actions.pushToast)
   const renameConversation = useAgentStore((s) => s.actions.renameConversation)
   const clearCurrentConversation = useAgentStore((s) => s.actions.clearCurrentConversation)
+  const setSidebarDrawerOpen = useAgentStore((s) => s.actions.setSidebarDrawerOpen)
+  const isMobile = useMediaQuery("(max-width: 767px)")
   const [input, setInput] = useState("")
+  const [mobileTab, setMobileTab] = useState<MobileWorkspaceTab>("chat")
   const [topologyOpen, setTopologyOpen] = useState(() => {
     if (typeof window === "undefined") return false
     return window.matchMedia("(min-width: 1024px)").matches
@@ -242,6 +249,9 @@ const ChatPanelInner = memo(function ChatPanelInner() {
 
   const focusCanvasPanel = useCallback(() => {
     useAgentStore.getState().actions.setCanvasOpen(true)
+    if (typeof window !== "undefined" && window.matchMedia("(max-width: 767px)").matches) {
+      setMobileTab("canvas")
+    }
     setCanvasHighlight(true)
     if (canvasHighlightTimerRef.current) clearTimeout(canvasHighlightTimerRef.current)
     canvasHighlightTimerRef.current = setTimeout(() => {
@@ -468,8 +478,21 @@ const ChatPanelInner = memo(function ChatPanelInner() {
   )
 
   useEffect(() => {
-    if (wfNodes.length > 0) setTopologyOpen(true)
-  }, [wfNodes.length, wfVersion])
+    if (wfNodes.length > 0) {
+      setTopologyOpen(true)
+      if (isMobile) setMobileTab("topology")
+    }
+  }, [isMobile, wfNodes.length, wfVersion])
+
+  const handleMobileTabChange = useCallback((tab: MobileWorkspaceTab) => {
+    setMobileTab(tab)
+    if (tab === "canvas") {
+      useAgentStore.getState().actions.setCanvasOpen(true)
+    }
+    if (tab === "topology") {
+      setTopologyOpen(true)
+    }
+  }, [])
 
   useEffect(() => {
     if (followBottomRef.current) lockToBottomOnce()
@@ -637,10 +660,13 @@ const ChatPanelInner = memo(function ChatPanelInner() {
     return lines.slice(-24)
   }, [activeNode?.logs])
 
+  const parallelPeerReview = useMemo(() => isParallelPeerReviewActive(wfNodes), [wfNodes])
+
   useEffect(() => {
     setInput("")
     setTopologyOpen(false)
     setRetryState(null)
+    setMobileTab("chat")
   }, [currentConversationId, setRetryState])
 
   useEffect(() => {
@@ -664,17 +690,28 @@ const ChatPanelInner = memo(function ChatPanelInner() {
   }
 
   return (
-    <div key={currentConversationId ?? "no-conv"} className="relative flex h-full min-h-0 flex-col overflow-hidden">
+    <div key={currentConversationId ?? "no-conv"} className="relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden">
       <header className="sticky top-0 z-20 border-b border-border/60 bg-background/85 backdrop-blur-md dark:bg-[#0a0a0a]/85">
         <div
           className={cn(
-            "mx-auto flex w-full items-center justify-between gap-3 px-4 py-3",
+            "mx-auto flex w-full min-w-0 items-center justify-between gap-3 px-4 py-3",
             !showTopologyPanel && !canvasOpen && "max-w-[1200px]"
           )}
         >
-          <div className="min-w-0">
+          <div className="flex min-w-0 flex-1 items-start gap-2">
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              className="mt-0.5 shrink-0 lg:hidden"
+              aria-label="Open conversation history"
+              onClick={() => setSidebarDrawerOpen(true)}
+            >
+              <Menu className="h-5 w-5" />
+            </Button>
+            <div className="min-w-0">
             <div className="flex items-center gap-2">
-              <Radio className="h-4 w-4 text-emerald-400/90" />
+              <Radio className="h-4 w-4 shrink-0 text-emerald-400/90" />
               <span className="font-mono text-sm font-semibold tracking-wide text-foreground/95">{t("chat.title")}</span>
               <span className="rounded-sm border border-border/60 bg-muted/15 px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
                 {t("chat.stream")}
@@ -721,6 +758,7 @@ const ChatPanelInner = memo(function ChatPanelInner() {
                 ) : null}
               </div>
             ) : null}
+            </div>
           </div>
 
           <div className="flex min-w-0 shrink-0 flex-col items-end">
@@ -728,6 +766,13 @@ const ChatPanelInner = memo(function ChatPanelInner() {
           </div>
         </div>
       </header>
+
+      <MobileWorkspaceTabBar
+        active={mobileTab}
+        onChange={handleMobileTabChange}
+        showCanvas={Boolean(activeDocument && canvasOpen)}
+        showTopology={showTopologyPanel || wfNodes.length > 0}
+      />
 
       <AnimatePresence>
         {streamMetrics?.active ? (
@@ -770,16 +815,29 @@ const ChatPanelInner = memo(function ChatPanelInner() {
         </div>
       ) : null}
 
-      <div className="sk-split-pane flex min-h-0 min-w-0 flex-1 overflow-hidden">
+      <div className="sk-split-pane flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden md:flex-row">
+        {isMobile && mobileTab === "canvas" && activeDocument ? (
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden px-3 py-2 md:hidden">
+            <ScholarCanvas className="h-full" highlightPulse={canvasHighlight} />
+          </div>
+        ) : null}
+
+        {isMobile && mobileTab === "topology" && (showTopologyPanel || wfNodes.length > 0) ? (
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden px-3 py-2 md:hidden">
+            <TopologyView key={currentConversationId ?? "topology-mobile-tab"} fitPadding={0.1} />
+          </div>
+        ) : null}
+
         <div
           className={cn(
             "flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden px-4 transition-all duration-300 ease-out",
-            showTopologyPanel && "lg:pr-2"
+            showTopologyPanel && "lg:pr-2",
+            isMobile && mobileTab !== "chat" && "hidden md:flex"
           )}
         >
           <div
             className={cn(
-              "mx-auto flex h-full min-h-0 w-full flex-1 overflow-hidden transition-all duration-300 ease-out",
+              "mx-auto flex h-full min-h-0 w-full min-w-0 flex-1 overflow-hidden transition-all duration-300 ease-out",
               canvasOpen && activeDocument
                 ? "max-w-none lg:grid lg:grid-cols-[minmax(0,2fr)_minmax(0,3fr)] lg:gap-4"
                 : "max-w-[1200px] flex flex-col"
@@ -938,7 +996,14 @@ const ChatPanelInner = memo(function ChatPanelInner() {
                                   {planHttpTerminalError}
                                 </div>
                               ) : null}
-                              {activeNodeLogs.length === 0 ? (
+                              {parallelPeerReview ? (
+                                <div className="mt-2">
+                                  <PeerReviewStreamPanels
+                                    nodes={wfNodes}
+                                    streamIds={["methodology_critic", "innovation_scout"]}
+                                  />
+                                </div>
+                              ) : activeNodeLogs.length === 0 ? (
                                 <div className="mt-1 font-mono text-[10px] text-muted-foreground">{t("chat.trace.noLogs")}</div>
                               ) : (
                                 <div className="mt-1 max-h-[160px] overflow-auto whitespace-pre-wrap font-mono text-[10px] leading-snug text-muted-foreground sk-scrollbar">
@@ -1027,7 +1092,7 @@ const ChatPanelInner = memo(function ChatPanelInner() {
             ) : null}
           </AnimatePresence>
 
-          <div className="shrink-0 border-t border-border/60 bg-background/80 backdrop-blur-md dark:bg-[#0a0a0a]/80">
+          <div className="shrink-0 border-t border-border/60 bg-background/80 pb-[max(0.75rem,env(safe-area-inset-bottom))] backdrop-blur-md dark:bg-[#0a0a0a]/80">
             <div className="mx-auto flex w-full max-w-[1200px] flex-col gap-2 px-0 py-3">
               <div className="flex flex-wrap items-center gap-1.5 px-0.5">
                 <span className="shrink-0 font-mono text-[10px] text-muted-foreground">{t("chat.quickPrompts")}</span>

@@ -286,6 +286,9 @@ export function useChatSend({
             onNodeLog: (id, line) => {
               useAgentStore.getState().actions.appendNodeLog(id, line)
             },
+            onProgress: (payload) => {
+              useAgentStore.getState().actions.applyNodeProgress(payload)
+            },
             onPlanHttpError: (message) => {
               setPlanHttpTerminalError(message)
             },
