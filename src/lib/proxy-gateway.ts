@@ -21,10 +21,6 @@ export type ProxyRateLimitResult =
 const DEFAULT_RATE_LIMIT_PER_MIN = 60
 const rateBuckets = new Map<string, { count: number; windowStartMs: number }>()
 
-function isProductionEnv() {
-  return process.env.NODE_ENV === "production"
-}
-
 function readProxyAccessToken(): string | undefined {
   const raw = process.env.PROXY_ACCESS_TOKEN
   const trimmed = typeof raw === "string" ? raw.trim() : ""
@@ -59,18 +55,16 @@ function readProxyTokenHeader(req: Request): string | null {
   return req.headers.get("x-scholarkernel-proxy-token")?.trim() ?? null
 }
 
-/** Whether proxy auth must succeed before forwarding. */
+/** Whether proxy auth must succeed before forwarding. Only when PROXY_ACCESS_TOKEN is explicitly set. */
 export function isProxyAuthRequired(): boolean {
-  return isProductionEnv() || Boolean(readProxyAccessToken())
+  return Boolean(readProxyAccessToken())
 }
 
 export async function checkProxyAuth(req: Request): Promise<ProxyAuthResult> {
   if (await hasValidAuthSession(req)) return { ok: true }
 
   const configured = readProxyAccessToken()
-  if (isProductionEnv() && !configured) {
-    return { ok: false, status: 503, message: "PROXY_ACCESS_TOKEN is not configured" }
-  }
+  // 未配置 PROXY_ACCESS_TOKEN → 直连降级：放行转发，不阻断工作流
   if (!configured) return { ok: true }
 
   const presented = readBearerToken(req) ?? readProxyTokenHeader(req)

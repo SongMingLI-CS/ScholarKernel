@@ -40,14 +40,10 @@ describe("proxy-gateway", () => {
     await expect(checkProxyAuth(authed)).resolves.toEqual({ ok: true })
   })
 
-  it("rejects proxy in production when PROXY_ACCESS_TOKEN is unset", async () => {
+  it("allows proxy in production when PROXY_ACCESS_TOKEN is unset (direct fallback)", async () => {
     process.env.NODE_ENV = "production"
     const req = new Request("http://localhost/api/proxy/openai/v1/models")
-    await expect(checkProxyAuth(req)).resolves.toEqual({
-      ok: false,
-      status: 503,
-      message: "PROXY_ACCESS_TOKEN is not configured",
-    })
+    await expect(checkProxyAuth(req)).resolves.toEqual({ ok: true })
   })
 
   it("maps known providers to upstream URLs", () => {
