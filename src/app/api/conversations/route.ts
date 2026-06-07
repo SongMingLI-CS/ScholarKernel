@@ -1,6 +1,8 @@
+import { auth } from "@/auth"
 import { jsonError, jsonOk } from "@/lib/api-utils"
 import { conversationOwnerWhere, resolveUserIdFromRequest } from "@/lib/auth-user"
 import { prisma } from "@/lib/prisma"
+import { isAuthEnabled } from "@/lib/session-auth"
 
 function parseLimit(raw: string | null, fallback = 50, max = 100) {
   const n = raw ? Number.parseInt(raw, 10) : fallback
@@ -52,6 +54,20 @@ export async function POST(req: Request) {
   const userId = await resolveUserIdFromRequest(req)
   if (!userId) return jsonError("Unauthorized", 401)
   try {
+    const session = isAuthEnabled() ? await auth() : null
+    const existingUser = await prisma.user.findUnique({ where: { id: userId } })
+    if (!existingUser) {
+      await prisma.user.upsert({
+        where: { id: userId },
+        update: {},
+        create: {
+          id: userId,
+          email: session?.user?.email || `${userId}@placeholder.com`,
+          name: session?.user?.name || "Academic User",
+        },
+      })
+    }
+
     const conversation = await prisma.conversation.create({
       data: { title: "新对话", userId },
       select: {

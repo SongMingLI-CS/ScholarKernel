@@ -23,6 +23,7 @@ import { isLikelyCorsBlocked } from "@/lib/network-errors"
 import { isAbortError } from "@/lib/run-abort"
 import { formatUserFacingErrorMessage } from "@/lib/user-facing-errors"
 import { isApiUnauthorizedError } from "@/lib/conversation-api"
+import { formatReferencesContextBlock } from "@/lib/utils/citation-parser"
 import { buildTopologyForActiveProvider, useAgentStore } from "@/store/useAgentStore"
 
 const OLLAMA_DEFAULT = { providerId: "ollama" as const, model: "llama3.1", baseUrl: "http://localhost:11434" }
@@ -115,7 +116,9 @@ export function useChatSend({
       const planRetryMessage = planRetryMessageRef.current
       planRetryMessageRef.current = undefined
 
-      const sendText = rawInput
+      const st0 = useAgentStore.getState()
+      const citationPrefix = formatReferencesContextBlock(st0.chat.attachedReferences, st0.settings.lang)
+      const sendText = citationPrefix ? `${citationPrefix}${rawInput}` : rawInput
 
       const localOnly = useAgentStore.getState().settings.behavior.localOnly
       if (localOnly && provider.providerId !== "ollama") {
@@ -160,6 +163,9 @@ export function useChatSend({
 
       if (!isRegenerate) {
         setInput("")
+        if (citationPrefix) {
+          useAgentStore.getState().actions.clearAttachedReferences()
+        }
       }
       followBottomRef.current = true
       queueMicrotask(lockToBottomOnce)
@@ -213,6 +219,7 @@ export function useChatSend({
         const executor = new AgentExecutor(
           {
             activeProvider: { providerId: p.providerId as ActiveProviderId, model: p.model, baseUrl: p.baseUrl },
+            interventionSessionId: runId,
             inference: {
               temperature: useAgentStore.getState().settings.inference.temperature,
               maxTokens: useAgentStore.getState().settings.inference.maxTokens,
@@ -288,6 +295,28 @@ export function useChatSend({
             },
             onProgress: (payload) => {
               useAgentStore.getState().actions.applyNodeProgress(payload)
+            },
+            onInterventionPending: (event) => {
+              useAgentStore.getState().actions.setInterventionPending({
+                sessionId: event.sessionId,
+                nodeId: event.nodeId,
+                reason: event.reason,
+              })
+            },
+            onWorkflowTopologyPruned: (nodes) => {
+              useAgentStore.getState().actions.setWorkflowNodes(
+                nodes.map((n) => ({
+                  id: n.id,
+                  type: n.type,
+                  provider: n.provider,
+                  status: n.status,
+                  title: n.title ?? `${n.type}`,
+                  logs: n.logs ?? [],
+                  metadata: n.metadata,
+                  output: n.output,
+                  error: n.error,
+                }))
+              )
             },
             onPlanHttpError: (message) => {
               setPlanHttpTerminalError(message)
@@ -431,6 +460,7 @@ export function useChatSend({
 
         const now = performance.now()
         useAgentStore.getState().actions.finishInferenceStream({ runId, now, ok, error: errMsg })
+        useAgentStore.getState().actions.clearInterventionPending()
         if (ok) {
           useAgentStore.getState().actions.patchTopologyNodes({ edge: "done", route: "done", cloud: "done", sink: "done" })
         }

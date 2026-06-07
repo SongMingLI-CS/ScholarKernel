@@ -1,4 +1,9 @@
-import { applyColumnReorder, type LayoutTextBlock } from "@/lib/document/column-reorder"
+import {
+  formatAcademicChunksForContext,
+  semanticChunkAcademicText,
+  type AcademicChunk,
+} from "@/lib/document/academic-semantic-chunker"
+import { applyColumnReorder, type LayoutTextBlock, type PageGeometry } from "@/lib/document/column-reorder"
 import { normalizeAcademicFormulas } from "@/lib/document/formula-normalizer"
 import { extractDocxFromBuffer } from "@/lib/document/docx-text-extract"
 import { extractPdfFromBuffer } from "@/lib/document/pdf-text-extract"
@@ -12,6 +17,8 @@ export type LayoutParseResult = {
   parser: "local" | "external"
   blocks: number
   warnings: string[]
+  chunks: AcademicChunk[]
+  ragContext: string
 }
 
 export type ExternalLayoutParserRequest = {
@@ -102,6 +109,33 @@ function cleanAcademicNoise(text: string): string {
     .trim()
 }
 
+function finalizeParseResult(input: {
+  text: string
+  format: LayoutParseFormat
+  layout: "single" | "double" | "unknown"
+  parser: "local" | "external"
+  blocks: number
+  warnings: string[]
+  layoutBlocks?: LayoutTextBlock[]
+  pageGeometries?: PageGeometry[]
+}): LayoutParseResult {
+  const chunks = semanticChunkAcademicText({
+    text: input.text,
+    blocks: input.layoutBlocks,
+    pageGeometries: input.pageGeometries,
+  })
+  return {
+    text: input.text,
+    format: input.format,
+    layout: input.layout,
+    parser: input.parser,
+    blocks: input.blocks,
+    warnings: input.warnings,
+    chunks,
+    ragContext: formatAcademicChunksForContext(chunks),
+  }
+}
+
 export async function parseLayoutAwareDocument(input: {
   buffer: Buffer
   filename: string
@@ -114,23 +148,26 @@ export async function parseLayoutAwareDocument(input: {
   if (external?.text) {
     const reordered = applyColumnReorder(external.text, external.blocks)
     const normalized = normalizeAcademicFormulas(cleanAcademicNoise(reordered.text))
-    return {
+    return finalizeParseResult({
       text: normalized,
       format,
       layout: reordered.layout,
       parser: "external",
       blocks: reordered.blocks,
       warnings,
-    }
+      layoutBlocks: external.blocks,
+    })
   }
 
   let rawText = ""
   let blocks: LayoutTextBlock[] = []
+  let pageGeometries: PageGeometry[] = []
 
   if (format === "pdf") {
     const pdf = extractPdfFromBuffer(input.buffer)
     rawText = pdf.text
     blocks = pdf.blocks
+    pageGeometries = pdf.pageGeometries
     if (!rawText.trim()) warnings.push("PdfExtractEmpty")
   } else if (format === "docx") {
     try {
@@ -147,17 +184,23 @@ export async function parseLayoutAwareDocument(input: {
     warnings.push("UnknownFormatFallbackUtf8")
   }
 
-  const reordered = applyColumnReorder(rawText, blocks.length ? blocks : undefined)
+  const reordered = applyColumnReorder(
+    rawText,
+    blocks.length ? blocks : undefined,
+    pageGeometries.length ? pageGeometries : undefined
+  )
   const normalized = normalizeAcademicFormulas(cleanAcademicNoise(reordered.text))
 
-  return {
+  return finalizeParseResult({
     text: normalized,
     format,
     layout: reordered.layout,
     parser: "local",
     blocks: reordered.blocks,
     warnings,
-  }
+    layoutBlocks: blocks.length ? blocks : undefined,
+    pageGeometries: pageGeometries.length ? pageGeometries : undefined,
+  })
 }
 
 export function isLayoutAwareBinaryPath(path: string): boolean {

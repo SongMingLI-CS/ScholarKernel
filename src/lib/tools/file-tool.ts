@@ -33,7 +33,15 @@ async function readFileBuffer(abs: string): Promise<Buffer> {
 export async function safeReadTextFile(
   relPath: string
 ): Promise<
-  | { ok: true; path: string; text: string; layout?: string; parser?: string }
+  | {
+      ok: true
+      path: string
+      text: string
+      layout?: string
+      parser?: string
+      chunks?: import("@/lib/document/academic-semantic-chunker").AcademicChunk[]
+      ragContext?: string
+    }
   | { ok: false; path: string; error: string; hint?: string }
 > {
   const p = normalizeRelPath(relPath)
@@ -71,6 +79,8 @@ export async function safeReadTextFile(
         text: parsed.text,
         layout: parsed.layout,
         parser: parsed.parser,
+        chunks: parsed.chunks,
+        ragContext: parsed.ragContext,
       }
     }
 
@@ -122,6 +132,8 @@ export function createFileTool() {
         text,
         ...(r.layout ? { layout: r.layout } : {}),
         ...(r.parser ? { parser: r.parser } : {}),
+        ...(r.chunks?.length ? { chunks: r.chunks, chunkCount: r.chunks.length } : {}),
+        ...(r.ragContext ? { ragContext: r.ragContext } : {}),
       }
     },
   })

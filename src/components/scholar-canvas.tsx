@@ -1,7 +1,7 @@
 "use client"
 
 import { memo, useCallback, useMemo, useState } from "react"
-import { Download, FileText, X } from "lucide-react"
+import { BookOpen, Download, FileText, X } from "lucide-react"
 import { AnimatePresence, motion } from "framer-motion"
 
 import { CanvasEditor } from "@/components/canvas-editor"
@@ -11,6 +11,11 @@ import { Button } from "@/components/ui/button"
 import { downloadMarkdownAsDocx } from "@/lib/export-utils"
 import { downloadTextFile, sanitizeExportFilename } from "@/lib/conversation-utils"
 import { gatherExportMetadataFromStore, prependExportMetadata } from "@/lib/export-metadata"
+import {
+  extractReferencesFromMarkdown,
+  serializeReferencesAsBibTeX,
+  serializeReferencesAsRIS,
+} from "@/lib/utils/citation-parser"
 import { useMediaQuery } from "@/hooks/use-media-query"
 import { useT } from "@/lib/locales"
 import { cn } from "@/lib/utils"
@@ -27,6 +32,7 @@ export const ScholarCanvas = memo(function ScholarCanvas({
   const doc = useAgentStore((s) => s.canvas.activeDocument)
   const closeCanvas = useAgentStore((s) => s.actions.closeCanvas)
   const updateCanvasContent = useAgentStore((s) => s.actions.updateCanvasContent)
+  const pushToast = useAgentStore((s) => s.actions.pushToast)
   const [exporting, setExporting] = useState(false)
 
   const buildCanvasExportMeta = useCallback(() => {
@@ -74,6 +80,36 @@ export const ScholarCanvas = memo(function ScholarCanvas({
     [updateCanvasContent]
   )
 
+  const gatherCanvasReferences = useCallback(() => {
+    if (!doc?.content.trim()) return []
+    const fromMd = extractReferencesFromMarkdown(doc.content)
+    if (fromMd.length) return fromMd
+    const st = useAgentStore.getState()
+    return st.chat.attachedReferences
+  }, [doc?.content])
+
+  const onExportCanvasBibTeX = useCallback(() => {
+    const refs = gatherCanvasReferences()
+    if (!refs.length) {
+      pushToast({ messageKey: "chat.canvas.exportCitations.empty", variant: "error", ttlMs: 3200 })
+      return
+    }
+    const base = sanitizeExportFilename(doc?.title ?? "references").replace(/\.md$/i, "")
+    downloadTextFile(`${base}.bib`, serializeReferencesAsBibTeX(refs), "application/x-bibtex;charset=utf-8")
+    pushToast({ messageKey: "chat.canvas.exportCitations.done", variant: "success", ttlMs: 2400 })
+  }, [doc?.title, gatherCanvasReferences, pushToast])
+
+  const onExportCanvasRIS = useCallback(() => {
+    const refs = gatherCanvasReferences()
+    if (!refs.length) {
+      pushToast({ messageKey: "chat.canvas.exportCitations.empty", variant: "error", ttlMs: 3200 })
+      return
+    }
+    const base = sanitizeExportFilename(doc?.title ?? "references").replace(/\.md$/i, "")
+    downloadTextFile(`${base}.ris`, serializeReferencesAsRIS(refs), "application/x-research-info-systems;charset=utf-8")
+    pushToast({ messageKey: "chat.canvas.exportCitations.done", variant: "success", ttlMs: 2400 })
+  }, [doc?.title, gatherCanvasReferences, pushToast])
+
   const canvasExportGroups = useMemo(
     () => [
       {
@@ -94,10 +130,24 @@ export const ScholarCanvas = memo(function ScholarCanvas({
             onClick: () => void onExportDoc(),
             disabled: !doc?.content.trim() || exporting,
           },
+          {
+            id: "bibtex",
+            label: t("chat.canvas.exportBibtex"),
+            icon: <BookOpen className="h-3.5 w-3.5" />,
+            onClick: onExportCanvasBibTeX,
+            disabled: !doc?.content.trim(),
+          },
+          {
+            id: "ris",
+            label: t("chat.canvas.exportRis"),
+            icon: <BookOpen className="h-3.5 w-3.5" />,
+            onClick: onExportCanvasRIS,
+            disabled: !doc?.content.trim(),
+          },
         ],
       },
     ],
-    [doc?.content, exporting, onExportDoc, onExportMd, t]
+    [doc?.content, exporting, onExportCanvasBibTeX, onExportCanvasRIS, onExportDoc, onExportMd, t]
   )
 
   if (!doc) return null
@@ -139,6 +189,7 @@ export const ScholarCanvas = memo(function ScholarCanvas({
             docId={doc.id}
             content={doc.content}
             onChange={onEditorChange}
+            documentTitle={doc.title}
             placeholder={t("chat.canvas.empty")}
             className="text-[15px] leading-7"
           />

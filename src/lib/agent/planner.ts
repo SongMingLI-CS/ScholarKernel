@@ -5,7 +5,7 @@ import { buildDualSearchQueries, isSurveyOrProgressTopic } from "@/lib/tools/aca
 
 export type WorkflowTaskType = "read_file" | "reasoning" | "audit" | "research" | "peer_review"
 export type WorkflowProvider = "local" | "cloud"
-export type WorkflowStatus = "pending" | "running" | "done" | "error"
+export type WorkflowStatus = "pending" | "running" | "done" | "error" | "pending_approval"
 
 export type WorkflowNode = {
   id: string
@@ -52,7 +52,7 @@ const TaskSchema = z.object({
     .refine((s) => s.trim().length > 0, "id must be non-empty"),
   type: z.enum(["read_file", "reasoning", "audit", "research", "peer_review"]),
   provider: z.enum(["local", "cloud"]),
-  status: z.enum(["pending", "running", "done", "error"]).optional().default("pending"),
+  status: z.enum(["pending", "running", "done", "error", "pending_approval"]).optional().default("pending"),
   title: z.string().optional(),
   input: z.unknown().optional(),
   metadata: z.record(z.unknown()).optional(),

@@ -2,7 +2,7 @@
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { AnimatePresence, motion } from "framer-motion"
-import { ArrowDown, ArrowUp, Bolt, Check, Copy, Download, Eraser, FileDown, FileText, Link2, Menu, Paperclip, Radio, RotateCcw, Square } from "lucide-react"
+import { ArrowDown, ArrowUp, Bolt, Check, Copy, Download, Eraser, FileDown, FileText, Library, Link2, Menu, Paperclip, Radio, RotateCcw, Square } from "lucide-react"
 
 import { ComponentSandbox } from "@/components/component-sandbox"
 import { AcademicMarkdown, safeMarkdownContent } from "@/components/academic-markdown"
@@ -27,11 +27,12 @@ import { collectSourcesFromMessages, exportSourcesAsBibTeX, exportSourcesAsRIS }
 import { gatherExportMetadataFromStore } from "@/lib/export-metadata"
 import { downloadConversationAsDocx, downloadConversationAsPdf } from "@/lib/export-utils"
 import { formatFileAttachmentBlock, readBrowserFileAsText } from "@/lib/browser-file"
-import { connKey, looksLikeWorkflowPlanJson } from "@/lib/chat-bubble-utils"
+import { connKey, looksLikeWorkflowPlanJson, randomChatId } from "@/lib/chat-bubble-utils"
 import { bubbleContentToPlainText } from "@/lib/scholar-canvas"
 import { useChatSend } from "@/hooks/use-chat-send"
 import { useMediaQuery } from "@/hooks/use-media-query"
 import { extractDoi, fetchMetadataByDoi, formatReferenceBlock } from "@/lib/reference-import"
+import { parseCitations } from "@/lib/utils/citation-parser"
 import { useT, t as tGlobal } from "@/lib/locales"
 import { QUICK_PROMPTS } from "@/lib/quick-prompts"
 import { cn } from "@/lib/utils"
@@ -217,6 +218,7 @@ const ChatPanelInner = memo(function ChatPanelInner() {
   const showThinkingDefault = useAgentStore((s) => s.settings.ui.showThinking)
   const lang = useAgentStore((s) => s.settings.lang)
   const chatMessages = useAgentStore((s) => s.chat.messages)
+  const attachedReferences = useAgentStore((s) => s.chat.attachedReferences)
   const currentConversationId = useAgentStore((s) => s.conversations.currentId)
   const conversationLoading = useAgentStore((s) => s.conversations.loading)
   const canvasOpen = useAgentStore((s) => s.canvas.canvasOpen)
@@ -243,6 +245,7 @@ const ChatPanelInner = memo(function ChatPanelInner() {
   const followBottomRef = useRef(true)
   const scrollRafRef = useRef<number | null>(null)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
+  const citationFileInputRef = useRef<HTMLInputElement | null>(null)
 
   const notifyCopied = useCallback(() => {
     pushToast({ messageKey: "chat.copy.done", variant: "success", ttlMs: 1800 })
@@ -430,6 +433,58 @@ const ChatPanelInner = memo(function ChatPanelInner() {
       setExportBusy(null)
     }
   }, [getExportContext, pushToast])
+
+  const processCitationImport = useCallback(
+    (raw: string) => {
+      try {
+        const refs = parseCitations(raw)
+        if (!refs.length) {
+          pushToast({ messageKey: "chat.citation.import.empty", variant: "error", ttlMs: 4200 })
+          return
+        }
+        useAgentStore.getState().actions.appendAttachedReferences(refs)
+        pushToast({
+          messageKey: "chat.citation.import.done",
+          variant: "success",
+          ttlMs: 3200,
+        })
+      } catch {
+        pushToast({ messageKey: "chat.citation.import.failed", variant: "error", ttlMs: 4200 })
+      }
+    },
+    [lockToBottomOnce, pushToast]
+  )
+
+  const onImportCitations = useCallback(() => {
+    if (streaming) return
+    const pasted = typeof window !== "undefined" ? window.prompt(t("chat.citation.import.prompt")) : null
+    if (pasted?.trim()) {
+      processCitationImport(pasted)
+      return
+    }
+    citationFileInputRef.current?.click()
+  }, [processCitationImport, streaming, t])
+
+  const onCitationFileSelected = useCallback(
+    async (file: File | null) => {
+      if (!file || streaming) return
+      try {
+        const text = await readBrowserFileAsText(file)
+        processCitationImport(text)
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e)
+        pushToast({
+          messageKey: "chat.citation.import.failed",
+          detail: msg,
+          variant: "error",
+          ttlMs: 4200,
+        })
+      } finally {
+        if (citationFileInputRef.current) citationFileInputRef.current.value = ""
+      }
+    },
+    [processCitationImport, pushToast, streaming]
+  )
 
   const onImportDoi = useCallback(async () => {
     if (streaming) return
@@ -910,11 +965,22 @@ const ChatPanelInner = memo(function ChatPanelInner() {
                     )}
                   >
                     {m.role === "system" ? (
-                      <AcademicMarkdown
-                        content={m.id === "sys-boot" ? t("chat.boot") : displayMessageContent(m.content, t)}
-                        className="text-[12px]"
-                        fallbackPrefix={t("chat.systemRenderFailed")}
-                      />
+                      m.citationBadge ? (
+                        <div className="flex items-center gap-2.5 py-0.5">
+                          <span className="inline-flex items-center gap-2 rounded-full border border-emerald-500/35 bg-emerald-500/10 px-3 py-1.5 font-sans text-[12px] font-medium text-emerald-200/95 shadow-[inset_0_1px_0_oklch(1_0_0/0.06)]">
+                            <span aria-hidden className="text-base leading-none">
+                              📚
+                            </span>
+                            {t("chat.citation.import.badge", { count: m.citationBadge.count })}
+                          </span>
+                        </div>
+                      ) : (
+                        <AcademicMarkdown
+                          content={m.id === "sys-boot" ? t("chat.boot") : displayMessageContent(m.content, t)}
+                          className="text-[12px]"
+                          fallbackPrefix={t("chat.systemRenderFailed")}
+                        />
+                      )
                     ) : m.role === "user" ? (
                       <>
                         <div className="whitespace-pre-wrap pr-8">{displayMessageContent(m.content, t)}</div>
@@ -1111,6 +1177,16 @@ const ChatPanelInner = memo(function ChatPanelInner() {
 
           <div className="shrink-0 border-t border-border/60 bg-background/80 pb-[max(0.75rem,env(safe-area-inset-bottom))] backdrop-blur-md dark:bg-[#0a0a0a]/80">
             <div className="mx-auto flex w-full max-w-[1200px] flex-col gap-2 px-0 py-3">
+              {attachedReferences.length > 0 ? (
+                <div className="px-0.5">
+                  <span className="inline-flex items-center gap-2 rounded-full border border-emerald-500/35 bg-emerald-500/10 px-3 py-1.5 font-sans text-[12px] font-medium text-emerald-200/95 shadow-[inset_0_1px_0_oklch(1_0_0/0.06)]">
+                    <span aria-hidden className="text-base leading-none">
+                      📚
+                    </span>
+                    {t("chat.citation.import.badge", { count: attachedReferences.length })}
+                  </span>
+                </div>
+              ) : null}
               <div className="flex flex-wrap items-center gap-1.5 px-0.5">
                 <span className="shrink-0 font-mono text-[10px] text-muted-foreground">{t("chat.quickPrompts")}</span>
                 {QUICK_PROMPTS.map((p) => (
@@ -1135,6 +1211,13 @@ const ChatPanelInner = memo(function ChatPanelInner() {
                 className="hidden"
                 onChange={(e) => void onFileSelected(e.target.files?.[0] ?? null)}
               />
+              <input
+                ref={citationFileInputRef}
+                type="file"
+                accept=".bib,.ris,.txt"
+                className="hidden"
+                onChange={(e) => void onCitationFileSelected(e.target.files?.[0] ?? null)}
+              />
               <Button
                 type="button"
                 variant="outline"
@@ -1145,6 +1228,17 @@ const ChatPanelInner = memo(function ChatPanelInner() {
                 title={t("chat.upload.hint")}
               >
                 <Paperclip className="h-4 w-4" />
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-11 rounded-sm border-border/60 bg-background/40 font-mono text-[11px]"
+                onClick={onImportCitations}
+                disabled={streaming}
+                title={t("chat.citation.import.hint")}
+              >
+                <Library className="h-4 w-4" />
               </Button>
               <Button
                 type="button"

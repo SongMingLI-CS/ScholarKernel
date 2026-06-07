@@ -37,6 +37,8 @@ export async function POST(req: Request) {
       parser: parsed.parser,
       blocks: parsed.blocks,
       warnings: parsed.warnings,
+      chunks: parsed.chunks,
+      ragContext: parsed.ragContext,
     })
   } catch (e) {
     console.error("[documents/parse]", e)

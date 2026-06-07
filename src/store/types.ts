@@ -69,7 +69,7 @@ export type TopologyState = {
   edges: Array<{ id: string; source: string; target: string }>
 }
 
-export type WorkflowNodeStatus = "pending" | "running" | "done" | "error"
+export type WorkflowNodeStatus = "pending" | "running" | "done" | "error" | "pending_approval"
 export type WorkflowNodeType = "read_file" | "reasoning" | "audit" | "research" | "peer_review"
 export type WorkflowNodeProvider = "local" | "cloud"
 
@@ -90,6 +90,8 @@ export type ChatMessage = {
   role: "user" | "assistant" | "system"
   content: string
   sources?: Array<{ title: string; url: string; snippet?: string; publishedAt?: string; source_id?: string }>
+  /** Green badge when BibTeX/RIS references are loaded into session context */
+  citationBadge?: { count: number }
 }
 
 export type InferenceMetrics = {

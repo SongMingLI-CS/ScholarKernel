@@ -16,6 +16,7 @@ import ReactFlow, {
 import "reactflow/dist/style.css"
 
 import { ComponentSandbox } from "@/components/component-sandbox"
+import { HumanInterventionPanel } from "@/components/human-intervention-panel"
 import { WelcomeEmptyState } from "@/components/welcome-empty-state"
 import { t as tGlobal } from "@/lib/locales"
 import { findPeerReviewGroups, peerReviewGroupToFlowLayout } from "@/lib/agent/topology-layout"
@@ -54,6 +55,11 @@ function statusClass(status: FlowStatus) {
       return cn(
         "border-zinc-500/40 bg-zinc-500/8 text-zinc-300/85",
         "shadow-[inset_0_0_0_1px_oklch(1_0_0/0.05),0_0_8px_oklch(0.5_0_0/0.08)]"
+      )
+    case "pending_approval":
+      return cn(
+        "animate-pulse border-amber-500 bg-amber-500/12 text-amber-50",
+        "shadow-[0_0_0_1px_oklch(0.75_0.18_75/0.55),0_0_28px_oklch(0.72_0.17_75/0.42)]"
       )
     default:
       return "border-zinc-500/35 bg-background/35 text-muted-foreground shadow-[inset_0_0_0_1px_oklch(1_0_0/0.04)]"
@@ -94,8 +100,10 @@ function extractProgress(meta: WorkflowNode["metadata"] | undefined): { ratio: n
   return null
 }
 
-function IndustrialNode({ data }: NodeProps<ProviderNodeData | WorkflowNodeData>) {
+function IndustrialNode({ data, id }: NodeProps<ProviderNodeData | WorkflowNodeData>) {
   const streaming = useAgentStore((s) => s.inference.streaming?.active)
+  const interventionNodeId = useAgentStore((s) => s.intervention.pendingNodeId)
+  const interventionReason = useAgentStore((s) => s.intervention.reason)
   const isWorkflow = "provider" in data
   const energize = Boolean((isWorkflow ? Boolean((data as WorkflowNodeData).active) : streaming) && data.status === "running")
   const wf = isWorkflow ? (data as WorkflowNodeData) : null
@@ -114,6 +122,8 @@ function IndustrialNode({ data }: NodeProps<ProviderNodeData | WorkflowNodeData>
   const personaDraft = personaId ? streamDrafts[personaId] : undefined
   const personaStatus = personaId ? streamStatusLines[personaId] : undefined
   const streamStyle = personaId ? peerReviewStreamStyle(personaId) : null
+  const showIntervention =
+    isWorkflow && nodeStatus === "pending_approval" && interventionNodeId === id && interventionReason
 
   return (
     <div
@@ -124,6 +134,7 @@ function IndustrialNode({ data }: NodeProps<ProviderNodeData | WorkflowNodeData>
         energize && "sk-node-energy"
       )}
     >
+      {showIntervention ? <HumanInterventionPanel nodeId={id} reason={interventionReason} /> : null}
       <Handle type="target" position={Position.Left} className="!opacity-0 !border-0 !bg-transparent" />
       <Handle type="source" position={Position.Right} className="!opacity-0 !border-0 !bg-transparent" />
 

@@ -70,6 +70,8 @@ export {
   sanitizeRuntimeKeys,
 } from "@/store/runtime-keys"
 
+import type { AcademicReference } from "@/lib/utils/citation-parser"
+
 import type {
   AgentSettings,
   ChatMessage,
@@ -107,6 +109,7 @@ type AgentStore = {
   }
   chat: {
     messages: ChatMessage[]
+    attachedReferences: AcademicReference[]
   }
   conversations: {
     items: ConversationSummary[]
@@ -139,6 +142,11 @@ type AgentStore = {
     activeDocument: ScholarDocument | null
     canvasOpen: boolean
   }
+  intervention: {
+    sessionId: string | null
+    pendingNodeId: string | null
+    reason: string | null
+  }
 
   actions: {
     setActivePanel: (panel: PanelId) => void
@@ -169,6 +177,9 @@ type AgentStore = {
     setChatMessages: (messages: ChatMessage[]) => void
     pushChatMessage: (m: ChatMessage) => void
     patchChatMessage: (id: string, patch: Partial<ChatMessage>) => void
+    setAttachedReferences: (refs: AcademicReference[]) => void
+    appendAttachedReferences: (refs: AcademicReference[]) => void
+    clearAttachedReferences: () => void
     /** Route B: bootstrap cloud settings + conversation list */
     initializeCloud: () => Promise<void>
     fetchConversationsList: () => Promise<void>
@@ -186,6 +197,8 @@ type AgentStore = {
     patchWorkflowNode: (id: string, patch: Partial<WorkflowNode>) => void
     appendNodeLog: (id: string, line: string) => void
     applyNodeProgress: (payload: import("@/lib/agent/executor-types").NodeProgressPayload) => void
+    setInterventionPending: (input: { sessionId: string; nodeId: string; reason: string }) => void
+    clearInterventionPending: () => void
     startInferenceStream: (input: StartInferenceStreamInput) => void
     patchActiveInferenceStream: (input: {
       runId: string
@@ -375,6 +388,7 @@ export const useAgentStore = create<AgentStore>()(
         ui: { activePanel: "chat", corsHelp: { open: false }, toast: { open: false }, sidebarDrawerOpen: false },
         chat: {
           messages: [],
+          attachedReferences: [],
         },
         conversations: {
           items: [],
@@ -403,6 +417,7 @@ export const useAgentStore = create<AgentStore>()(
         workflow: { version: 1, activeNodeId: null, isPlannerOutput: false, nodes: [] },
         inference: { streaming: null, last: null, history: [] },
         canvas: { activeDocument: null, canvasOpen: false },
+        intervention: { sessionId: null, pendingNodeId: null, reason: null },
 
         actions: {
           // State guard: only change activePanel string; no side effects.
@@ -625,6 +640,16 @@ export const useAgentStore = create<AgentStore>()(
             },
           })),
         setChatMessages: (messages) => set((s) => ({ ...s, chat: { ...s.chat, messages } })),
+        setAttachedReferences: (refs) =>
+          set((s) => ({ ...s, chat: { ...s.chat, attachedReferences: refs } })),
+        appendAttachedReferences: (refs) => {
+          if (!refs.length) return
+          set((s) => ({
+            ...s,
+            chat: { ...s.chat, attachedReferences: [...s.chat.attachedReferences, ...refs] },
+          }))
+        },
+        clearAttachedReferences: () => set((s) => ({ ...s, chat: { ...s.chat, attachedReferences: [] } })),
         pushChatMessage: (m) => {
           set((s) => ({ ...s, chat: { ...s.chat, messages: [...s.chat.messages, m] } }))
           const convId = get().conversations.currentId
@@ -724,7 +749,7 @@ export const useAgentStore = create<AgentStore>()(
               items: [conv, ...s.conversations.items.filter((c) => c.id !== conv.id)],
               currentId: conv.id,
             },
-            chat: { messages: [] },
+            chat: { messages: [], attachedReferences: [] },
             workflow: { version: Date.now(), activeNodeId: null, isPlannerOutput: false, nodes: [] },
             topology: buildTopologyForActiveProvider(s.providers.active),
             canvas: { activeDocument: null, canvasOpen: false },
@@ -744,7 +769,7 @@ export const useAgentStore = create<AgentStore>()(
             const messages = detail.messages.map(prismaMessageToChat)
             set((s) => ({
               ...s,
-              chat: { messages },
+              chat: { messages, attachedReferences: [] },
               conversations: { ...s.conversations, currentId: id, loading: false },
               topology: buildTopologyForActiveProvider(s.providers.active),
             }))
@@ -770,7 +795,7 @@ export const useAgentStore = create<AgentStore>()(
           }
           set((s) => ({
             ...s,
-            chat: { messages: [] },
+            chat: { messages: [], attachedReferences: [] },
             workflow: { version: Date.now(), activeNodeId: null, isPlannerOutput: false, nodes: [] },
             topology: buildTopologyForActiveProvider(s.providers.active),
           }))
@@ -833,7 +858,7 @@ export const useAgentStore = create<AgentStore>()(
             },
             ...(wasCurrent
               ? {
-                  chat: { messages: [] },
+                  chat: { messages: [], attachedReferences: [] },
                   workflow: { version: Date.now(), activeNodeId: null, isPlannerOutput: false, nodes: [] },
                   topology: buildTopologyForActiveProvider(s.providers.active),
                   inference: { ...s.inference, streaming: null },
@@ -883,7 +908,7 @@ export const useAgentStore = create<AgentStore>()(
               ...s.workflow,
               version: Date.now(),
               activeNodeId:
-                patch.status === "running"
+                patch.status === "running" || patch.status === "pending_approval"
                   ? id
                   : patch.status
                     ? s.workflow.activeNodeId === id
@@ -951,6 +976,16 @@ export const useAgentStore = create<AgentStore>()(
                 return { ...n, metadata: meta }
               }),
             },
+          })),
+        setInterventionPending: ({ sessionId, nodeId, reason }) =>
+          set((s) => ({
+            ...s,
+            intervention: { sessionId, pendingNodeId: nodeId, reason },
+          })),
+        clearInterventionPending: () =>
+          set((s) => ({
+            ...s,
+            intervention: { sessionId: null, pendingNodeId: null, reason: null },
           })),
         startInferenceStream: (input) =>
           set((s) => ({

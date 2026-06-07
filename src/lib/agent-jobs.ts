@@ -17,6 +17,12 @@ export type AgentJobCheckpoint = {
   partialResults?: unknown[]
   sources?: unknown[]
   peerReview?: PeerReviewCheckpointData
+  humanIntervention?: {
+    nodeId: string
+    action: "approve" | "redirect"
+    instruction: string | null
+    appliedAt: number
+  }
 }
 
 export type AgentJobProvider = ActiveProviderConfig
@@ -162,6 +168,24 @@ export function persistAgentJobError(userId: string, error: unknown, ctx: AgentJ
 
   return write().catch((e) => {
     console.error("[persistAgentJobError]", e)
+  })
+}
+
+export async function updateAgentJobWorkflowTopology(
+  id: string,
+  nodes: unknown[],
+  extra?: Partial<AgentJobCheckpoint>
+) {
+  const job = await prisma.agentJob.findUnique({ where: { id }, select: { checkpoint: true } })
+  const prev =
+    job?.checkpoint && typeof job.checkpoint === "object"
+      ? (job.checkpoint as AgentJobCheckpoint)
+      : ({} as AgentJobCheckpoint)
+  return updateAgentJobCheckpoint(id, {
+    ...prev,
+    ...extra,
+    phase: extra?.phase ?? prev.phase ?? "running",
+    nodes,
   })
 }
 

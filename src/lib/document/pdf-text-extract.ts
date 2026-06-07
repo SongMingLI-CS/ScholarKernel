@@ -1,8 +1,9 @@
-import type { LayoutTextBlock } from "@/lib/document/column-reorder"
+import type { LayoutTextBlock, PageGeometry } from "@/lib/document/column-reorder"
 
 type PdfExtractResult = {
   text: string
   blocks: LayoutTextBlock[]
+  pageGeometries: PageGeometry[]
 }
 
 function decodePdfLiteral(s: string): string {
@@ -26,10 +27,34 @@ function decodePdfHex(hex: string): string {
   return out
 }
 
+/** 从 PDF 对象树提取各页 MediaBox 宽度（用于双栏中轴线判定）。 */
+export function extractPdfPageGeometries(buffer: Buffer): PageGeometry[] {
+  const raw = buffer.toString("latin1")
+  const geometries: PageGeometry[] = []
+  const mediaRe = /\/MediaBox\s*\[\s*([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s*\]/g
+  let page = 0
+  let m: RegExpExecArray | null
+  while ((m = mediaRe.exec(raw)) !== null) {
+    page += 1
+    const x0 = parseFloat(m[1]!)
+    const y0 = parseFloat(m[2]!)
+    const x1 = parseFloat(m[3]!)
+    const y1 = parseFloat(m[4]!)
+    if ([x0, y0, x1, y1].some((v) => Number.isNaN(v))) continue
+    geometries.push({
+      page,
+      width: Math.abs(x1 - x0),
+      height: Math.abs(y1 - y0),
+    })
+  }
+  return geometries
+}
+
 /** 从 PDF content stream 片段提取带坐标的文本块（Tm/Td/Tj/TJ）。 */
 export function extractPdfLayoutBlocks(buffer: Buffer): PdfExtractResult {
   const raw = buffer.toString("latin1")
   const blocks: LayoutTextBlock[] = []
+  const pageGeometries = extractPdfPageGeometries(buffer)
 
   const streamRe = /stream\r?\n([\s\S]*?)\r?\nendstream/g
   let page = 0
@@ -94,11 +119,11 @@ export function extractPdfLayoutBlocks(buffer: Buffer): PdfExtractResult {
 
   if (blocks.length === 0) {
     const fallback = extractPdfPlainText(raw)
-    return { text: fallback, blocks: [] }
+    return { text: fallback, blocks: [], pageGeometries }
   }
 
-  const sorted = [...blocks].sort((a, b) => a.page - b.page || b.y - a.y || a.x - b.x)
-  return { text: sorted.map((b) => b.text).join("\n"), blocks }
+  // 不在此处做 naive 排序拼接；交由 column-reorder 按双栏阅读顺序重组。
+  return { text: blocks.map((b) => b.text).join("\n"), blocks, pageGeometries }
 }
 
 /** 无坐标时的纯文本兜底：抓取 (..) 与 <hex> 字串。 */

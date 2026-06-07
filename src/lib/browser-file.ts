@@ -23,6 +23,7 @@ const TEXT_EXTENSIONS = new Set([
   ".html",
   ".css",
   ".bib",
+  ".ris",
   ".tex",
 ])
 
