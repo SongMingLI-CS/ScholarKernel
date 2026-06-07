@@ -1,6 +1,7 @@
 import { resolveUserIdFromRequest } from "@/lib/auth-user"
 import { persistAgentJobError } from "@/lib/agent-jobs"
 import { runAgentOnServer } from "@/lib/agent-server-run"
+import { assertQuotaAvailable, jsonQuotaExceeded, QuotaExceededError } from "@/lib/billing/quota-gate"
 import { jsonError, jsonOk, parseJsonBody } from "@/lib/api-utils"
 import type { ActiveProviderConfig, ChatHistoryEntry } from "@/lib/agent/planner"
 import type { AgentExecutorDeps } from "@/lib/agent/executor-types"
@@ -31,11 +32,19 @@ export async function POST(req: Request) {
     return jsonError("Invalid body: userInput and provider required", 400)
   }
 
+  try {
+    await assertQuotaAvailable(userId)
+  } catch (e) {
+    if (e instanceof QuotaExceededError) return jsonQuotaExceeded(e.message)
+    throw e
+  }
+
   const origin = new URL(req.url)
   const sourceApiBase = `${origin.protocol}//${origin.host}`
 
   try {
     const result = await runAgentOnServer({
+      userId,
       userInput: body.userInput.trim(),
       activeProvider: body.provider,
       chatHistory: body.chatHistory,

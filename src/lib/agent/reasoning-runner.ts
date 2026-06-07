@@ -16,6 +16,7 @@ import {
   serializeSubtaskForReasoning,
   type StreamTextCallExtras,
 } from "@/lib/agent/llm-utils"
+import { recordLlmUsageAsync } from "@/lib/billing/token-usage-bridge"
 
 export type ReasoningNodeContext = {
   node: WorkflowNode
@@ -205,7 +206,14 @@ export async function executeReasoningNode(ctx: ReasoningNodeContext): Promise<S
       acc = text
       hooks.onNodePatch?.(n.id, { output: { text: acc } })
     },
-    deps.signal
+    deps.signal,
+    {
+      onStreamComplete: ({ ttftMs }) => {
+        void streamed.usage.then((usage) => {
+          recordLlmUsageAsync(deps, normalizedModel, usage, ttftMs)
+        })
+      },
+    }
   )
 
   hooks.onNodePatch?.(n.id, {

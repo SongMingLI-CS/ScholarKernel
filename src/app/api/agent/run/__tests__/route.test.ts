@@ -14,6 +14,20 @@ vi.mock("@/lib/agent-server-run", () => ({
   runAgentOnServer,
 }))
 
+vi.mock("@/lib/prisma", () => ({
+  prisma: {
+    userBilling: {
+      upsert: vi.fn(async ({ where, create }: { where: { userId: string }; create: { userId: string; tokenQuota: number } }) => ({
+        userId: where.userId,
+        tokenUsed: 0,
+        tokenQuota: create.tokenQuota,
+        totalSpent: 0,
+        updatedAt: new Date(),
+      })),
+    },
+  },
+}))
+
 import { resolveUserIdFromRequest } from "@/lib/auth-user"
 
 describe("POST /api/agent/run", () => {

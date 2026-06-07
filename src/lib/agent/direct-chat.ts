@@ -12,6 +12,7 @@ import {
   providerSelfIntro,
   type StreamTextCallExtras,
 } from "@/lib/agent/llm-utils"
+import { recordLlmUsageAsync } from "@/lib/billing/token-usage-bridge"
 
 export type DirectChatContext = {
   deps: AgentExecutorDeps
@@ -79,6 +80,13 @@ export async function streamDirectChat(ctx: DirectChatContext): Promise<string> 
     (text) => {
       hooks.onDirectChatStream?.(text)
     },
-    deps.signal
+    deps.signal,
+    {
+      onStreamComplete: ({ ttftMs }) => {
+        void streamed.usage.then((usage) => {
+          recordLlmUsageAsync(deps, normalizeModelId(active.providerId, active.model), usage, ttftMs)
+        })
+      },
+    }
   )
 }

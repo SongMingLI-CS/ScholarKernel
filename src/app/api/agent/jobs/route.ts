@@ -6,6 +6,7 @@ import {
   markAgentJobRunning,
   updateAgentJobCheckpoint,
   updateAgentJobPeerReviewCheckpoint,
+  updateAgentJobWorkflowTopology,
   type AgentJobCheckpoint,
 } from "@/lib/agent-jobs"
 import {
@@ -14,6 +15,7 @@ import {
   peerReviewCheckpointToJobPatch,
 } from "@/lib/agent/peer-review-checkpoint"
 import { runAgentOnServer } from "@/lib/agent-server-run"
+import { assertQuotaAvailable, jsonQuotaExceeded, QuotaExceededError } from "@/lib/billing/quota-gate"
 import { jsonError, jsonOk, parseJsonBody } from "@/lib/api-utils"
 import type { ActiveProviderConfig } from "@/lib/agent/planner"
 import type { AgentExecutorDeps } from "@/lib/agent/executor-types"
@@ -43,6 +45,13 @@ export async function POST(req: Request) {
     return jsonError("Invalid body: userInput and provider required", 400)
   }
 
+  try {
+    await assertQuotaAvailable(userId)
+  } catch (e) {
+    if (e instanceof QuotaExceededError) return jsonQuotaExceeded(e.message)
+    throw e
+  }
+
   const job = await createAgentJob(userId, {
     userInput: body.userInput.trim(),
     provider: body.provider,
@@ -61,9 +70,11 @@ export async function POST(req: Request) {
 
     const result = await runAgentOnServer(
       {
+        userId,
         userInput: body.userInput.trim(),
         activeProvider: body.provider,
         jobId: job.id,
+        interventionSessionId: job.id,
         peerReviewCheckpoint,
         onPeerReviewCheckpoint: (patch) => {
           peerReviewCheckpoint = mergePeerReviewCheckpoint(peerReviewCheckpoint, patch)
@@ -90,6 +101,23 @@ export async function POST(req: Request) {
             nodes: [{ id, patch }],
           }
           void updateAgentJobCheckpoint(job.id, jobCheckpoint)
+        },
+        onInterventionPending: (event) => {
+          jobCheckpoint = {
+            ...jobCheckpoint,
+            phase: "running",
+            humanInterventionPending: {
+              nodeId: event.nodeId,
+              reason: event.reason,
+              sessionId: event.sessionId,
+              at: Date.now(),
+            },
+          } as AgentJobCheckpoint & { humanInterventionPending?: unknown }
+          void updateAgentJobCheckpoint(job.id, jobCheckpoint)
+        },
+        onWorkflowTopologyPruned: (nodes) => {
+          jobCheckpoint = { ...jobCheckpoint, phase: "running", nodes }
+          void updateAgentJobWorkflowTopology(job.id, nodes, jobCheckpoint)
         },
       }
     )

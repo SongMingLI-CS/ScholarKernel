@@ -69,6 +69,7 @@ import {
   trimHistoryToContextLimit,
   type GenModel,
 } from "@/lib/agent/llm-utils"
+import { recordLlmUsageAsync, recordSearchUsageAsync } from "@/lib/billing/token-usage-bridge"
 export {
   buildChatHistoryForExecutor,
   extractLlmHistory,
@@ -330,6 +331,12 @@ export class AgentExecutor {
       console.log("🔥🔥🔥 RAW_LLM_OUTPUT (structured):", planGen.output)
     }
 
+    const planModelUsed =
+      dsKey
+        ? "deepseek-chat"
+        : normalizeModelId(active.providerId, active.model)
+    recordLlmUsageAsync(this.deps, planModelUsed, planGen.usage)
+
     const list = usesStructuredJson
       ? parseAndValidateTaskList(planGen.text, planGen.output as unknown)
       : parseAndValidateTaskList(planGen.text)
@@ -468,7 +475,8 @@ export class AgentExecutor {
 
         const provider = createOllama({ baseURL: this.deps.activeProvider.baseUrl })
         const model = provider(this.deps.activeProvider.model)
-        const { text } = await generateText({
+        const auditModel = this.deps.activeProvider.model
+        const auditGen = await generateText({
           model,
           ...llmCallSettings(this.deps.signal),
           temperature: Math.min(inf.temperature ?? 0.1, 0.2),
@@ -487,7 +495,8 @@ export class AgentExecutor {
             clampTextByChars(src, inf.contextLimit),
           ].join("\n"),
         })
-        return { ok: true, path, focus, report: text }
+        recordLlmUsageAsync(this.deps, auditModel, auditGen.usage)
+        return { ok: true, path, focus, report: auditGen.text }
       },
     })
 
@@ -522,7 +531,7 @@ export class AgentExecutor {
           throw new Error("UnsupportedProvider")
         }
 
-        const { text } = await generateText({
+        const reviewGen = await generateText({
           model,
           ...llmCallSettings(this.deps.signal),
           temperature: inf.temperature ?? 0.4,
@@ -534,8 +543,9 @@ export class AgentExecutor {
           ].join("\n"),
           prompt: [`Topic: ${topic}`, constraints ? `Constraints: ${constraints}` : ""].filter(Boolean).join("\n"),
         })
+        recordLlmUsageAsync(this.deps, normalizedModel, reviewGen.usage)
 
-        return { ok: true, provider: active.providerId, review: text }
+        return { ok: true, provider: active.providerId, review: reviewGen.text }
       },
     })
 
@@ -576,9 +586,17 @@ export class AgentExecutor {
 
     console.log("🛠️ 走任务规划路由")
     this.sessionContextMessages = []
-    const nodes = await this.plan(userInput, options?.planRetryMessage ? { retryMessage: options.planRetryMessage } : undefined)
+    let nodes = await this.plan(userInput, options?.planRetryMessage ? { retryMessage: options.planRetryMessage } : undefined)
     const tools = this.buildTools()
     const inf = this.inferenceCfg()
+
+    const execHooks: AgentExecutorHooks = {
+      ...this.hooks,
+      onWorkflowTopologyPruned: (pruned) => {
+        nodes = pruned
+        this.hooks.onWorkflowTopologyPruned?.(pruned)
+      },
+    }
 
     const results: Array<{ id: string; ok: boolean; summary: string; output?: unknown }> = []
     let sources: AcademicSearchHit[] = []
@@ -588,8 +606,8 @@ export class AgentExecutor {
       const n = nodes[ni]!
       this.throwIfAborted()
       this.hooks.onNodeLog?.(n.id, `进入节点：${n.id}`)
-      this.hooks.onNodePatch?.(n.id, { status: "running" })
-      this.hooks.onNodeLog?.(n.id, `开始执行：${n.type} · ${n.provider}`)
+      execHooks.onNodePatch?.(n.id, { status: "running" })
+      execHooks.onNodeLog?.(n.id, `开始执行：${n.type} · ${n.provider}`)
       const nodeStartedAt = performance.now()
 
       try {
@@ -599,9 +617,10 @@ export class AgentExecutor {
             groupNodes: group,
             userInput,
             deps: this.deps,
-            hooks: this.hooks,
+            hooks: execHooks,
             checkpoint: this.deps.peerReviewCheckpoint ?? null,
             onCheckpoint: this.deps.onPeerReviewCheckpoint,
+            allWorkflowNodes: nodes,
           })
           results.push(...groupResults)
           ni += group.length - 1
@@ -735,6 +754,16 @@ export class AgentExecutor {
           }
 
           this.hooks.onNodeLog?.(n.id, `正在分析 ${sources.length} 篇相关论文（本轮新增 ${out.total} 条）…`)
+          const resultChars = (out.results ?? []).reduce(
+            (sum, hit) => sum + (hit.title?.length ?? 0) + (hit.snippet?.length ?? 0),
+            0
+          )
+          recordSearchUsageAsync(
+            this.deps,
+            out.provider === "serper" ? "serper" : "tavily",
+            queryList.join(" | "),
+            resultChars
+          )
           this.pushResearchIntoSessionContext(out, citationsMarkdown, n.id)
           this.hooks.onNodeLog?.(
             n.id,

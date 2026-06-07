@@ -1,9 +1,10 @@
 "use client"
 
-import { memo, useMemo } from "react"
+import { memo, useEffect, useMemo, useState } from "react"
 import type { ComponentType, ReactNode } from "react"
 import { Cloud, Gauge, Zap } from "lucide-react"
 
+import type { BillingMetricsPayload } from "@/lib/billing/billing-metrics"
 import { useT } from "@/lib/locales"
 import { cn } from "@/lib/utils"
 import { selectLastChatInference, useAgentStore } from "@/store/useAgentStore"
@@ -12,6 +13,12 @@ function inferSpeedTokPerSec(chars: number, totalMs: number, ttftMs: number | nu
   if (totalMs <= 0 || chars <= 0) return null
   const genMs = ttftMs != null ? Math.max(totalMs - ttftMs, 1) : totalMs
   return Math.round((chars / genMs) * 1000)
+}
+
+function formatUsd(value: number): string {
+  if (value < 0.0001) return "$0.0000"
+  if (value < 0.01) return `$${value.toFixed(4)}`
+  return `$${value.toFixed(3)}`
 }
 
 function MetricRow({
@@ -45,6 +52,27 @@ export const CloudMetrics = memo(function CloudMetrics() {
   const t = useT()
   const streaming = useAgentStore((s) => s.inference.streaming)
   const lastChatInference = useAgentStore(selectLastChatInference)
+  const [billing, setBilling] = useState<BillingMetricsPayload | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    const load = async () => {
+      try {
+        const res = await fetch("/api/user/billing-metrics", { cache: "no-store" })
+        if (!res.ok) return
+        const data = (await res.json()) as BillingMetricsPayload
+        if (!cancelled) setBilling(data)
+      } catch {
+        // ignore polling errors
+      }
+    }
+    void load()
+    const timer = setInterval(load, 12_000)
+    return () => {
+      cancelled = true
+      clearInterval(timer)
+    }
+  }, [streaming?.active])
 
   const metrics = useMemo(() => {
     if (streaming?.active) {
@@ -64,6 +92,9 @@ export const CloudMetrics = memo(function CloudMetrics() {
 
   const ttftLabel = metrics.ttftMs == null ? "—" : `${metrics.ttftMs}ms`
   const speedLabel = metrics.speed == null ? "—" : `${metrics.speed} tok/s`
+  const usagePercent = billing?.usagePercent ?? 0
+  const quotaBarColor =
+    usagePercent >= 95 ? "bg-rose-500" : usagePercent >= 80 ? "bg-amber-400" : "bg-emerald-400"
 
   return (
     <div className="grid gap-2">
@@ -88,6 +119,27 @@ export const CloudMetrics = memo(function CloudMetrics() {
 
         <div className="my-2 h-px bg-gradient-to-r from-transparent via-emerald-500/20 to-transparent" aria-hidden />
 
+        {billing ? (
+          <div className="mb-2 space-y-1.5">
+            <div className="flex items-center justify-between font-mono text-[10px] tabular-nums">
+              <span className="text-muted-foreground">{t("sidebar.cloudMetrics.quota")}</span>
+              <span className={cn(usagePercent >= 95 ? "text-rose-300/90" : "text-cyan-200/90")}>
+                {billing.tokenUsed.toLocaleString()} / {billing.tokenQuota.toLocaleString()}
+              </span>
+            </div>
+            <div className="w-full rounded-full bg-gray-800 h-1.5 overflow-hidden">
+              <div
+                className={cn("h-1.5 rounded-full transition-all duration-500", quotaBarColor)}
+                style={{ width: `${Math.min(100, usagePercent)}%` }}
+              />
+            </div>
+            <div className="flex justify-between font-mono text-[9px] text-muted-foreground tabular-nums">
+              <span>{t("sidebar.cloudMetrics.spent")}: {formatUsd(billing.totalSpent)}</span>
+              <span>{usagePercent}%</span>
+            </div>
+          </div>
+        ) : null}
+
         <MetricRow
           icon={Gauge}
           label={t("sidebar.cloudMetrics.performance")}
@@ -104,6 +156,34 @@ export const CloudMetrics = memo(function CloudMetrics() {
             </span>
           }
         />
+
+        {billing && billing.recentJobs.length > 0 ? (
+          <>
+            <div className="my-2 h-px bg-gradient-to-r from-transparent via-emerald-500/20 to-transparent" aria-hidden />
+            <div className="overflow-hidden">
+              <div className="mb-1 font-mono text-[9px] uppercase tracking-wider text-muted-foreground">
+                {t("sidebar.cloudMetrics.recentJobs")}
+              </div>
+              <div className="relative h-[42px] overflow-hidden">
+                <div className="sk-billing-ticker space-y-1">
+                  {[...billing.recentJobs, ...billing.recentJobs].map((job, idx) => (
+                    <div
+                      key={`${job.jobId}-${idx}`}
+                      className="flex items-center justify-between gap-2 font-mono text-[9px] tabular-nums text-muted-foreground"
+                    >
+                      <span className="truncate text-cyan-200/80">{job.jobId.slice(-8)}</span>
+                      <span>
+                        TTFT {job.ttftMs != null ? `${job.ttftMs}ms` : "—"}
+                        <span className="mx-1 text-border/40">·</span>
+                        <span className="text-amber-200/90">{formatUsd(job.costUsd)}</span>
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </>
+        ) : null}
       </div>
     </div>
   )

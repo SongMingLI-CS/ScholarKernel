@@ -10,10 +10,15 @@ import {
 import type {
   AgentExecutorDeps,
   AgentExecutorHooks,
+  HumanInterventionDecision,
   NodeProgressPayload,
   PeerReviewStreamProgress,
   SubtaskResult,
 } from "@/lib/agent/executor-types"
+import { waitForHumanIntervention } from "@/lib/agent/human-intervention-gate"
+import { pruneWorkflowAfterHumanIntervention } from "@/lib/agent/human-intervention-pruning"
+import { shouldTriggerPeerReviewBreakpoint, hasPeerReviewScoreGap } from "@/lib/agent/peer-review-score-gap"
+import { formatAcademicChunksForContext, semanticChunkAcademicText } from "@/lib/document/academic-semantic-chunker"
 import {
   isStageComplete,
   mergePeerReviewCheckpoint,
@@ -24,8 +29,11 @@ import {
   consumeStreamTextOutput,
   llmCallSettings,
   logLlmCallFailure,
+  normalizeModelId,
   providerSelfIntro,
+  type StreamTextCallExtras,
 } from "@/lib/agent/llm-utils"
+import { recordLlmUsageAsync } from "@/lib/billing/token-usage-bridge"
 import type { WorkflowNode } from "@/lib/agent/planner"
 
 export type PeerReviewGenerateFn = (input: {
@@ -51,12 +59,18 @@ export type ExecutePeerReviewGroupInput = {
   groupNodes: WorkflowNode[]
   userInput: string
   deps: AgentExecutorDeps
-  hooks: Pick<AgentExecutorHooks, "onNodePatch" | "onNodeLog" | "onProgress">
+  hooks: Pick<
+    AgentExecutorHooks,
+    "onNodePatch" | "onNodeLog" | "onProgress" | "onInterventionPending" | "onWorkflowTopologyPruned"
+  >
   generateReview?: PeerReviewGenerateFn
   generateReviewStream?: PeerReviewGenerateStreamFn
   generateDebate?: PeerReviewDebateFn
   checkpoint?: PeerReviewCheckpointData | null
   onCheckpoint?: (patch: Partial<PeerReviewCheckpointData> & { markComplete?: PeerReviewCheckpointData["completedStages"][number] }) => void | Promise<void>
+  /** 全工作流节点（供剪枝写入）；缺省时仅更新 group 内 metadata */
+  allWorkflowNodes?: WorkflowNode[]
+  waitForHumanIntervention?: typeof waitForHumanIntervention
 }
 
 export function isPeerReviewGroupStart(nodes: WorkflowNode[], index: number): boolean {
@@ -82,6 +96,18 @@ function resolveSubjectText(userInput: string, groupNodes: WorkflowNode[]): stri
     }
   }
   return userInput.trim()
+}
+
+/** 对长文本注入语义切片 RAG 上下文，供审稿智能体精准引用公式与章节。 */
+export function enrichPeerReviewSubject(subject: string): string {
+  const trimmed = subject.trim()
+  if (trimmed.length < 1200) return trimmed
+
+  const chunks = semanticChunkAcademicText({ text: trimmed })
+  if (chunks.length <= 1) return trimmed
+
+  const rag = formatAcademicChunksForContext(chunks)
+  return [trimmed, "", rag].join("\n")
 }
 
 function personaIdFromNode(node: WorkflowNode, fallback: PeerReviewPersonaId): PeerReviewPersonaId {
@@ -120,6 +146,7 @@ async function defaultGenerateReviewStream(
   const active = deps.activeProvider
   const runtimeKeys = deps.getRuntimeKeys?.() ?? deps.runtimeKeys
   const model = buildGenModelForCloudInference(active, runtimeKeys, node)
+  const modelUsed = normalizeModelId(active.providerId, active.model)
 
   const streamed = streamText({
     model,
@@ -137,7 +164,14 @@ async function defaultGenerateReviewStream(
       prevLen = acc.length
       onProgress?.({ streamId: personaId, text: acc, delta: delta || undefined })
     },
-    deps.signal
+    deps.signal,
+    {
+      onStreamComplete: ({ ttftMs }) => {
+        void streamed.usage.then((usage) => {
+          recordLlmUsageAsync(deps, modelUsed, usage, ttftMs)
+        })
+      },
+    }
   )
 
   return text.trim()
@@ -299,7 +333,7 @@ export async function executePeerReviewGroup(input: ExecutePeerReviewGroupInput)
   }
 
   const [r1Node, r2Node, r3Node] = groupNodes
-  const subject = resolveSubjectText(userInput, groupNodes)
+  const subject = enrichPeerReviewSubject(resolveSubjectText(userInput, groupNodes))
   const groupStartedAt = performance.now()
 
   const cpState = mergePeerReviewCheckpoint(input.checkpoint ?? null, { subject })
@@ -339,9 +373,64 @@ export async function executePeerReviewGroup(input: ExecutePeerReviewGroupInput)
   hooks.onNodeLog?.(r1Node!.id, "【Debate Stream】Reviewer #1 批判意见已提交，进入激辩…")
   hooks.onNodeLog?.(r2Node!.id, "【Debate Stream】等待 Reviewer #2 回应…")
 
+  let humanInstruction: string | undefined
+  let skipDebateFromIntervention = false
+
+  const sessionId = deps.interventionSessionId?.trim()
+  const needsBreakpoint = shouldTriggerPeerReviewBreakpoint(r1Out.text, r2Out.text)
+
+  if (needsBreakpoint && sessionId && r3Node) {
+    const reason = hasPeerReviewScoreGap(r1Out.text, r2Out.text)
+      ? "Reviewer scores diverge — wait for expert guidance"
+      : "Wait for expert guidance"
+
+    hooks.onNodePatch?.(r3Node.id, {
+      status: "pending_approval",
+      metadata: { interventionReason: reason, personaId: "area_chair" },
+    })
+    hooks.onInterventionPending?.({
+      nodeId: r3Node.id,
+      status: "pending_approval",
+      reason,
+      sessionId,
+    })
+    hooks.onNodeLog?.(r3Node.id, `【Human-in-the-Loop】断点挂起：${reason}`)
+
+    const waitFn = input.waitForHumanIntervention ?? waitForHumanIntervention
+    let decision: HumanInterventionDecision
+    try {
+      decision = await waitFn(sessionId, r3Node.id, reason, deps.signal)
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      hooks.onNodePatch?.(r3Node.id, { status: "error", error: msg })
+      throw e
+    }
+
+    if (decision.action === "redirect" && decision.instruction.trim()) {
+      humanInstruction = decision.instruction.trim()
+      const baseNodes = decision.prunedNodes ?? input.allWorkflowNodes ?? groupNodes
+      const pruned = pruneWorkflowAfterHumanIntervention({
+        nodes: baseNodes,
+        breakpointNodeId: r3Node.id,
+        instruction: humanInstruction,
+      })
+      skipDebateFromIntervention = pruned.skippedDebate
+      hooks.onWorkflowTopologyPruned?.(pruned.nodes)
+      hooks.onNodeLog?.(r3Node.id, `【Human-in-the-Loop】思考树已剪枝，插入节点 ${pruned.insertedNodeId}`)
+    }
+
+    hooks.onNodePatch?.(r3Node.id, { status: "running" })
+  }
+
   let debateText = isStageComplete(cpState, "debate") ? cpState.debate ?? "" : ""
 
-  if (!debateText.trim()) {
+  if (skipDebateFromIntervention) {
+    debateText = humanInstruction
+      ? `[Human Expert Override — debate skipped]\n${humanInstruction}`
+      : "[Human Expert Override — debate skipped]"
+    hooks.onNodeLog?.(r1Node!.id, "【Debate Stream】已按专家指令跳过激辩环节")
+    hooks.onNodeLog?.(r2Node!.id, "【Debate Stream】已按专家指令跳过激辩环节")
+  } else if (!debateText.trim()) {
     debateText = await generateDebate({
       methodologyReview: r1Out.text,
       innovationReview: r2Out.text,
@@ -363,7 +452,7 @@ export async function executePeerReviewGroup(input: ExecutePeerReviewGroupInput)
       debate: debateText,
       markComplete: "debate",
     })
-  } else {
+  } else if (!skipDebateFromIntervention) {
     hooks.onNodeLog?.(r1Node!.id, "【Debate Stream】从快照恢复激辩记录")
     hooks.onNodeLog?.(r2Node!.id, "【Debate Stream】从快照恢复激辩记录")
   }
@@ -389,8 +478,13 @@ export async function executePeerReviewGroup(input: ExecutePeerReviewGroupInput)
     "激辩交锋记录：",
     debateText,
     "",
+    humanInstruction
+      ? ["【人类专家干预指令 — 必须优先遵循】", humanInstruction, ""].join("\n")
+      : "",
     "请按顶会 Area Chair 标准输出最终 meta-review（Markdown）。",
-  ].join("\n")
+  ]
+    .filter(Boolean)
+    .join("\n")
 
   let metaReviewRaw = cpState.metaReview?.trim() ? cpState.metaReview : ""
 

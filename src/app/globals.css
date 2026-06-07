@@ -242,6 +242,19 @@ html.sk-compact body {
   }
 }
 
+.sk-billing-ticker {
+  animation: sk-billing-scroll 9s linear infinite;
+}
+
+@keyframes sk-billing-scroll {
+  0% {
+    transform: translateY(0);
+  }
+  100% {
+    transform: translateY(-50%);
+  }
+}
+
 .sk-node-energy {
   animation: sk-energy-pulse 1.1s ease-in-out infinite;
 }

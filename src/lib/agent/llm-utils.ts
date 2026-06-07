@@ -101,14 +101,20 @@ const ABSORBED_STREAM_PART_TYPES = new Set([
 export async function consumeStreamTextOutput(
   streamed: Awaited<ReturnType<typeof streamText>>,
   onAccumulated: (acc: string) => void,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  options?: {
+    onStreamComplete?: (ctx: { ttftMs: number | null }) => void
+  }
 ): Promise<string> {
   let acc = ""
+  let ttftMs: number | null = null
+  const streamStartedAt = performance.now()
   try {
     for await (const part of streamed.fullStream) {
       assertNotAborted(signal)
       try {
         if (part.type === "text-delta" || part.type === "reasoning-delta") {
+          if (ttftMs == null) ttftMs = Math.round(performance.now() - streamStartedAt)
           acc += part.text
           onAccumulated(acc)
           continue
@@ -145,6 +151,8 @@ export async function consumeStreamTextOutput(
   } catch {
     // stream already consumed
   }
+
+  options?.onStreamComplete?.({ ttftMs })
 
   return acc
 }

@@ -3,11 +3,14 @@ import { runtimeKeysFromEnv } from "@/lib/agent/llm-utils"
 import type { AgentExecutorDeps, AgentExecutorHooks } from "@/lib/agent/executor-types"
 import type { PeerReviewCheckpointData } from "@/lib/agent/peer-review-checkpoint"
 import type { ActiveProviderConfig, ChatHistoryEntry } from "@/lib/agent/planner"
+import { createTokenUsageRecorder } from "@/lib/billing/token-audit"
 
 export type AgentRunInput = {
+  userId?: string
   userInput: string
   activeProvider: ActiveProviderConfig
   jobId?: string
+  interventionSessionId?: string
   peerReviewCheckpoint?: PeerReviewCheckpointData | null
   onPeerReviewCheckpoint?: AgentExecutorDeps["onPeerReviewCheckpoint"]
   chatHistory?: ChatHistoryEntry[]
@@ -39,11 +42,17 @@ export async function runAgentOnServer(
 ) {
   const envKeys = runtimeKeysFromEnv()
   const runtimeKeys = mergeRuntimeKeysForServer(input.runtimeKeys, envKeys)
+  const billingRecorder = input.userId ? createTokenUsageRecorder(input.userId, input.jobId) : null
 
   const executor = new AgentExecutor(
     {
+      userId: input.userId,
       activeProvider: input.activeProvider,
       jobId: input.jobId,
+      recordTokenUsage: billingRecorder
+        ? (payload) => billingRecorder.record(payload)
+        : undefined,
+      interventionSessionId: input.interventionSessionId ?? input.jobId,
       peerReviewCheckpoint: input.peerReviewCheckpoint,
       onPeerReviewCheckpoint: input.onPeerReviewCheckpoint,
       inference: input.inference,

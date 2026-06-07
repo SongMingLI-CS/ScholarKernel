@@ -21,6 +21,8 @@ model User {
   conversations Conversation[]
   settings      UserSetting?
   agentJobs     AgentJob[]
+  billing       UserBilling?
+  tokenAuditLogs TokenAuditLog[]
 }
 
 model Account {
@@ -129,4 +131,31 @@ model AgentJob {
   updatedAt    DateTime       @updatedAt
 
   @@index([userId, status, updatedAt])
+}
+
+// --- Billing models ---
+
+model UserBilling {
+  userId     String   @id
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  totalSpent Float    @default(0)
+  tokenQuota Int      @default(500000)
+  tokenUsed  Int      @default(0)
+  updatedAt  DateTime @updatedAt
+}
+
+model TokenAuditLog {
+  id             String   @id @default(cuid())
+  userId         String
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  jobId          String?
+  modelUsed      String
+  inputTokens    Int      @default(0)
+  outputTokens   Int      @default(0)
+  calculatedCost Float    @default(0)
+  ttftMs         Int?
+  createdAt      DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@index([userId, jobId])
 }
