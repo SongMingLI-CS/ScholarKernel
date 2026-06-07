@@ -6,6 +6,7 @@ import {
   filterExportableMessages,
   isInternalExportNoise,
 } from "@/lib/export-utils"
+import { buildExportMetadata } from "@/lib/export-metadata"
 import type { ChatMessage } from "@/store/useAgentStore"
 
 const planJson = JSON.stringify({
@@ -26,14 +27,27 @@ describe("conversation export", () => {
   })
 
   it("builds print html with user and assistant sections", () => {
-    const html = buildConversationPrintHtml("测试对话", [
-      { id: "u1", role: "user", content: "你好" },
-      { id: "a1", role: "assistant", content: "**加粗**回复" },
-    ])
+    const meta = buildExportMetadata({
+      lang: "zh",
+      activeProvider: { providerId: "deepseek_openai_compat", model: "deepseek-reasoner" },
+      retrievalAt: "2026-06-07T08:00:00.000Z",
+      exportedAt: "2026-06-07T09:00:00.000Z",
+    })
+    const html = buildConversationPrintHtml(
+      "测试对话",
+      [
+        { id: "u1", role: "user", content: "你好" },
+        { id: "a1", role: "assistant", content: "**加粗**回复" },
+      ],
+      meta,
+      "zh"
+    )
     expect(html).toContain("测试对话")
     expect(html).toContain("msg-user")
     expect(html).toContain("msg-assistant")
     expect(html).toContain("<strong>加粗</strong>")
+    expect(html).toContain("deepseek-reasoner")
+    expect(html).toContain("检索日期")
   })
 
   it("exports conversation as docx blob", async () => {

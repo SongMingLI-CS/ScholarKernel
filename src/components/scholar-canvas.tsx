@@ -10,6 +10,7 @@ import { WelcomeEmptyState } from "@/components/welcome-empty-state"
 import { Button } from "@/components/ui/button"
 import { downloadMarkdownAsDocx } from "@/lib/export-utils"
 import { downloadTextFile, sanitizeExportFilename } from "@/lib/conversation-utils"
+import { gatherExportMetadataFromStore, prependExportMetadata } from "@/lib/export-metadata"
 import { useMediaQuery } from "@/hooks/use-media-query"
 import { useT } from "@/lib/locales"
 import { cn } from "@/lib/utils"
@@ -28,17 +29,37 @@ export const ScholarCanvas = memo(function ScholarCanvas({
   const updateCanvasContent = useAgentStore((s) => s.actions.updateCanvasContent)
   const [exporting, setExporting] = useState(false)
 
+  const buildCanvasExportMeta = useCallback(() => {
+    const st = useAgentStore.getState()
+    return gatherExportMetadataFromStore(
+      {
+        providers: st.providers,
+        inference: st.inference,
+        workflow: st.workflow,
+        chat: st.chat,
+        canvas: st.canvas,
+        settings: st.settings,
+      },
+      { documentUpdatedAt: doc?.updatedAt ?? null }
+    )
+  }, [doc?.updatedAt])
+
   const onExportMd = useCallback(() => {
     if (!doc?.content.trim()) return
-    downloadTextFile(sanitizeExportFilename(doc.title), doc.content)
-  }, [doc])
+    const st = useAgentStore.getState()
+    const meta = buildCanvasExportMeta()
+    const md = prependExportMetadata(doc.content, meta, st.settings.lang)
+    downloadTextFile(sanitizeExportFilename(doc.title), md)
+  }, [buildCanvasExportMeta, doc])
 
   const onExportDoc = useCallback(async () => {
     if (!doc?.content.trim()) return
     setExporting(true)
     try {
+      const st = useAgentStore.getState()
+      const meta = buildCanvasExportMeta()
       const base = sanitizeExportFilename(doc.title).replace(/\.md$/i, "")
-      await downloadMarkdownAsDocx(`${base}.docx`, doc.title, doc.content)
+      await downloadMarkdownAsDocx(`${base}.docx`, doc.title, doc.content, meta, st.settings.lang)
     } catch (e) {
       console.error("[canvas export docx]", e)
     } finally {

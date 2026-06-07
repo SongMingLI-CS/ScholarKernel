@@ -1,5 +1,8 @@
 import type { ConversationSummary } from "@/lib/db-types"
+import type { ExportMetadata } from "@/lib/export-metadata"
+import { buildExportMetadataMarkdown } from "@/lib/export-metadata"
 import type { ChatMessage } from "@/store/useAgentStore"
+import type { Lang } from "@/store/types"
 
 const ROLE_LABEL: Record<ChatMessage["role"], string> = {
   user: "用户",
@@ -7,8 +10,14 @@ const ROLE_LABEL: Record<ChatMessage["role"], string> = {
   system: "系统",
 }
 
-export function formatConversationAsMarkdown(title: string, messages: ChatMessage[]): string {
-  const lines: string[] = [`# ${title.trim() || "对话"}`, "", `> 导出时间：${new Date().toISOString()}`, ""]
+export function formatConversationAsMarkdown(
+  title: string,
+  messages: ChatMessage[],
+  meta?: ExportMetadata,
+  lang: Lang = "zh"
+): string {
+  const headerMeta = meta ? buildExportMetadataMarkdown(meta, lang) : ""
+  const lines: string[] = [`# ${title.trim() || "对话"}`, "", ...headerMeta.split("\n").filter((l) => l.length > 0), ""]
 
   for (const m of messages) {
     if (m.role === "system" && !m.content.trim()) continue

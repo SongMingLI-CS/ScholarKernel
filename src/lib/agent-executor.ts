@@ -722,6 +722,7 @@ export class AgentExecutor {
                 total: 0,
                 searchStatus: out.status === "failed" ? "failed" : "empty",
                 durationMs: Math.round(performance.now() - nodeStartedAt),
+                searchCompletedAt: new Date().toISOString(),
               },
             })
             results.push({
@@ -742,7 +743,12 @@ export class AgentExecutor {
           this.hooks.onNodePatch?.(n.id, {
             status: "done",
             output: { provider: out.provider, query: out.query, academicOnly: out.academicOnly, total: out.total },
-            metadata: { kind: "search", total: out.total, durationMs: Math.round(performance.now() - nodeStartedAt) },
+            metadata: {
+              kind: "search",
+              total: out.total,
+              durationMs: Math.round(performance.now() - nodeStartedAt),
+              searchCompletedAt: new Date().toISOString(),
+            },
           })
           results.push({ id: n.id, ok: true, summary: `完成学术检索（${out.total} 条）`, output: out })
           continue

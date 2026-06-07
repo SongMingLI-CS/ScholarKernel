@@ -24,6 +24,7 @@ import {
   sanitizeExportFilename,
 } from "@/lib/conversation-utils"
 import { collectSourcesFromMessages, exportSourcesAsBibTeX, exportSourcesAsRIS } from "@/lib/citation-export"
+import { gatherExportMetadataFromStore } from "@/lib/export-metadata"
 import { downloadConversationAsDocx, downloadConversationAsPdf } from "@/lib/export-utils"
 import { formatFileAttachmentBlock, readBrowserFileAsText } from "@/lib/browser-file"
 import { connKey, looksLikeWorkflowPlanJson } from "@/lib/chat-bubble-utils"
@@ -340,7 +341,15 @@ const ChatPanelInner = memo(function ChatPanelInner() {
     }
     const conv = st.conversations.items.find((c) => c.id === st.conversations.currentId)
     const title = conv?.title ?? t("chat.defaultTitle")
-    const md = formatConversationAsMarkdown(title, exportable)
+    const meta = gatherExportMetadataFromStore({
+      providers: st.providers,
+      inference: st.inference,
+      workflow: st.workflow,
+      chat: st.chat,
+      canvas: st.canvas,
+      settings: st.settings,
+    })
+    const md = formatConversationAsMarkdown(title, exportable, meta, st.settings.lang)
     downloadTextFile(sanitizeExportFilename(title), md)
     pushToast({ messageKey: "chat.export.done", variant: "success", ttlMs: 2400 })
   }, [pushToast, t])
@@ -375,18 +384,26 @@ const ChatPanelInner = memo(function ChatPanelInner() {
     const conv = st.conversations.items.find((c) => c.id === st.conversations.currentId)
     const title = conv?.title ?? t("chat.defaultTitle")
     const base = sanitizeExportFilename(title).replace(/\.md$/, "")
-    return { exportable, title, base }
+    const meta = gatherExportMetadataFromStore({
+      providers: st.providers,
+      inference: st.inference,
+      workflow: st.workflow,
+      chat: st.chat,
+      canvas: st.canvas,
+      settings: st.settings,
+    })
+    return { exportable, title, base, meta, lang: st.settings.lang }
   }, [t])
 
   const onExportWord = useCallback(async () => {
-    const { exportable, title, base } = getExportContext()
+    const { exportable, title, base, meta, lang } = getExportContext()
     if (exportable.length === 0) {
       pushToast({ messageKey: "chat.export.empty", variant: "error", ttlMs: 3200 })
       return
     }
     setExportBusy("word")
     try {
-      await downloadConversationAsDocx(`${base}.docx`, title, exportable)
+      await downloadConversationAsDocx(`${base}.docx`, title, exportable, meta, lang)
       pushToast({ messageKey: "chat.export.word.done", variant: "success", ttlMs: 2400 })
     } catch (e) {
       console.error("[export word]", e)
@@ -397,14 +414,14 @@ const ChatPanelInner = memo(function ChatPanelInner() {
   }, [getExportContext, pushToast])
 
   const onExportPdf = useCallback(async () => {
-    const { exportable, title, base } = getExportContext()
+    const { exportable, title, base, meta, lang } = getExportContext()
     if (exportable.length === 0) {
       pushToast({ messageKey: "chat.export.empty", variant: "error", ttlMs: 3200 })
       return
     }
     setExportBusy("pdf")
     try {
-      await downloadConversationAsPdf(`${base}.pdf`, title, exportable)
+      await downloadConversationAsPdf(`${base}.pdf`, title, exportable, meta, lang)
       pushToast({ messageKey: "chat.export.pdf.done", variant: "success", ttlMs: 2400 })
     } catch (e) {
       console.error("[export pdf]", e)

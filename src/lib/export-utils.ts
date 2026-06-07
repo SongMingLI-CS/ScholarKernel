@@ -13,8 +13,11 @@ import {
 
 import { looksLikeWorkflowPlanJson } from "@/lib/chat-bubble-utils"
 import { formatConversationAsMarkdown } from "@/lib/conversation-utils"
+import type { ExportMetadata } from "@/lib/export-metadata"
+import { buildExportMetadataHtml, prependExportMetadata } from "@/lib/export-metadata"
 import { markdownToHtml } from "@/lib/markdown-bridge"
 import type { ChatMessage } from "@/store/useAgentStore"
+import type { Lang } from "@/store/types"
 
 type InlinePart = { text: string; bold?: boolean; italic?: boolean }
 
@@ -107,8 +110,14 @@ function headingLevel(depth: number): (typeof HeadingLevel)[keyof typeof Heading
 }
 
 /** Convert Markdown to a native Word (.docx) blob. */
-export async function exportMarkdownAsDocx(title: string, markdown: string): Promise<Blob> {
-  const lines = markdown.replace(/\r\n/g, "\n").split("\n")
+export async function exportMarkdownAsDocx(
+  title: string,
+  markdown: string,
+  meta?: ExportMetadata,
+  lang: Lang = "zh"
+): Promise<Blob> {
+  const md = meta ? prependExportMetadata(markdown, meta, lang) : markdown
+  const lines = md.replace(/\r\n/g, "\n").split("\n")
   const children: Array<Paragraph | Table> = []
 
   children.push(
@@ -171,8 +180,14 @@ export async function exportMarkdownAsDocx(title: string, markdown: string): Pro
 }
 
 /** Trigger browser download of a Word document generated from Markdown. */
-export async function downloadMarkdownAsDocx(filename: string, title: string, markdown: string) {
-  const blob = await exportMarkdownAsDocx(title, markdown)
+export async function downloadMarkdownAsDocx(
+  filename: string,
+  title: string,
+  markdown: string,
+  meta?: ExportMetadata,
+  lang: Lang = "zh"
+) {
+  const blob = await exportMarkdownAsDocx(title, markdown, meta, lang)
   const url = URL.createObjectURL(blob)
   const a = document.createElement("a")
   a.href = url
@@ -208,14 +223,25 @@ export function filterExportableMessages(messages: ChatMessage[]): ChatMessage[]
 }
 
 /** Export a conversation transcript as a native Word (.docx) blob. */
-export async function exportConversationAsDocx(title: string, messages: ChatMessage[]): Promise<Blob> {
+export async function exportConversationAsDocx(
+  title: string,
+  messages: ChatMessage[],
+  meta?: ExportMetadata,
+  lang: Lang = "zh"
+): Promise<Blob> {
   const filtered = filterExportableMessages(messages)
-  const md = formatConversationAsMarkdown(title, filtered)
+  const md = formatConversationAsMarkdown(title, filtered, meta, lang)
   return exportMarkdownAsDocx(title, md)
 }
 
-export async function downloadConversationAsDocx(filename: string, title: string, messages: ChatMessage[]) {
-  const blob = await exportConversationAsDocx(title, messages)
+export async function downloadConversationAsDocx(
+  filename: string,
+  title: string,
+  messages: ChatMessage[],
+  meta?: ExportMetadata,
+  lang: Lang = "zh"
+) {
+  const blob = await exportConversationAsDocx(title, messages, meta, lang)
   const url = URL.createObjectURL(blob)
   const a = document.createElement("a")
   a.href = url
@@ -235,9 +261,14 @@ function escapeHtml(text: string): string {
 }
 
 /** Build print-ready HTML for PDF export (messages only, no chrome). */
-export function buildConversationPrintHtml(title: string, messages: ChatMessage[]): string {
+export function buildConversationPrintHtml(
+  title: string,
+  messages: ChatMessage[],
+  meta?: ExportMetadata,
+  lang: Lang = "zh"
+): string {
   const filtered = filterExportableMessages(messages)
-  const exportedAt = new Date().toISOString()
+  const metaHtml = meta ? buildExportMetadataHtml(meta, lang) : ""
   const sections = filtered
     .map((m) => {
       const role = EXPORT_ROLE_LABEL[m.role]
@@ -271,20 +302,26 @@ export function buildConversationPrintHtml(title: string, messages: ChatMessage[
   .sources a { color: #2563eb; text-decoration: none; }
 </style></head><body>
 <h1>${escapeHtml(title.trim() || "对话")}</h1>
-<p class="meta">Exported ${escapeHtml(exportedAt)}</p>
+${metaHtml}
 ${sections}
 </body></html>`
 }
 
 /** Render conversation messages to a downloadable A4 PDF via html2pdf.js. */
-export async function downloadConversationAsPdf(filename: string, title: string, messages: ChatMessage[]) {
+export async function downloadConversationAsPdf(
+  filename: string,
+  title: string,
+  messages: ChatMessage[],
+  meta?: ExportMetadata,
+  lang: Lang = "zh"
+) {
   if (typeof document === "undefined") return
 
   const host = document.createElement("div")
   host.className = "sk-pdf-export-host"
   host.style.cssText =
     "position:fixed;left:-10000px;top:0;width:794px;max-width:794px;background:#fff;color:#111;padding:32px 40px;z-index:-1"
-  host.innerHTML = buildConversationPrintHtml(title, messages)
+  host.innerHTML = buildConversationPrintHtml(title, messages, meta, lang)
   document.body.appendChild(host)
 
   try {
