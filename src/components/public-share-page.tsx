@@ -54,7 +54,8 @@ export const PublicSharePageClient = memo(function PublicSharePageClient({ token
   }, [token])
 
   useEffect(() => {
-    void load()
+    const frame = window.requestAnimationFrame(() => void load())
+    return () => window.cancelAnimationFrame(frame)
   }, [load])
 
   if (loading) {

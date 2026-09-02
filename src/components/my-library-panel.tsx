@@ -113,7 +113,8 @@ export const MyLibraryPanel = memo(function MyLibraryPanel() {
   }, [pushToast])
 
   useEffect(() => {
-    void reload()
+    const frame = window.requestAnimationFrame(() => void reload())
+    return () => window.cancelAnimationFrame(frame)
   }, [reload])
 
   const customFolders = useMemo(() => collectLibraryFolders(docs), [docs])

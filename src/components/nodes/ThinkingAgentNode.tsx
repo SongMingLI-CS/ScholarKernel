@@ -69,7 +69,9 @@ function ThinkingTerminal({
   const hasThinking = thinkingText.length > 0
 
   useEffect(() => {
-    if (hasThinking && isStreaming) setExpanded(true)
+    if (!hasThinking || !isStreaming) return
+    const frame = window.requestAnimationFrame(() => setExpanded(true))
+    return () => window.cancelAnimationFrame(frame)
   }, [hasThinking, isStreaming])
 
   useEffect(() => {
