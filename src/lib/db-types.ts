@@ -35,6 +35,7 @@ export type MessageMetadata = {
 /** Full conversation with messages for chat panel hydration */
 export type ConversationDetail = ConversationSummary & {
   messages: Array<Omit<PrismaMessage, "createdAt"> & { createdAt: string }>
+  canvasDocuments: ScholarDocument[]
   messagesNextCursor?: string | null
   messagesHasMore?: boolean
 }
@@ -81,6 +82,15 @@ export type CreateDocumentBody = {
 export type PatchDocumentBody = {
   title?: string
   content?: string
+}
+
+export function selectLatestCanvasDocument(
+  documents: ScholarDocument[] | null | undefined
+): ScholarDocument | null {
+  if (!documents?.length) return null
+  return [...documents].sort(
+    (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
+  )[0] ?? null
 }
 
 function parseMessageMetadata(raw: unknown): MessageMetadata {

@@ -36,6 +36,9 @@ export async function GET(req: Request, ctx: RouteCtx) {
     const conversation = await prisma.conversation.findFirst({
       where: { id, ...conversationOwnerWhere(userId) },
       include: {
+        canvasDocuments: {
+          orderBy: { updatedAt: "desc" },
+        },
         messages: paginateMessages
           ? {
               orderBy: { createdAt: "asc" },

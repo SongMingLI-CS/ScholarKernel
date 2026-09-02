@@ -15,7 +15,7 @@ Last updated: 2026-09-02
 - [x] Phase 1: server Agent SSE mainline
 - [x] Phase 2: frontend SSE state restoration
 - [x] Phase 3: object storage Library
-- [ ] Phase 4: Canvas recovery
+- [x] Phase 4: Canvas recovery
 - [ ] Phase 5: chunked retrieval RAG
 - [ ] Phase 6: unified execution semantics
 - [ ] Phase 7: transparent source/degradation status
@@ -57,6 +57,13 @@ Last updated: 2026-09-02
 - Existing `file://` records retain read/delete compatibility for a non-destructive migration window.
 - Upload failure removes the temporary `Document` row; missing Blob configuration returns HTTP 503 with an actionable message.
 - Relevant tests: 18 storage, upload-route, Library, and academic-RAG tests passed.
+
+### Phase 4
+
+- Conversation detail responses now include owned Canvas documents ordered by most recent update.
+- Conversation switching selects the latest Canvas document, restores it into Zustand, and opens the Canvas workspace.
+- Empty conversations continue with a closed Canvas.
+- Relevant tests: 13 conversation, Canvas recovery, create, and update tests passed.
 
 ## External blockers
 

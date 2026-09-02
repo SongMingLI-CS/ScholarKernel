@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
-import { DELETE, PATCH } from "../route"
+import { DELETE, GET, PATCH } from "../route"
 
 const { findFirst, update, deleteFn } = vi.hoisted(() => ({
   findFirst: vi.fn(),
@@ -24,6 +24,45 @@ vi.mock("@/lib/prisma", () => ({
 }))
 
 const ctx = { params: Promise.resolve({ id: "conv-1" }) }
+
+describe("GET /api/conversations/[id]", () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it("returns Canvas documents newest first for workspace recovery", async () => {
+    findFirst.mockResolvedValueOnce({
+      id: "conv-1",
+      userId: "user-test",
+      title: "Research",
+      isPinned: false,
+      createdAt: new Date("2026-01-01"),
+      updatedAt: new Date("2026-01-03"),
+      messages: [],
+      canvasDocuments: [
+        {
+          id: "canvas-new",
+          conversationId: "conv-1",
+          title: "Latest",
+          content: "body",
+          version: 2,
+          createdAt: new Date("2026-01-02"),
+          updatedAt: new Date("2026-01-03"),
+        },
+      ],
+    })
+
+    const res = await GET(new Request("http://localhost/api/conversations/conv-1"), ctx)
+    expect(res.status).toBe(200)
+    const json = await res.json()
+    expect(json.canvasDocuments[0]).toMatchObject({ id: "canvas-new", title: "Latest" })
+    expect(findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        include: expect.objectContaining({
+          canvasDocuments: expect.objectContaining({ orderBy: { updatedAt: "desc" } }),
+        }),
+      })
+    )
+  })
+})
 
 describe("PATCH /api/conversations/[id]", () => {
   beforeEach(() => {

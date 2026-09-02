@@ -1,7 +1,7 @@
 import { create } from "zustand"
 import { persist, subscribeWithSelector } from "zustand/middleware"
 
-import type { ConversationSummary, ScholarDocument } from "@/lib/db-types"
+import { selectLatestCanvasDocument, type ConversationSummary, type ScholarDocument } from "@/lib/db-types"
 import { stripRedactedThinking } from "@/lib/r1-stream-parser"
 import { prismaMessageToChat, chatMessageToCreateBody } from "@/lib/db-types"
 import {
@@ -1050,11 +1050,13 @@ export const useAgentStore = create<AgentStore>()(
           try {
             const detail = await fetchConversation(id)
             const messages = detail.messages.map(prismaMessageToChat)
+            const latestCanvas = selectLatestCanvasDocument(detail.canvasDocuments)
             set((s) => ({
               ...s,
               chat: { messages, attachedReferences: [], selectedLibraryDocuments: [] },
               conversations: { ...s.conversations, currentId: id, loading: false },
               topology: buildTopologyForActiveProvider(s.providers.active),
+              canvas: { activeDocument: latestCanvas, canvasOpen: latestCanvas != null },
             }))
           } catch (e) {
             console.error("[switchConversation]", e)
