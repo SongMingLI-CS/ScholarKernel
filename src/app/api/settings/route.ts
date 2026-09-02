@@ -56,10 +56,13 @@ function toSettingsResponse(row: {
   runtimeKeys: string | null
   updatedAt: Date
 }): SettingsResponse {
+  const keys = decryptRuntimeKeys(row.runtimeKeys)
   return {
     userId: row.userId,
     theme: row.theme === "light" ? "light" : "dark",
-    runtimeKeys: decryptRuntimeKeys(row.runtimeKeys),
+    runtimeKeyStatus: Object.fromEntries(
+      RUNTIME_KEY_FIELDS.map((field) => [field, Boolean(keys?.[field]?.trim())])
+    ) as SettingsResponse["runtimeKeyStatus"],
     updatedAt: row.updatedAt.toISOString(),
   }
 }

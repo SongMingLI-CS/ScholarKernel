@@ -42,7 +42,7 @@ export type ConversationDetail = ConversationSummary & {
 export type SettingsResponse = {
   userId: string
   theme: ThemeMode
-  runtimeKeys: RuntimeKeys | null
+  runtimeKeyStatus: Record<import("@/store/types").RuntimeKeyField, boolean>
   updatedAt: string
 }
 

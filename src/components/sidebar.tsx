@@ -238,7 +238,7 @@ export const Sidebar = memo(function Sidebar({ onNavigate }: { onNavigate?: () =
   const conversations = useAgentStore((s) => s.conversations.items)
   const currentConversationId = useAgentStore((s) => s.conversations.currentId)
   const conversationsLoading = useAgentStore((s) => s.conversations.loading)
-  const runtimeKeys = useAgentStore((s) => s.runtimeKeys)
+  const configuredKeys = useAgentStore((s) => s.keys.configured)
   const {
     initializeCloud,
     createConversation,
@@ -293,7 +293,7 @@ export const Sidebar = memo(function Sidebar({ onNavigate }: { onNavigate?: () =
     return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })
   }, [mounted, now])
 
-  const cryptoReady = mounted && runtimeKeys != null
+  const cryptoReady = mounted && Object.values(configuredKeys).some(Boolean)
 
   const filteredConversations = useMemo(
     () => filterConversationsByQuery(conversations, searchQuery),

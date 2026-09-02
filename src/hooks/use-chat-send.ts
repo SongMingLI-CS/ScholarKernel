@@ -2,14 +2,9 @@
 
 import { useCallback, useEffect, useRef, useState, type MutableRefObject } from "react"
 import { type ProviderConfig } from "@/lib/ai-gateway"
-import {
-  buildChatHistoryForExecutor,
-} from "@/lib/agent/llm-utils"
-import { loadAgentExecutor } from "@/lib/agent-executor-loader"
-import {
-  WorkflowPlanParseError,
-  type ActiveProviderId,
-} from "@/lib/agent/planner"
+import { buildChatHistoryForExecutor } from "@/lib/agent/llm-utils"
+import { AgentStreamError, streamAgentRun } from "@/lib/agent-stream-client"
+import { applyAgentStreamEvent } from "@/lib/agent-stream-event-handler"
 import {
   bubbleAfterPlanIntercept,
   connKey,
@@ -19,14 +14,10 @@ import {
 import { findLastRegenerablePair } from "@/lib/conversation-utils"
 import { useT } from "@/lib/locales"
 import type { LocaleKey } from "@/lib/locales"
-import { isLikelyCorsBlocked } from "@/lib/network-errors"
 import { isAbortError } from "@/lib/run-abort"
 import { formatUserFacingErrorMessage } from "@/lib/user-facing-errors"
 import { isApiUnauthorizedError, isApiRateLimitError, isHttp429Error } from "@/lib/conversation-api"
-import { fetchLibraryContext } from "@/lib/library-api"
-import { buildAgentRunPayload } from "@/lib/my-library"
 import { formatReferencesContextBlock } from "@/lib/utils/citation-parser"
-import { stripRedactedThinking } from "@/lib/r1-stream-parser"
 import { buildTopologyForActiveProvider, useAgentStore } from "@/store/useAgentStore"
 
 const OLLAMA_DEFAULT = { providerId: "ollama" as const, model: "llama3.1", baseUrl: "http://localhost:11434" }
@@ -50,7 +41,6 @@ export function useChatSend({
 }: UseChatSendOptions) {
   const t = useT()
   const provider = useAgentStore((s) => s.providers.active)
-  const runtimeKeys = useAgentStore((s) => s.runtimeKeys)
   const connectivity = useAgentStore((s) => s.connectivity)
   const pushToast = useAgentStore((s) => s.actions.pushToast)
   const setChatMessages = useAgentStore((s) => s.actions.setChatMessages)
@@ -124,7 +114,6 @@ export function useChatSend({
       const sendText = citationPrefix ? `${citationPrefix}${rawInput}` : rawInput
       const librarySelection = st0.chat.selectedLibraryDocuments
       const documentIds = librarySelection.map((d) => d.id)
-      const agentPayload = buildAgentRunPayload(sendText, documentIds)
 
       const localOnly = st0.settings.behavior.localOnly
       if (localOnly && provider.providerId !== "ollama") {
@@ -199,15 +188,6 @@ export function useChatSend({
         activeRunIdRef.current = null
       }
 
-      const effectiveKeys = runtimeKeys
-      const needKey = !localOnly && sendProvider.providerId !== "ollama"
-      if (needKey && !useAgentStore.getState().actions.hasRuntimeKeyForProvider(sendProvider.providerId)) {
-        rollbackOptimisticSend()
-        useAgentStore.getState().actions.pushToast({ messageKey: "gateway.toast.missingKey", variant: "error", ttlMs: 5200 })
-        useAgentStore.getState().actions.setActivePanel("keys")
-        return
-      }
-
       const k = connKey(sendProvider.providerId, sendProvider.baseUrl, sendProvider.model)
       const conn = connectivity[k]
       if (conn?.health === "offline") {
@@ -245,169 +225,75 @@ export function useChatSend({
       let errMsg: string | undefined
 
       const runOnce = async (p: ProviderConfig, agentUserInput: string, planOpts?: { planRetryMessage?: string }) => {
-        let libraryContext = ""
-        if (agentPayload.documentIds?.length) {
-          try {
-            const resolved = await fetchLibraryContext(agentPayload.documentIds)
-            libraryContext = resolved.context
-          } catch (e) {
-            console.error("[library context]", e)
-          }
-        }
-
-        const { AgentExecutor } = await loadAgentExecutor()
-        const executor = new AgentExecutor(
+        useAgentStore.getState().actions.patchTopologyNodes({ edge: "done", route: "running", cloud: "idle", sink: "idle" })
+        return streamAgentRun(
           {
-            activeProvider: { providerId: p.providerId as ActiveProviderId, model: p.model, baseUrl: p.baseUrl },
-            interventionSessionId: runId,
-            documentIds: agentPayload.documentIds,
-            libraryContext,
-            inference: {
-              temperature: useAgentStore.getState().settings.inference.temperature,
-              maxTokens: useAgentStore.getState().settings.inference.maxTokens,
-              contextLimit: useAgentStore.getState().settings.inference.contextLimit,
-            },
-            runtimeKeys: {
-              openai: effectiveKeys?.openai,
-              anthropic: effectiveKeys?.anthropic,
-              google: effectiveKeys?.google,
-              deepseek: effectiveKeys?.deepseek,
-              tavily: effectiveKeys?.tavily,
-              serper: effectiveKeys?.serper,
-            },
-            getRuntimeKeys: () => useAgentStore.getState().actions.getRuntimeKeys(),
-            search: {
-              tavilyApiKey: runtimeKeys?.tavily,
-              serperApiKey: runtimeKeys?.serper,
-            },
-            sourceApiBase: typeof window !== "undefined" ? window.location.origin : undefined,
-            signal: ctrl.signal,
+            runId,
+            userInput: agentUserInput,
+            provider: { providerId: p.providerId, model: p.model, baseUrl: p.baseUrl },
+            documentIds,
+            chatHistory: buildChatHistoryForExecutor(useAgentStore.getState().chat.messages),
+            inference: useAgentStore.getState().settings.inference,
             localOnly: localOnly || undefined,
-            getChatHistory: () => buildChatHistoryForExecutor(useAgentStore.getState().chat.messages),
+            planRetryMessage: planOpts?.planRetryMessage,
           },
           {
-            onWorkflowPlanned: (nodes) => {
+            signal: ctrl.signal,
+            onEvent: (event) => {
               const store = useAgentStore.getState()
-              store.actions.setWorkflowNodes(
-                nodes.map((n) => ({
-                  id: n.id,
-                  type: n.type,
-                  provider: n.provider,
-                  status: n.status,
-                  title: n.title ?? `${n.type}`,
-                  logs: [],
-                  metadata: n.metadata,
-                }))
-              )
-            },
-            onNodePatch: (id, patch) => {
-              const store = useAgentStore.getState()
-              const cur = store.workflow.nodes.find((n) => n.id === id)
-              const nextStatus = patch.status ?? cur?.status ?? "pending"
-              store.actions.patchWorkflowNode(id, {
-                status: nextStatus,
-                output: patch.output,
-                metadata: patch.metadata,
-                error: patch.error,
+              applyAgentStreamEvent(event, {
+                onHello: () =>
+                  store.actions.patchTopologyNodes({ edge: "done", route: "done", cloud: "running", sink: "idle" }),
+                onPlan: (nodes) => {
+                  setTopologyOpen(true)
+                  store.actions.setWorkflowNodes(
+                    nodes.map((node) => ({ ...node, title: node.title ?? node.type, logs: node.logs ?? [] }))
+                  )
+                },
+                onNode: (nodeId, patch) => {
+                  const cur = store.workflow.nodes.find((node) => node.id === nodeId)
+                  store.actions.patchWorkflowNode(nodeId, {
+                    status: patch.status ?? cur?.status ?? "pending",
+                    output: patch.output,
+                    metadata: patch.metadata,
+                    error: patch.error,
+                  })
+                },
+                onLog: (nodeId, line) => store.actions.appendNodeLog(nodeId, line),
+                onToken: (token) => {
+                  const current = store.inference.streaming
+                  const aid = current?.assistantMessageId
+                  if (!current?.active || current.runId !== runId || !aid) return
+                  const displayText = bubbleAfterPlanIntercept(token.text, store.settings.lang)
+                  const previousLength = streamAssistantTextLenRef.current
+                  const charsDelta = Math.max(0, displayText.length - previousLength)
+                  streamAssistantTextLenRef.current = displayText.length
+                  store.actions.patchChatMessage(aid, { content: displayText })
+                  store.actions.tickInferenceStream({
+                    runId,
+                    now: performance.now(),
+                    charsDelta,
+                    firstToken: displayText.length > 0 && current.firstTokenAt == null,
+                  })
+                },
+                onCanvas: (canvas) => store.actions.applyScholarCanvasStream(canvas),
+                onSources: (sources) => {
+                  const aid = store.inference.streaming?.assistantMessageId
+                  if (aid && sources.length) store.actions.patchChatMessage(aid, { sources })
+                },
+                onUsage: (usage) =>
+                  store.actions.patchActiveInferenceStream({
+                    runId,
+                    patch: { inputTokens: usage.inputTokens, outputTokens: usage.outputTokens },
+                  }),
+                onIntervention: (intervention) => store.actions.setInterventionPending(intervention),
+                onError: (streamError) => {
+                  if (streamError.code === "PlanHttpError") setPlanHttpTerminalError(streamError.message)
+                },
               })
-
-              if (store.inference.streaming?.active && store.inference.streaming.assistantMessageId) {
-                const node = store.workflow.nodes.find((n) => n.id === id) ?? cur
-                if (node?.type !== "reasoning") return
-                const out = patch.output ?? node.output
-                const rec = out && typeof out === "object" ? (out as Record<string, unknown>) : null
-                const rawTxt =
-                  typeof rec?.["finalResponse"] === "string"
-                    ? String(rec["finalResponse"])
-                    : typeof rec?.["text"] === "string"
-                      ? String(rec["text"])
-                      : null
-                if (rawTxt == null) return
-                const txt = stripRedactedThinking(rawTxt)
-                const lang = store.settings.lang
-                const displayTxt = bubbleAfterPlanIntercept(txt, lang)
-                const prevLen = streamAssistantTextLenRef.current
-                const delta = Math.max(0, displayTxt.length - prevLen)
-                streamAssistantTextLenRef.current = displayTxt.length
-                store.actions.patchChatMessage(store.inference.streaming.assistantMessageId, { content: displayTxt })
-                store.actions.tickInferenceStream({
-                  runId: store.inference.streaming.runId,
-                  now: performance.now(),
-                  charsDelta: delta,
-                  firstToken: displayTxt.length > 0 && store.inference.streaming.firstTokenAt == null,
-                })
-              }
-            },
-            onNodeLog: (id, line) => {
-              useAgentStore.getState().actions.appendNodeLog(id, line)
-            },
-            onProgress: (payload) => {
-              useAgentStore.getState().actions.applyNodeProgress(payload)
-            },
-            onInterventionPending: (event) => {
-              useAgentStore.getState().actions.setInterventionPending({
-                sessionId: event.sessionId,
-                nodeId: event.nodeId,
-                reason: event.reason,
-              })
-            },
-            onWorkflowTopologyPruned: (nodes) => {
-              useAgentStore.getState().actions.setWorkflowNodes(
-                nodes.map((n) => ({
-                  id: n.id,
-                  type: n.type,
-                  provider: n.provider,
-                  status: n.status,
-                  title: n.title ?? `${n.type}`,
-                  logs: n.logs ?? [],
-                  metadata: n.metadata,
-                  output: n.output,
-                  error: n.error,
-                }))
-              )
-            },
-            onPlanHttpError: (message) => {
-              setPlanHttpTerminalError(message)
-            },
-            onDirectChatStart: () => {
-              const store = useAgentStore.getState()
-              store.actions.patchActiveInferenceStream({ runId, patch: { directChat: true } })
-              setTopologyOpen(false)
-            },
-            onDirectChatStream: (acc) => {
-              const store = useAgentStore.getState()
-              const cur = store.inference.streaming
-              const aid = cur?.assistantMessageId
-              if (!cur?.active || cur.runId !== runId || !aid) return
-              const lang = store.settings.lang
-              const displayTxt = bubbleAfterPlanIntercept(acc, lang)
-              const prevLen = streamAssistantTextLenRef.current
-              const delta = Math.max(0, displayTxt.length - prevLen)
-              streamAssistantTextLenRef.current = displayTxt.length
-              store.actions.patchChatMessage(aid, { content: displayTxt })
-              store.actions.tickInferenceStream({
-                runId,
-                now: performance.now(),
-                charsDelta: delta,
-                firstToken: displayTxt.length > 0 && cur.firstTokenAt == null,
-              })
-            },
-            onStreamFlush: ({ reason }) => {
-              if (reason === "pre-reasoning-stream") {
-                streamAssistantTextLenRef.current = 0
-              }
-            },
-            onResearchResultsSynced: ({ sources }) => {
-              const store = useAgentStore.getState()
-              const aid = store.inference.streaming?.assistantMessageId
-              if (!aid || !sources.length) return
-              store.actions.patchChatMessage(aid, { sources })
             },
           }
         )
-
-        useAgentStore.getState().actions.patchTopologyNodes({ edge: "done", route: "running", cloud: "idle", sink: "idle" })
-        return await executor.run(agentUserInput, planOpts)
       }
 
       try {
@@ -437,9 +323,9 @@ export function useChatSend({
         console.error("[useChatSend] AgentExecutor.run failed:", e)
         const lang = useAgentStore.getState().settings.lang
         errMsg = formatUserFacingErrorMessage(e, lang)
-        if (e instanceof WorkflowPlanParseError) {
+        if (e instanceof AgentStreamError && /WorkflowPlan|InvalidJSON/i.test(e.code + e.message)) {
           errMsg = formatUserFacingErrorMessage(e, lang)
-          setRetryState({ text: rawInput, error: e.causeDetail ?? e.rawContent ?? "", kind: "replan" })
+          setRetryState({ text: rawInput, error: e.message, kind: "replan" })
           patchAssistantOnCrash(assistantId, e)
           useAgentStore.getState().actions.setWorkflowNodes([])
           useAgentStore.getState().actions.patchTopologyNodes({ edge: "done", route: "done", cloud: "done", sink: "done" })
@@ -454,7 +340,7 @@ export function useChatSend({
               ttlMs: 6200,
             })
           }
-          if (msg.includes("MissingSearchApiKey") && runtimeKeys != null) {
+          if (msg.includes("MissingSearchApiKey")) {
             useAgentStore.getState().actions.pushToast({
               messageKey: "search.toast.unauthorizedWhenLockOn",
               variant: "error",
@@ -499,13 +385,6 @@ export function useChatSend({
             }
           }
 
-          if (isLikelyCorsBlocked(e)) {
-            useAgentStore.getState().actions.openCorsHelp({
-              providerId: sendProvider.providerId,
-              baseUrl: sendProvider.baseUrl,
-              detail: msg,
-            })
-          }
           useAgentStore.getState().actions.patchTopologyNodes({ edge: "done", route: "done", cloud: "error", sink: "error" })
           patchAssistantOnCrash(assistantId, e)
         }
@@ -527,7 +406,7 @@ export function useChatSend({
         activeRunIdRef.current = null
       }
     },
-    [connectivity, followBottomRef, input, lockToBottomOnce, maybeAutoTitle, provider, runtimeKeys, setInput, setTopologyOpen, streaming]
+    [connectivity, followBottomRef, input, lockToBottomOnce, maybeAutoTitle, provider, setInput, setTopologyOpen, streaming]
   )
 
   const onRegenerate = useCallback(() => {

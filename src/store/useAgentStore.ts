@@ -35,11 +35,11 @@ import {
   scheduleSettingsSync,
 } from "@/store/provider-config"
 import {
+  RUNTIME_KEY_FIELDS,
   clearLegacySessionKeys,
   getRuntimeKeyForProvider,
   isUsableApiKey,
   mergeRuntimeKeysUpdate,
-  sanitizeRuntimeKeys,
 } from "@/store/runtime-keys"
 
 export type {
@@ -265,7 +265,7 @@ type AgentStore = {
     startInferenceStream: (input: StartInferenceStreamInput) => void
     patchActiveInferenceStream: (input: {
       runId: string
-      patch: Partial<Pick<StreamingInferenceMetrics, "directChat">>
+      patch: Partial<Pick<StreamingInferenceMetrics, "directChat" | "inputTokens" | "outputTokens">>
     }) => void
     tickInferenceStream: (input: { runId: string; now: number; charsDelta: number; firstToken: boolean }) => void
     finishInferenceStream: (input: { runId: string; now: number; ok: boolean; error?: string }) => void
@@ -463,7 +463,12 @@ export const useAgentStore = create<AgentStore>()(
           loading: false,
           cloudReady: false,
         },
-        keys: { hasMasterPassword: false, hasEncryptedKeys: false, unlocked: false },
+        keys: {
+          hasMasterPassword: false,
+          hasEncryptedKeys: false,
+          unlocked: false,
+          configured: { openai: false, anthropic: false, google: false, deepseek: false, tavily: false, serper: false },
+        },
         runtimeKeys: null,
         providers: {
           active: {
@@ -539,7 +544,11 @@ export const useAgentStore = create<AgentStore>()(
             return {
               ...s,
               runtimeKeys: null,
-              keys: { ...s.keys, unlocked: false },
+              keys: {
+                ...s.keys,
+                unlocked: false,
+                configured: { openai: false, anthropic: false, google: false, deepseek: false, tavily: false, serper: false },
+              },
             }
           }),
         clearAllLocalData: () =>
@@ -570,7 +579,13 @@ export const useAgentStore = create<AgentStore>()(
               inference: { ...s.inference, history: [] },
               workflow: { version: 1, activeNodeId: null, isPlannerOutput: false, nodes: [] },
               runtimeKeys: null,
-              keys: { ...s.keys, unlocked: false, hasEncryptedKeys: false, hasMasterPassword: false },
+              keys: {
+                ...s.keys,
+                unlocked: false,
+                hasEncryptedKeys: false,
+                hasMasterPassword: false,
+                configured: { openai: false, anthropic: false, google: false, deepseek: false, tavily: false, serper: false },
+              },
             }
           }),
         importConfig: ({ settings, providers }) =>
@@ -661,11 +676,11 @@ export const useAgentStore = create<AgentStore>()(
             ...s,
             keys: { ...s.keys, ...(typeof patch === "function" ? patch(s.keys) : patch) },
           })),
-        getRuntimeKeys: () => sanitizeRuntimeKeys(get().runtimeKeys),
+        getRuntimeKeys: () => null,
         hasRuntimeKeyForProvider: (providerId) => {
           if (providerId === "ollama") return true
-          const keys = sanitizeRuntimeKeys(get().runtimeKeys)
-          return isUsableApiKey(getRuntimeKeyForProvider(keys, providerId))
+          const field = providerId === "deepseek_openai_compat" ? "deepseek" : providerId
+          return Boolean(get().keys.configured[field])
         },
         notifyAuthFailure: (detail, status) =>
           set((s) => ({
@@ -691,17 +706,25 @@ export const useAgentStore = create<AgentStore>()(
               return {
                 ...s,
                 runtimeKeys: null,
-                keys: { ...s.keys, unlocked: false },
+                keys: {
+                  ...s.keys,
+                  unlocked: false,
+                  configured: { openai: false, anthropic: false, google: false, deepseek: false, tavily: false, serper: false },
+                },
               }
             }
             const sanitized = mergeRuntimeKeysUpdate(s.runtimeKeys, keys)
             clearLegacySessionKeys()
             scheduleSettingsSync({ runtimeKeys: sanitized ?? keys })
-            const unlocked = sanitized != null
+            const configured = { ...s.keys.configured }
+            for (const field of RUNTIME_KEY_FIELDS) {
+              if (keys[field] !== undefined) configured[field] = isUsableApiKey(keys[field])
+            }
+            const unlocked = Object.values(configured).some(Boolean)
             return {
               ...s,
-              runtimeKeys: sanitized,
-              keys: { ...s.keys, unlocked },
+              runtimeKeys: null,
+              keys: { ...s.keys, unlocked, configured },
             }
           }),
         setTopology: (t) => set((s) => ({ ...s, topology: t })),
@@ -808,8 +831,7 @@ export const useAgentStore = create<AgentStore>()(
           clearLegacySessionKeys()
           try {
             const [settings, list] = await Promise.all([fetchSettings(), fetchConversations()])
-            const cloudKeys = sanitizeRuntimeKeys(settings.runtimeKeys)
-            const unlocked = cloudKeys != null
+            const unlocked = Object.values(settings.runtimeKeyStatus).some(Boolean)
 
             if (settings.theme === "light" || settings.theme === "dark") {
               applyThemeToDom(settings.theme)
@@ -818,8 +840,8 @@ export const useAgentStore = create<AgentStore>()(
             set((s) => ({
               ...s,
               settings: { ...s.settings, theme: settings.theme ?? s.settings.theme },
-              runtimeKeys: cloudKeys,
-              keys: { ...s.keys, unlocked },
+              runtimeKeys: null,
+              keys: { ...s.keys, unlocked, configured: settings.runtimeKeyStatus },
               conversations: {
                 ...s.conversations,
                 items: list,
@@ -1374,6 +1396,8 @@ export const useAgentStore = create<AgentStore>()(
               ttftMs,
               totalMs,
               chars: cur.chars,
+              inputTokens: cur.inputTokens,
+              outputTokens: cur.outputTokens,
               ok,
               error,
             }
@@ -1665,4 +1689,3 @@ export function requireRuntimeKeyForProvider(
   if (!isUsableApiKey(key)) throw new Error("MissingApiKey")
   return key
 }
-

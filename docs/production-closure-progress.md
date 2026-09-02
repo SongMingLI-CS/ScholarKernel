@@ -13,7 +13,7 @@ Last updated: 2026-09-02
 ## Phase status
 
 - [x] Phase 1: server Agent SSE mainline
-- [ ] Phase 2: frontend SSE state restoration
+- [x] Phase 2: frontend SSE state restoration
 - [ ] Phase 3: object storage Library
 - [ ] Phase 4: Canvas recovery
 - [ ] Phase 5: chunked retrieval RAG
@@ -38,6 +38,16 @@ Last updated: 2026-09-02
 - Relevant tests: 6 protocol/route tests passed.
 - Full suite after implementation: 56 files / 293 tests passed.
 - Full lint after baseline cleanup: passed with warnings only.
+
+### Phase 2
+
+- `useChatSend` now calls `/api/agent/stream`; it no longer imports or constructs `AgentExecutor` in the default chat path.
+- The incremental stream client parses arbitrarily split SSE frames, maps HTTP auth/rate-limit failures, and requires a terminal event.
+- The frontend event adapter restores plan, nodes, logs, streamed tokens, Canvas, sources, token usage, intervention state, and stream errors.
+- Stream request serialization is allowlisted and drops legacy `runtimeKeys` even from an unsafe caller.
+- Settings GET/PATCH responses expose only per-provider configured booleans; decrypted keys are never returned to Zustand or UI.
+- Keys entered for configuration are uploaded to encrypted server storage and cleared from component state after submission.
+- Relevant tests: 12 stream/settings/event-adapter tests passed.
 
 ## External blockers
 

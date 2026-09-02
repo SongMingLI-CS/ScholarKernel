@@ -27,7 +27,7 @@ export const KeysPanel = memo(function KeysPanel() {
   const setKeyStatus = useAgentStore((s) => s.actions.setKeyStatus)
   const setRuntimeKeys = useAgentStore((s) => s.actions.setRuntimeKeys)
   const pushToast = useAgentStore((s) => s.actions.pushToast)
-  const runtimeKeys = useAgentStore((s) => s.runtimeKeys)
+  const configured = useAgentStore((s) => s.keys.configured)
 
   const [bundle, setBundle] = useState<KeyBundle>(() => ({ ...EMPTY_KEY_BUNDLE }))
   const [busy, setBusy] = useState(false)
@@ -41,36 +41,9 @@ export const KeysPanel = memo(function KeysPanel() {
     }))
   }, [setKeyStatus])
 
-  useEffect(() => {
-    if (!runtimeKeys) return
-    setBundle((prev) => {
-      let changed = false
-      const next = { ...prev }
-      for (const field of RUNTIME_KEY_FIELDS) {
-        const saved = runtimeKeys[field]
-        if (isUsableApiKey(saved) && !isUsableApiKey(prev[field])) {
-          next[field] = saved
-          changed = true
-        }
-      }
-      return changed ? next : prev
-    })
-  }, [runtimeKeys])
-
   const canApply = useMemo(
     () => Object.values(bundle).some((v) => isUsableApiKey(v) || (v ?? "").trim().length > 0),
     [bundle]
-  )
-
-  const applyFieldKey = useCallback(
-    (field: RuntimeKeyField, raw: string) => {
-      const s = raw.trim()
-      if (!isUsableApiKey(s)) return
-      setRuntimeKeys({ [field]: s })
-      setKeyStatus((prev) => ({ ...prev, unlocked: true }))
-      pushToast({ messageKey: "keys.toast.saved", variant: "success", ttlMs: 2600 })
-    },
-    [pushToast, setKeyStatus, setRuntimeKeys]
   )
 
   const onApplyKeys = useCallback(() => {
@@ -88,6 +61,7 @@ export const KeysPanel = memo(function KeysPanel() {
       }
       setRuntimeKeys(patch)
       setKeyStatus((prev) => ({ ...prev, unlocked: true }))
+      setBundle({ ...EMPTY_KEY_BUNDLE })
       pushToast({ messageKey: "keys.toast.saved", variant: "success", ttlMs: 2600 })
     } catch (e) {
       setError(e instanceof Error ? e.message : "ApplyFailed")
@@ -110,19 +84,19 @@ export const KeysPanel = memo(function KeysPanel() {
   }, [setKeyStatus])
 
   const configuredCount = useMemo(
-    () => RUNTIME_KEY_FIELDS.filter((f) => isUsableApiKey(runtimeKeys?.[f])).length,
-    [runtimeKeys]
+    () => RUNTIME_KEY_FIELDS.filter((f) => configured[f]).length,
+    [configured]
   )
 
   const badge = useMemo(() => {
-    if (runtimeKeys && configuredCount > 0) {
+    if (configuredCount > 0) {
       return { text: t("keys.badge.cloudSynced"), cls: "border-emerald-500/30 bg-emerald-500/15 text-emerald-300" }
     }
     if (keyStatus.hasEncryptedKeys) {
       return { text: t("keys.badge.encrypted"), cls: "border-sidebar-primary/30 bg-sidebar-primary/10 text-sidebar-foreground" }
     }
     return { text: t("keys.badge.unsaved"), cls: "border-border/60 bg-muted/20 text-muted-foreground" }
-  }, [configuredCount, keyStatus.hasEncryptedKeys, runtimeKeys, t])
+  }, [configuredCount, keyStatus.hasEncryptedKeys, t])
 
   const sessionKeyGroups = useMemo(
     () => [
@@ -140,7 +114,7 @@ export const KeysPanel = memo(function KeysPanel() {
             id: "clear",
             label: t("keys.clearSession"),
             onClick: onClearSessionKeys,
-            disabled: busy || !runtimeKeys,
+            disabled: busy || configuredCount === 0,
           },
           ...(keyStatus.hasEncryptedKeys
             ? [
@@ -163,7 +137,7 @@ export const KeysPanel = memo(function KeysPanel() {
       onApplyKeys,
       onClearLegacyEncrypted,
       onClearSessionKeys,
-      runtimeKeys,
+      configuredCount,
       t,
     ]
   )
@@ -219,9 +193,8 @@ export const KeysPanel = memo(function KeysPanel() {
                   <input
                     value={(bundle[k] ?? "") as string}
                     onChange={(e) => setBundle((prev) => ({ ...prev, [k]: e.target.value }))}
-                    onBlur={(e) => applyFieldKey(k, e.target.value)}
                     type={showBundle[k] ? "text" : "password"}
-                    placeholder={runtimeKeys?.[k] ? t("keys.key.placeholder.unlocked") : t("keys.key.placeholder.locked")}
+                    placeholder={configured[k] ? t("keys.key.placeholder.unlocked") : t("keys.key.placeholder.locked")}
                     className="h-10 min-w-0 flex-1 rounded-sm border border-border/60 bg-background/30 px-3 font-mono text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-3 focus-visible:ring-ring/40"
                   />
                   <Button
@@ -240,7 +213,7 @@ export const KeysPanel = memo(function KeysPanel() {
           </div>
 
           <div className="mt-4 rounded-lg border border-emerald-500/25 bg-emerald-500/[0.06] p-3 text-xs text-muted-foreground">
-            {runtimeKeys ? (
+            {configuredCount > 0 ? (
               <div className="space-y-1">
                 <div className="font-semibold text-emerald-200/90">{t("keys.cloudStatusTitle")}</div>
                 <div className="text-[11px] leading-relaxed">
@@ -250,8 +223,8 @@ export const KeysPanel = memo(function KeysPanel() {
                   {RUNTIME_KEY_FIELDS.map((k) => (
                     <div key={k} className="flex items-center justify-between gap-2">
                       <span>{k}</span>
-                      <span className={isUsableApiKey(runtimeKeys[k]) ? "text-emerald-300" : "text-muted-foreground"}>
-                        {isUsableApiKey(runtimeKeys[k]) ? t("keys.cloudStatusPresent") : "—"}
+                      <span className={configured[k] ? "text-emerald-300" : "text-muted-foreground"}>
+                        {configured[k] ? t("keys.cloudStatusPresent") : "—"}
                       </span>
                     </div>
                   ))}

@@ -53,6 +53,7 @@ export type KeyStatus = {
   hasMasterPassword: boolean
   hasEncryptedKeys: boolean
   unlocked: boolean
+  configured: Record<RuntimeKeyField, boolean>
 }
 
 export type RuntimeKeyField = "openai" | "anthropic" | "google" | "deepseek" | "tavily" | "serper"
@@ -102,6 +103,8 @@ export type InferenceMetrics = {
   ttftMs: number | null
   totalMs: number
   chars: number
+  inputTokens?: number
+  outputTokens?: number
   ok: boolean
   error?: string
 }
@@ -118,6 +121,8 @@ export type StreamingInferenceMetrics = {
   firstTokenAt: number | null
   lastTickAt: number
   chars: number
+  inputTokens?: number
+  outputTokens?: number
   ttftMs: number | null
   totalMs: number
 }
