@@ -25,6 +25,10 @@ vi.mock("@/lib/agent-server-run", () => ({
   runAgentOnServer,
 }))
 
+vi.mock("@/lib/server-runtime-keys", () => ({
+  loadRuntimeKeysForUser: vi.fn(async () => ({ openai: "server-key" })),
+}))
+
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     userBilling: {

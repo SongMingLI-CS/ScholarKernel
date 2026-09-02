@@ -2,6 +2,13 @@
 
 Last updated: 2026-09-02
 
+## Current state: Phase 6 verified; Goal remains active for later phases
+
+- Current branch: `fix/production-closure`.
+- Completed phase commits: `8984cd3`, `0b49d9a`, `b1174c3`, `8ff424b`, `b0a50e5` (plus baseline/lint checkpoints `c3bbab3` and `4585b1c`).
+- The nested `qiushi-skill` repository remains pre-existing dirty state and was not changed.
+- Phase 6 is verified below and is ready for its independent commit; Phase 7 and Phase 8 remain untouched.
+
 ## Baseline
 
 - [x] Inspected git state before changes.
@@ -17,7 +24,7 @@ Last updated: 2026-09-02
 - [x] Phase 3: object storage Library
 - [x] Phase 4: Canvas recovery
 - [x] Phase 5: chunked retrieval RAG
-- [ ] Phase 6: unified execution semantics
+- [x] Phase 6: unified execution semantics
 - [ ] Phase 7: transparent source/degradation status
 - [ ] Phase 8: documentation and release gates
 
@@ -74,6 +81,38 @@ Last updated: 2026-09-02
 - Retrieved context retains document title, section, page, and chunk identity for later evidence tracing.
 - Relevant tests: 10 focused retrieval, indexing, lazy migration, and upload tests passed.
 - Full suite after implementation: 63 files / 309 tests passed; full lint passed with warnings only.
+
+### Phase 6
+
+- Node retry was migrated from browser-side dynamic `AgentExecutor` loading to the shared `/api/agent/stream` SSE path; server-side resume snapshots can be derived from supplied workflow nodes when no persisted snapshots exist.
+- Legacy `/api/agent/run` and `/api/agent/jobs` now reject browser-supplied `runtimeKeys` and load encrypted credentials on the server.
+- Added a shared Agent error classifier and a distinct `cancelled` AgentJob status/migration; stream checkpoint writes are queued before terminal completion/failure.
+- Added focused tests for cancellation classification, cancelled job persistence, legacy credential rejection, and stream checkpoint ordering.
+- Removed the `NEXT_PUBLIC_TAVILY_API_KEY` / `NEXT_PUBLIC_SERPER_API_KEY` search-key fallbacks so public environment variables cannot become provider credentials.
+- Focused Phase 6 verification: 5 test files / 27 tests passed before the final route-queue test; final full verification is 64 test files / 315 tests passed.
+- `npm run lint`: passed with 0 errors and 9 pre-existing warnings.
+- `npm run build`: passed; Next.js reported only the existing middleware deprecation and NFT tracing warning.
+- `npx tsc --noEmit`: no Phase 6 errors; 7 pre-existing test typing errors remain (billing usage shape, readonly `NODE_ENV` assignments, node-retry JSON typing, peer-review callback return type).
+- `npx prisma validate`: passed. `npx prisma migrate status`: accurately blocked because the local `.env` resolves to `file:./dev.db`, which is invalid for this PostgreSQL datasource; no real PostgreSQL credentials were available, so migration application is unverified.
+- Checkpoint ordering is covered for both `/api/agent/stream` and legacy `/api/agent/jobs`; queued writes are awaited before complete/fail/cancel, and cancellation preserves the latest node checkpoint while setting `phase: cancelled`.
+- Browser audit: the default chat and node-retry paths send only the allowlisted SSE payload; all Agent API routes reject `runtimeKeys`; settings responses expose booleans only; persisted Zustand state drops key material; search tools no longer read `NEXT_PUBLIC_*` keys. Models/Setup and `ai-gateway` still contain legacy provider-probe code paths, but current store hydration/setters keep runtime key material null; a server-side probe replacement remains a follow-up security hardening item.
+
+## Known failures and unresolved risks
+
+- `npx tsc --noEmit` still fails with 7 pre-existing test typing errors in billing, crypto, node-retry, peer-review-checkpoint, and proxy-gateway tests. These are not caused by Phase 6 and must be fixed before the final release gate.
+- PostgreSQL migration application remains unverified until a real PostgreSQL `DATABASE_URL`/`DIRECT_URL` is supplied; the local `file:./dev.db` URL cannot be used with this schema.
+- Lint is green by exit code but still reports 9 warnings (unused variables and hook dependency warnings).
+- The “no provider API key in browser” invariant is improved but not fully structural: Models/Setup/legacy gateway still contain browser-side provider-probe functions. They currently receive no runtime key from the store, but a future server-side probe endpoint should replace them.
+- Vercel Blob production credentials are unavailable here, so remote object upload/download remains deployment-time verification.
+- Existing `file://` Library records are kept for a non-destructive compatibility window; a monitored migration/cleanup policy is still needed.
+- Library indexing currently runs inline after upload. Large PDFs or parser outages can increase upload latency; background indexing/retry policy is not implemented.
+
+## Unfinished tasks after Phase 6
+
+- Implement Phase 7: explicit user-visible source success/failure/degraded-status events and UI, including Library index failures and search-provider degradation.
+- Implement Phase 8: synchronize README, AGENTS.md, `.env.example`, deployment/migration/rollback documentation, and release checklist.
+- Resolve the 7 baseline TypeScript failures, reduce or consciously document remaining lint warnings, then rerun all release gates.
+- Verify additive Prisma migrations and Blob configuration in a staging-like environment before any production deployment.
 
 ## External blockers
 

@@ -1,12 +1,18 @@
 import { resolveUserIdFromRequest } from "@/lib/auth-user"
 import {
+  cancelAgentJob,
   completeAgentJob,
   createAgentJob,
   failAgentJob,
   getAgentJobForUser,
   markAgentJobRunning,
+  updateAgentJobCheckpoint,
+  updateAgentJobPeerReviewCheckpoint,
+  updateAgentJobWorkflowTopology,
+  type AgentJobCheckpoint,
 } from "@/lib/agent-jobs"
 import { runAgentOnServer } from "@/lib/agent-server-run"
+import { classifyAgentRunError } from "@/lib/agent-job-errors"
 import {
   AGENT_STREAM_PROTOCOL_VERSION,
   encodeAgentSseEvent,
@@ -16,6 +22,11 @@ import { assertQuotaAvailable, jsonQuotaExceeded, QuotaExceededError } from "@/l
 import { jsonError, parseJsonBody } from "@/lib/api-utils"
 import { loadRuntimeKeysForUser } from "@/lib/server-runtime-keys"
 import { interceptScholarCanvasInAssistantBubble } from "@/lib/scholar-canvas"
+import {
+  mergePeerReviewCheckpoint,
+  parsePeerReviewCheckpoint,
+  peerReviewCheckpointToJobPatch,
+} from "@/lib/agent/peer-review-checkpoint"
 import type { AgentExecutorDeps } from "@/lib/agent/executor-types"
 import type { ActiveProviderConfig, ChatHistoryEntry, WorkflowNode } from "@/lib/agent/planner"
 
@@ -43,11 +54,8 @@ function isValidProvider(value: unknown): value is ActiveProviderConfig {
   return typeof rec.providerId === "string" && typeof rec.model === "string"
 }
 
-function errorCode(error: unknown): string {
-  const message = error instanceof Error ? error.message : String(error)
-  if (message.includes("MissingApiKey")) return "MissingApiKey"
-  if (/abort/i.test(message)) return "Aborted"
-  return "AgentFailed"
+function mergeNodePatch(nodes: WorkflowNode[], nodeId: string, patch: Partial<WorkflowNode>): WorkflowNode[] {
+  return nodes.map((node) => (node.id === nodeId ? { ...node, ...patch, id: node.id } : node))
 }
 
 export async function POST(req: Request) {
@@ -70,15 +78,24 @@ export async function POST(req: Request) {
   }
 
   let jobId = body.jobId?.trim()
+  let initialCheckpoint: AgentJobCheckpoint = { phase: "running" }
   if (jobId) {
     const owned = await getAgentJobForUser(jobId, userId)
     if (!owned) return jsonError("Job not found", 404)
+    if (owned.checkpoint && typeof owned.checkpoint === "object") {
+      initialCheckpoint = { ...initialCheckpoint, ...(owned.checkpoint as AgentJobCheckpoint) }
+    }
   } else {
     const created = await createAgentJob(userId, {
       userInput: body.userInput.trim(),
       provider: body.provider,
     })
     jobId = created.id
+  }
+
+  let resumeNodes = body.resumeNodes
+  if (body.targetNodeId?.trim() && !resumeNodes?.length && Array.isArray(initialCheckpoint.nodes)) {
+    resumeNodes = initialCheckpoint.nodes as WorkflowNode[]
   }
 
   const stableJobId = jobId
@@ -92,6 +109,18 @@ export async function POST(req: Request) {
     start(controller) {
       let closed = false
       let lastTokenText = ""
+      let jobCheckpoint = initialCheckpoint
+      let workflowNodes = resumeNodes ?? []
+      let peerReviewCheckpoint = parsePeerReviewCheckpoint(jobCheckpoint)
+      let checkpointWrite: Promise<void> = Promise.resolve()
+
+      const queueCheckpoint = (write: () => Promise<unknown>) => {
+        checkpointWrite = checkpointWrite
+          .then(async () => {
+            await write()
+          })
+          .catch((error) => console.error("[agent stream checkpoint]", error))
+      }
 
       const emit = (event: AgentStreamEvent) => {
         if (closed) return
@@ -124,7 +153,16 @@ export async function POST(req: Request) {
               activeProvider: body.provider!,
               jobId: stableJobId,
               targetNodeId: body.targetNodeId?.trim() || undefined,
-              resumeNodes: body.resumeNodes,
+              resumeNodes,
+              interventionSessionId: stableJobId,
+              peerReviewCheckpoint,
+              onPeerReviewCheckpoint: (patch) => {
+                peerReviewCheckpoint = mergePeerReviewCheckpoint(peerReviewCheckpoint, patch)
+                jobCheckpoint = { ...jobCheckpoint, ...peerReviewCheckpointToJobPatch(peerReviewCheckpoint) }
+                queueCheckpoint(() =>
+                  updateAgentJobPeerReviewCheckpoint(stableJobId, jobCheckpoint, patch)
+                )
+              },
               chatHistory: body.chatHistory,
               inference: body.inference,
               localOnly: body.localOnly,
@@ -137,10 +175,23 @@ export async function POST(req: Request) {
                 : undefined,
             },
             {
-              onWorkflowPlanned: (nodes) => emit({ type: "plan", nodes }),
-              onWorkflowTopologyPruned: (nodes) => emit({ type: "plan", nodes }),
+              onWorkflowPlanned: (nodes) => {
+                workflowNodes = nodes
+                jobCheckpoint = { ...jobCheckpoint, phase: "planning", nodes }
+                emit({ type: "plan", nodes })
+                queueCheckpoint(() => updateAgentJobCheckpoint(stableJobId, jobCheckpoint))
+              },
+              onWorkflowTopologyPruned: (nodes) => {
+                workflowNodes = nodes
+                jobCheckpoint = { ...jobCheckpoint, phase: "running", nodes }
+                emit({ type: "plan", nodes })
+                queueCheckpoint(() => updateAgentJobWorkflowTopology(stableJobId, nodes, jobCheckpoint))
+              },
               onNodePatch: (nodeId, patch) => {
+                workflowNodes = mergeNodePatch(workflowNodes, nodeId, patch)
+                jobCheckpoint = { ...jobCheckpoint, phase: "running", nodes: workflowNodes }
                 emit({ type: "node", nodeId, patch })
+                queueCheckpoint(() => updateAgentJobCheckpoint(stableJobId, jobCheckpoint))
                 const output = patch.output
                 if (output && typeof output === "object") {
                   const rec = output as Record<string, unknown>
@@ -159,21 +210,41 @@ export async function POST(req: Request) {
               onDirectChatStream: (text) => emitText(text),
               onResearchResultsSynced: ({ nodeId, sources }) => emit({ type: "source", nodeId, sources }),
               onUsage: (usage) => emit({ type: "usage", ...usage }),
-              onInterventionPending: (event) => emit({ type: "intervention", ...event }),
+              onInterventionPending: (event) => {
+                jobCheckpoint = {
+                  ...jobCheckpoint,
+                  phase: "running",
+                  humanInterventionPending: {
+                    nodeId: event.nodeId,
+                    reason: event.reason,
+                    sessionId: event.sessionId,
+                    at: Date.now(),
+                  },
+                }
+                emit({ type: "intervention", ...event })
+                queueCheckpoint(() => updateAgentJobCheckpoint(stableJobId, jobCheckpoint))
+              },
               onPlanHttpError: (message) =>
                 emit({ type: "error", code: "PlanHttpError", message, retryable: true }),
             }
           )
+          await checkpointWrite
           await completeAgentJob(stableJobId, result)
           if (result.sources.length) emit({ type: "source", sources: result.sources })
           emit({ type: "done", ...result, jobId: stableJobId })
         } catch (error) {
-          await failAgentJob(stableJobId, error, { phase: "error" }).catch(() => undefined)
+          const failure = classifyAgentRunError(error)
+          await checkpointWrite
+          if (failure.cancelled) {
+            await cancelAgentJob(stableJobId, jobCheckpoint).catch(() => undefined)
+          } else {
+            await failAgentJob(stableJobId, error, { ...jobCheckpoint, phase: "error" }).catch(() => undefined)
+          }
           emit({
             type: "error",
-            code: errorCode(error),
-            message: error instanceof Error ? error.message : "Agent run failed",
-            retryable: errorCode(error) !== "Aborted",
+            code: failure.code,
+            message: failure.message,
+            retryable: failure.retryable,
           })
         } finally {
           closed = true

@@ -13,6 +13,7 @@ vi.mock("@/lib/prisma", () => ({
 }))
 
 import {
+  cancelAgentJob,
   completeAgentJob,
   createAgentJob,
   failAgentJob,
@@ -84,5 +85,21 @@ describe("agent-jobs", () => {
     update.mockResolvedValueOnce({ id: "j1", status: "running" })
     const job = await markAgentJobRunning("j1")
     expect(job.status).toBe("running")
+  })
+
+  it("cancelAgentJob records a distinct cancelled terminal state", async () => {
+    update.mockResolvedValueOnce({ id: "j1", status: "cancelled" })
+    const job = await cancelAgentJob("j1", { phase: "running", nodes: [{ id: "n1" }] })
+    expect(job.status).toBe("cancelled")
+    expect(update).toHaveBeenCalledWith({
+      where: { id: "j1" },
+      data: {
+        status: "cancelled",
+        checkpoint: { phase: "cancelled", nodes: [{ id: "n1" }] },
+        error: null,
+        errorMessage: null,
+        errorStack: null,
+      },
+    })
   })
 })

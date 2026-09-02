@@ -1,5 +1,3 @@
-import "server-only"
-
 import { decryptFromStorage } from "@/lib/crypto-server"
 import { prisma } from "@/lib/prisma"
 import type { AgentExecutorDeps } from "@/lib/agent/executor-types"

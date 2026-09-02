@@ -2,11 +2,9 @@
 
 import { useCallback, useRef, useState } from "react"
 import { buildChatHistoryForExecutor } from "@/lib/agent/llm-utils"
-import { loadAgentExecutor } from "@/lib/agent-executor-loader"
-import { snapshotsFromWorkflowNodes } from "@/lib/agent/node-resume"
-import type { ActiveProviderId } from "@/lib/agent/planner"
+import { applyAgentStreamEvent } from "@/lib/agent-stream-event-handler"
+import { streamAgentRun } from "@/lib/agent-stream-client"
 import { bubbleAfterPlanIntercept } from "@/lib/chat-bubble-utils"
-import { stripRedactedThinking } from "@/lib/r1-stream-parser"
 import { formatUserFacingErrorMessage } from "@/lib/user-facing-errors"
 import { useAgentStore } from "@/store/useAgentStore"
 
@@ -23,7 +21,6 @@ export function useNodeRetry() {
     if (retryingNodeId) return
 
     const provider = st.providers.active
-    const runtimeKeys = st.runtimeKeys
     const localOnly = st.settings.behavior.localOnly
 
     const lastUser = [...st.chat.messages].reverse().find((m) => m.role === "user")
@@ -42,92 +39,60 @@ export function useNodeRetry() {
     const ctrl = new AbortController()
     abortRef.current = ctrl
 
-    const resumeSnapshots = snapshotsFromWorkflowNodes(wfNodes)
     const resumeNodes = wfNodes.map((n) => ({ ...n, logs: n.logs ?? [] }))
 
     try {
-      const { AgentExecutor } = await loadAgentExecutor()
-      const executor = new AgentExecutor(
+      const result = await streamAgentRun(
         {
-          activeProvider: { providerId: provider.providerId as ActiveProviderId, model: provider.model, baseUrl: provider.baseUrl },
+          userInput,
+          provider,
           targetNodeId,
-          resumeSnapshots,
           resumeNodes,
           inference: st.settings.inference,
-          runtimeKeys: {
-            openai: runtimeKeys?.openai,
-            anthropic: runtimeKeys?.anthropic,
-            google: runtimeKeys?.google,
-            deepseek: runtimeKeys?.deepseek,
-            tavily: runtimeKeys?.tavily,
-            serper: runtimeKeys?.serper,
-          },
-          getRuntimeKeys: () => useAgentStore.getState().actions.getRuntimeKeys(),
-          search: { tavilyApiKey: runtimeKeys?.tavily, serperApiKey: runtimeKeys?.serper },
-          sourceApiBase: typeof window !== "undefined" ? window.location.origin : undefined,
-          signal: ctrl.signal,
           localOnly: localOnly || undefined,
-          getChatHistory: () => buildChatHistoryForExecutor(useAgentStore.getState().chat.messages),
+          chatHistory: buildChatHistoryForExecutor(st.chat.messages),
+          documentIds: st.chat.selectedLibraryDocuments.map((document) => document.id),
         },
         {
-          onNodePatch: (id, patch) => {
+          signal: ctrl.signal,
+          onEvent: (event) => {
             const store = useAgentStore.getState()
-            store.actions.patchWorkflowNode(id, {
-              status: patch.status,
-              output: patch.output,
-              metadata: patch.metadata,
-              error: patch.error,
+            applyAgentStreamEvent(event, {
+              onPlan: (nodes) =>
+                store.actions.setWorkflowNodes(
+                  nodes.map((node) => ({ ...node, title: node.title ?? node.type, logs: node.logs ?? [] }))
+                ),
+              onNode: (id, patch) => {
+                const current = store.workflow.nodes.find((node) => node.id === id)
+                store.actions.patchWorkflowNode(id, {
+                  status: patch.status ?? current?.status ?? "pending",
+                  output: patch.output,
+                  metadata: patch.metadata,
+                  error: patch.error,
+                })
+              },
+              onLog: (id, line) => store.actions.appendNodeLog(id, line),
+              onToken: (token) => {
+                if (!assistantId) return
+                store.actions.patchChatMessage(assistantId, {
+                  content: bubbleAfterPlanIntercept(token.text, store.settings.lang),
+                })
+              },
+              onCanvas: (canvas) => store.actions.applyScholarCanvasStream(canvas),
+              onSources: (sources) => {
+                if (assistantId && sources.length) store.actions.patchChatMessage(assistantId, { sources })
+              },
+              onIntervention: (intervention) => store.actions.setInterventionPending(intervention),
             })
-
-            if (assistantId && (patch.status === "done" || patch.status === "running")) {
-              const node = store.workflow.nodes.find((n) => n.id === id)
-              if (node?.type !== "reasoning") return
-              const out = patch.output ?? node.output
-              const rec = out && typeof out === "object" ? (out as Record<string, unknown>) : null
-              const rawTxt =
-                typeof rec?.["finalResponse"] === "string"
-                  ? String(rec["finalResponse"])
-                  : typeof rec?.["text"] === "string"
-                    ? String(rec["text"])
-                    : null
-              if (rawTxt == null) return
-              const lang = store.settings.lang
-              store.actions.patchChatMessage(assistantId, {
-                content: bubbleAfterPlanIntercept(stripRedactedThinking(rawTxt), lang),
-              })
-            }
-          },
-          onNodeLog: (id, line) => useAgentStore.getState().actions.appendNodeLog(id, line),
-          onProgress: (payload) => useAgentStore.getState().actions.applyNodeProgress(payload),
-          onWorkflowTopologyPruned: (nodes) => {
-            useAgentStore.getState().actions.setWorkflowNodes(
-              nodes.map((n) => ({
-                id: n.id,
-                type: n.type,
-                provider: n.provider,
-                status: n.status,
-                title: n.title ?? `${n.type}`,
-                logs: n.logs ?? [],
-                metadata: n.metadata,
-                output: n.output,
-                error: n.error,
-              }))
-            )
-          },
-          onResearchResultsSynced: ({ sources }) => {
-            if (!assistantId || !sources.length) return
-            useAgentStore.getState().actions.patchChatMessage(assistantId, { sources })
           },
         }
       )
 
-      const { final, sources } = await executor.run(userInput, { targetNodeId, resumeNodes })
-
       if (assistantId) {
         const lang = useAgentStore.getState().settings.lang
         useAgentStore.getState().actions.patchChatMessage(assistantId, {
-          content: bubbleAfterPlanIntercept(final, lang),
-          sources,
+          content: bubbleAfterPlanIntercept(result.final, lang),
+          sources: result.sources,
         })
       }
 

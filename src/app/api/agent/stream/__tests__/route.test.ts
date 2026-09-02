@@ -5,9 +5,14 @@ const mocks = vi.hoisted(() => ({
   loadRuntimeKeysForUser: vi.fn(),
   runAgentOnServer: vi.fn(),
   createAgentJob: vi.fn(),
+  getAgentJobForUser: vi.fn(),
   markAgentJobRunning: vi.fn(),
   completeAgentJob: vi.fn(),
   failAgentJob: vi.fn(),
+  cancelAgentJob: vi.fn(),
+  updateAgentJobCheckpoint: vi.fn(),
+  updateAgentJobPeerReviewCheckpoint: vi.fn(),
+  updateAgentJobWorkflowTopology: vi.fn(),
 }))
 
 vi.mock("@/lib/auth-user", () => ({ resolveUserIdFromRequest: mocks.resolveUserIdFromRequest }))
@@ -15,9 +20,14 @@ vi.mock("@/lib/server-runtime-keys", () => ({ loadRuntimeKeysForUser: mocks.load
 vi.mock("@/lib/agent-server-run", () => ({ runAgentOnServer: mocks.runAgentOnServer }))
 vi.mock("@/lib/agent-jobs", () => ({
   createAgentJob: mocks.createAgentJob,
+  getAgentJobForUser: mocks.getAgentJobForUser,
   markAgentJobRunning: mocks.markAgentJobRunning,
   completeAgentJob: mocks.completeAgentJob,
   failAgentJob: mocks.failAgentJob,
+  cancelAgentJob: mocks.cancelAgentJob,
+  updateAgentJobCheckpoint: mocks.updateAgentJobCheckpoint,
+  updateAgentJobPeerReviewCheckpoint: mocks.updateAgentJobPeerReviewCheckpoint,
+  updateAgentJobWorkflowTopology: mocks.updateAgentJobWorkflowTopology,
 }))
 vi.mock("@/lib/billing/quota-gate", () => ({
   assertQuotaAvailable: vi.fn(),
@@ -45,6 +55,10 @@ describe("POST /api/agent/stream", () => {
     mocks.markAgentJobRunning.mockResolvedValue({})
     mocks.completeAgentJob.mockResolvedValue({})
     mocks.failAgentJob.mockResolvedValue({})
+    mocks.cancelAgentJob.mockResolvedValue({})
+    mocks.updateAgentJobCheckpoint.mockResolvedValue({})
+    mocks.updateAgentJobPeerReviewCheckpoint.mockResolvedValue({})
+    mocks.updateAgentJobWorkflowTopology.mockResolvedValue({})
     mocks.runAgentOnServer.mockImplementation(async (_input, hooks) => {
       hooks?.onWorkflowPlanned?.([{ id: "n1", type: "reasoning", provider: "cloud", status: "pending" }])
       hooks?.onNodeLog?.("n1", "started")
@@ -86,6 +100,8 @@ describe("POST /api/agent/stream", () => {
       expect.any(Object)
     )
     expect(raw).not.toContain("server-secret")
+    expect(mocks.updateAgentJobCheckpoint).toHaveBeenCalled()
+    expect(mocks.completeAgentJob).toHaveBeenCalledAfter(mocks.updateAgentJobCheckpoint)
   })
 
   it("rejects runtime keys sent by the browser", async () => {
@@ -105,5 +121,19 @@ describe("POST /api/agent/stream", () => {
       provider: { providerId: "openai", model: "gpt-5" },
     }))
     expect(res.status).toBe(401)
+  })
+
+  it("marks a cancelled job without losing its latest checkpoint", async () => {
+    mocks.runAgentOnServer.mockRejectedValueOnce(new DOMException("The operation was aborted", "AbortError"))
+
+    const res = await POST(request({
+      userInput: "cancel me",
+      provider: { providerId: "openai", model: "gpt-5" },
+    }))
+    const raw = await res.text()
+
+    expect(raw).toContain('"code":"Aborted"')
+    expect(mocks.cancelAgentJob).toHaveBeenCalledWith("job-1", expect.objectContaining({ phase: "running" }))
+    expect(mocks.failAgentJob).not.toHaveBeenCalled()
   })
 })

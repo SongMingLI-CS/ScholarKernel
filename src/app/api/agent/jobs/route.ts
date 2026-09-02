@@ -1,6 +1,7 @@
 import { resolveUserIdFromRequest } from "@/lib/auth-user"
 import {
   completeAgentJob,
+  cancelAgentJob,
   createAgentJob,
   failAgentJob,
   markAgentJobRunning,
@@ -15,10 +16,12 @@ import {
   peerReviewCheckpointToJobPatch,
 } from "@/lib/agent/peer-review-checkpoint"
 import { runAgentOnServer } from "@/lib/agent-server-run"
+import { classifyAgentRunError } from "@/lib/agent-job-errors"
 import { assertQuotaAvailable, jsonQuotaExceeded, QuotaExceededError } from "@/lib/billing/quota-gate"
 import { jsonError, jsonOk, parseJsonBody } from "@/lib/api-utils"
 import type { ActiveProviderConfig } from "@/lib/agent/planner"
 import type { AgentExecutorDeps } from "@/lib/agent/executor-types"
+import { loadRuntimeKeysForUser } from "@/lib/server-runtime-keys"
 
 type AgentJobBody = {
   userInput?: string
@@ -27,7 +30,7 @@ type AgentJobBody = {
   inference?: AgentExecutorDeps["inference"]
   localOnly?: boolean
   planRetryMessage?: string
-  runtimeKeys?: AgentExecutorDeps["runtimeKeys"]
+  runtimeKeys?: unknown
 }
 
 function isValidProvider(p: unknown): p is ActiveProviderConfig {
@@ -44,6 +47,9 @@ export async function POST(req: Request) {
   if (!body?.userInput?.trim() || !isValidProvider(body.provider)) {
     return jsonError("Invalid body: userInput and provider required", 400)
   }
+  if (body.runtimeKeys !== undefined) {
+    return jsonError("Provider credentials must not be sent by the browser", 400)
+  }
 
   try {
     await assertQuotaAvailable(userId)
@@ -59,13 +65,22 @@ export async function POST(req: Request) {
 
   const origin = new URL(req.url)
   const sourceApiBase = `${origin.protocol}//${origin.host}`
+  let jobCheckpoint: AgentJobCheckpoint = {
+    phase: "running",
+    ...(job.checkpoint && typeof job.checkpoint === "object" ? (job.checkpoint as AgentJobCheckpoint) : {}),
+  }
+  let checkpointWrite: Promise<void> = Promise.resolve()
+  const queueCheckpoint = (write: () => Promise<unknown>) => {
+    checkpointWrite = checkpointWrite
+      .then(async () => {
+        await write()
+      })
+      .catch((error) => console.error("[agent job checkpoint]", error))
+  }
 
   try {
     await markAgentJobRunning(job.id)
-    let jobCheckpoint: AgentJobCheckpoint = {
-      phase: "running",
-      ...(job.checkpoint && typeof job.checkpoint === "object" ? (job.checkpoint as AgentJobCheckpoint) : {}),
-    }
+    const runtimeKeys = await loadRuntimeKeysForUser(userId)
     let peerReviewCheckpoint = parsePeerReviewCheckpoint(jobCheckpoint)
 
     const result = await runAgentOnServer(
@@ -79,20 +94,20 @@ export async function POST(req: Request) {
         onPeerReviewCheckpoint: (patch) => {
           peerReviewCheckpoint = mergePeerReviewCheckpoint(peerReviewCheckpoint, patch)
           jobCheckpoint = { ...jobCheckpoint, ...peerReviewCheckpointToJobPatch(peerReviewCheckpoint) }
-          void updateAgentJobPeerReviewCheckpoint(job.id, jobCheckpoint, patch)
+          queueCheckpoint(() => updateAgentJobPeerReviewCheckpoint(job.id, jobCheckpoint, patch))
         },
         chatHistory: body.chatHistory,
         inference: body.inference,
         localOnly: body.localOnly,
         planRetryMessage: body.planRetryMessage,
-        runtimeKeys: body.runtimeKeys,
+        runtimeKeys,
         sourceApiBase,
         signal: req.signal,
       },
       {
         onWorkflowPlanned: (nodes) => {
           jobCheckpoint = { ...jobCheckpoint, phase: "planning", nodes }
-          void updateAgentJobCheckpoint(job.id, jobCheckpoint)
+          queueCheckpoint(() => updateAgentJobCheckpoint(job.id, jobCheckpoint))
         },
         onNodePatch: (id, patch) => {
           jobCheckpoint = {
@@ -100,7 +115,7 @@ export async function POST(req: Request) {
             phase: "running",
             nodes: [{ id, patch }],
           }
-          void updateAgentJobCheckpoint(job.id, jobCheckpoint)
+          queueCheckpoint(() => updateAgentJobCheckpoint(job.id, jobCheckpoint))
         },
         onInterventionPending: (event) => {
           jobCheckpoint = {
@@ -113,20 +128,29 @@ export async function POST(req: Request) {
               at: Date.now(),
             },
           } as AgentJobCheckpoint & { humanInterventionPending?: unknown }
-          void updateAgentJobCheckpoint(job.id, jobCheckpoint)
+          queueCheckpoint(() => updateAgentJobCheckpoint(job.id, jobCheckpoint))
         },
         onWorkflowTopologyPruned: (nodes) => {
           jobCheckpoint = { ...jobCheckpoint, phase: "running", nodes }
-          void updateAgentJobWorkflowTopology(job.id, nodes, jobCheckpoint)
+          queueCheckpoint(() => updateAgentJobWorkflowTopology(job.id, nodes, jobCheckpoint))
         },
       }
     )
+    await checkpointWrite
     const done = await completeAgentJob(job.id, result)
     return jsonOk(done)
   } catch (e) {
-    const message = e instanceof Error ? e.message : "Agent job failed"
-    const failed = await failAgentJob(job.id, e, { phase: "error" })
+    const failure = classifyAgentRunError(e)
+    await checkpointWrite
+    if (failure.cancelled) {
+      await cancelAgentJob(job.id, jobCheckpoint).catch(() => undefined)
+    } else {
+      await failAgentJob(job.id, e, { phase: "error" })
+    }
     console.error("[POST /api/agent/jobs]", e)
-    return jsonOk(failed, { status: 500 })
+    return jsonOk(
+      { error: failure.message, code: failure.code, retryable: failure.retryable, jobId: job.id },
+      { status: failure.httpStatus }
+    )
   }
 }

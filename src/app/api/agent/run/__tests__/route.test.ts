@@ -14,6 +14,10 @@ vi.mock("@/lib/agent-server-run", () => ({
   runAgentOnServer,
 }))
 
+vi.mock("@/lib/server-runtime-keys", () => ({
+  loadRuntimeKeysForUser: vi.fn(async () => ({ openai: "server-key" })),
+}))
+
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     userBilling: {
@@ -74,5 +78,24 @@ describe("POST /api/agent/run", () => {
     expect(res.status).toBe(200)
     const json = (await res.json()) as { final: string }
     expect(json.final).toBe("done")
+    expect(runAgentOnServer).toHaveBeenCalledWith(expect.objectContaining({
+      runtimeKeys: { openai: "server-key" },
+    }))
+  })
+
+  it("rejects browser-supplied provider credentials", async () => {
+    const res = await POST(
+      new Request("http://localhost/api/agent/run", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          userInput: "hello",
+          provider: { providerId: "openai", model: "gpt-4o" },
+          runtimeKeys: { openai: "browser-secret" },
+        }),
+      })
+    )
+    expect(res.status).toBe(400)
+    expect(runAgentOnServer).not.toHaveBeenCalled()
   })
 })

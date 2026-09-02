@@ -1,11 +1,13 @@
 import { resolveUserIdFromRequest } from "@/lib/auth-user"
-import { getAgentJobForUser, persistAgentJobError } from "@/lib/agent-jobs"
+import { cancelAgentJob, getAgentJobForUser, persistAgentJobError } from "@/lib/agent-jobs"
 import { runAgentOnServer } from "@/lib/agent-server-run"
+import { classifyAgentRunError } from "@/lib/agent-job-errors"
 import { assertQuotaAvailable, jsonQuotaExceeded, QuotaExceededError } from "@/lib/billing/quota-gate"
 import { jsonError, jsonOk, parseJsonBody } from "@/lib/api-utils"
 import type { ActiveProviderConfig, ChatHistoryEntry, WorkflowNode } from "@/lib/agent/planner"
 import type { AgentExecutorDeps } from "@/lib/agent/executor-types"
 import type { AgentJobCheckpoint } from "@/lib/agent-jobs"
+import { loadRuntimeKeysForUser } from "@/lib/server-runtime-keys"
 
 type AgentRunBody = {
   jobId?: string
@@ -16,7 +18,7 @@ type AgentRunBody = {
   inference?: AgentExecutorDeps["inference"]
   localOnly?: boolean
   planRetryMessage?: string
-  runtimeKeys?: AgentExecutorDeps["runtimeKeys"]
+  runtimeKeys?: unknown
   resumeNodes?: WorkflowNode[]
   documentIds?: string[]
 }
@@ -34,6 +36,9 @@ export async function POST(req: Request) {
   const body = await parseJsonBody<AgentRunBody>(req)
   if (!body?.userInput?.trim() || !isValidProvider(body.provider)) {
     return jsonError("Invalid body: userInput and provider required", 400)
+  }
+  if (body.runtimeKeys !== undefined) {
+    return jsonError("Provider credentials must not be sent by the browser", 400)
   }
 
   try {
@@ -57,6 +62,7 @@ export async function POST(req: Request) {
   }
 
   try {
+    const runtimeKeys = await loadRuntimeKeysForUser(userId)
     const result = await runAgentOnServer({
       userId,
       userInput: body.userInput.trim(),
@@ -68,7 +74,7 @@ export async function POST(req: Request) {
       inference: body.inference,
       localOnly: body.localOnly,
       planRetryMessage: body.planRetryMessage,
-      runtimeKeys: body.runtimeKeys,
+      runtimeKeys,
       sourceApiBase,
       signal: req.signal,
       documentIds: Array.isArray(body.documentIds)
@@ -77,13 +83,20 @@ export async function POST(req: Request) {
     })
     return jsonOk(result)
   } catch (e) {
-    const message = e instanceof Error ? e.message : "Agent run failed"
-    void persistAgentJobError(userId, e, {
-      jobId: body.jobId,
-      userInput: body.userInput?.trim(),
-      provider: body.provider,
-    })
+    const failure = classifyAgentRunError(e)
+    if (failure.cancelled && body.jobId) {
+      await cancelAgentJob(body.jobId, { phase: "cancelled" }).catch(() => undefined)
+    } else {
+      void persistAgentJobError(userId, e, {
+        jobId: body.jobId,
+        userInput: body.userInput?.trim(),
+        provider: body.provider,
+      })
+    }
     console.error("[POST /api/agent/run]", e)
-    return jsonError(message, 500)
+    return jsonOk(
+      { error: failure.message, code: failure.code, retryable: failure.retryable },
+      { status: failure.httpStatus }
+    )
   }
 }

@@ -138,7 +138,7 @@ export type ResolvedSearchApiKeys = {
   serperApiKey: string
 }
 
-/** 多级回退：注入快照 → Zustand Store → 环境变量 */
+/** 多级回退：注入快照 → Zustand Store → 服务端环境变量。NEXT_PUBLIC_* 永不作为密钥来源。 */
 export function resolveSearchApiKeys(injected?: {
   tavilyApiKey?: string
   serperApiKey?: string
@@ -148,15 +148,13 @@ export function resolveSearchApiKeys(injected?: {
   const tavilyApiKey = pickSearchKey(
     injected?.tavilyApiKey,
     fromStore.tavily,
-    safeEnv("TAVILY_API_KEY"),
-    safeEnv("NEXT_PUBLIC_TAVILY_API_KEY")
+    safeEnv("TAVILY_API_KEY")
   )
 
   const serperApiKey = pickSearchKey(
     injected?.serperApiKey,
     fromStore.serper,
-    safeEnv("SERPER_API_KEY"),
-    safeEnv("NEXT_PUBLIC_SERPER_API_KEY")
+    safeEnv("SERPER_API_KEY")
   )
 
   return { tavilyApiKey, serperApiKey }
@@ -452,4 +450,3 @@ export function synthesizeCitationsMarkdown(results: AcademicSearchHit[], title 
     markdown: [`${title}`, "", ...lines].join("\n"),
   }
 }
-

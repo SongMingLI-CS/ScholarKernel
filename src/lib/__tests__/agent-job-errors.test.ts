@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 
-import { serializeAgentJobError, stackPreview } from "@/lib/agent-job-errors"
+import { classifyAgentRunError, serializeAgentJobError, stackPreview } from "@/lib/agent-job-errors"
 
 describe("agent-job-errors", () => {
   it("serializes Error message and first 5 stack lines", () => {
@@ -15,5 +15,21 @@ describe("agent-job-errors", () => {
     const preview = stackPreview("Error\n    Bearer sk-secret1234567890abcdef")
     expect(preview).not.toContain("sk-secret")
     expect(preview).toContain("[redacted]")
+  })
+
+  it("classifies cancellation separately from retryable execution failures", () => {
+    const aborted = new DOMException("The operation was aborted", "AbortError")
+    expect(classifyAgentRunError(aborted)).toMatchObject({
+      code: "Aborted",
+      cancelled: true,
+      retryable: false,
+      httpStatus: 499,
+    })
+    expect(classifyAgentRunError(new Error("WorkflowPlan InvalidJSON"))).toMatchObject({
+      code: "PlanFailed",
+      cancelled: false,
+      retryable: true,
+      httpStatus: 502,
+    })
   })
 })

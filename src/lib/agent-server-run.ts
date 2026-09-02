@@ -3,7 +3,7 @@ import { buildLibraryContextForAgent } from "@/lib/library-resolve"
 import { runtimeKeysFromEnv } from "@/lib/agent/llm-utils"
 import type { AgentExecutorDeps, AgentExecutorHooks } from "@/lib/agent/executor-types"
 import type { PeerReviewCheckpointData } from "@/lib/agent/peer-review-checkpoint"
-import type { NodeSnapshotRecord } from "@/lib/agent/node-resume"
+import { snapshotsFromWorkflowNodes, type NodeSnapshotRecord } from "@/lib/agent/node-resume"
 import type { ActiveProviderConfig, ChatHistoryEntry, WorkflowNode } from "@/lib/agent/planner"
 import { createTokenUsageRecorder } from "@/lib/billing/token-audit"
 import { loadAgentNodeSnapshots, persistAgentNodeSnapshotAsync } from "@/lib/agent-jobs"
@@ -56,6 +56,9 @@ export async function runAgentOnServer(
   let resumeSnapshots = input.resumeSnapshots
   if (input.targetNodeId && input.jobId && !resumeSnapshots?.length) {
     resumeSnapshots = await loadAgentNodeSnapshots(input.jobId)
+  }
+  if (input.targetNodeId && !resumeSnapshots?.length && input.resumeNodes?.length) {
+    resumeSnapshots = snapshotsFromWorkflowNodes(input.resumeNodes)
   }
 
   const executor = new AgentExecutor(

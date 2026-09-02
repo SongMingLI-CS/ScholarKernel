@@ -1062,7 +1062,7 @@ export class AgentExecutor {
           if (!keysNow.tavilyApiKey && !keysNow.serperApiKey) {
             this.hooks.onNodeLog?.(
               n.id,
-              "[Diagnostic] 请在 Keys 面板填入 Tavily/Serper Key，或在 .env.local 设置 TAVILY_API_KEY / NEXT_PUBLIC_TAVILY_API_KEY 后重启 dev server。"
+              "[Diagnostic] 请在 Keys 面板配置 Tavily/Serper Key，或在服务端 .env.local 设置 TAVILY_API_KEY / SERPER_API_KEY 后重启 dev server。"
             )
           }
         }
@@ -1106,4 +1106,3 @@ export class AgentExecutor {
     return { final, nodes, sources }
   }
 }
-

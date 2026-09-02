@@ -13,7 +13,7 @@ import type { NodeSnapshotRecord } from "@/lib/agent/node-resume"
 export type { PeerReviewCheckpointData } from "@/lib/agent/peer-review-checkpoint"
 
 export type AgentJobCheckpoint = {
-  phase: "planning" | "running" | "done" | "error"
+  phase: "planning" | "running" | "done" | "error" | "cancelled"
   nodes?: unknown[]
   partialResults?: unknown[]
   sources?: unknown[]
@@ -24,6 +24,28 @@ export type AgentJobCheckpoint = {
     instruction: string | null
     appliedAt: number
   }
+  humanInterventionPending?: {
+    nodeId: string
+    reason: string
+    sessionId: string
+    at: number
+  }
+}
+
+export async function cancelAgentJob(id: string, checkpoint?: AgentJobCheckpoint) {
+  return prisma.agentJob.update({
+    where: { id },
+    data: {
+      status: "cancelled",
+      checkpoint: {
+        ...(checkpoint ?? {}),
+        phase: "cancelled",
+      } as Prisma.InputJsonValue,
+      error: null,
+      errorMessage: null,
+      errorStack: null,
+    },
+  })
 }
 
 export type AgentJobProvider = ActiveProviderConfig
