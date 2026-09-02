@@ -18,6 +18,7 @@ vi.mock("@/lib/prisma", () => ({
     },
   },
 }))
+vi.mock("@/lib/library-index", () => ({ indexLibraryDocumentBuffer: vi.fn(async () => ({ status: "ready", chunks: [] })) }))
 
 import { POST } from "../route"
 import { setLibraryObjectStorageForTests, type LibraryObjectStorage } from "@/lib/library-storage"

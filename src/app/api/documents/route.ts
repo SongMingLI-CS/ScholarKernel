@@ -13,6 +13,7 @@ import {
   storeLibraryObject,
 } from "@/lib/library-storage"
 import { prisma } from "@/lib/prisma"
+import { indexLibraryDocumentBuffer } from "@/lib/library-index"
 
 const MAX_UPLOAD_BYTES = 12 * 1024 * 1024
 
@@ -116,6 +117,14 @@ export async function POST(req: Request) {
     const document = await prisma.document.update({
       where: { id: created.id },
       data: { fileUrl },
+    })
+
+    await indexLibraryDocumentBuffer({
+      documentId: document.id,
+      documentTitle: document.title,
+      filename: file.name,
+      fileType,
+      buffer,
     })
 
     return jsonOk(

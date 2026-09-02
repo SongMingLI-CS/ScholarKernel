@@ -10,19 +10,19 @@ datasource db {
 // --- NextAuth.js standard models ---
 
 model User {
-  id            String    @id @default(cuid())
-  name          String?
-  email         String?   @unique
-  emailVerified DateTime?
-  image         String?
-  passwordHash  String?
-  accounts      Account[]
-  sessions      Session[]
-  conversations Conversation[]
-  documents     Document[]
-  settings      UserSetting?
-  agentJobs     AgentJob[]
-  billing       UserBilling?
+  id             String          @id @default(cuid())
+  name           String?
+  email          String?         @unique
+  emailVerified  DateTime?
+  image          String?
+  passwordHash   String?
+  accounts       Account[]
+  sessions       Session[]
+  conversations  Conversation[]
+  documents      Document[]
+  settings       UserSetting?
+  agentJobs      AgentJob[]
+  billing        UserBilling?
   tokenAuditLogs TokenAuditLog[]
 }
 
@@ -62,13 +62,13 @@ model VerificationToken {
 // --- Application models ---
 
 model Conversation {
-  id        String     @id @default(cuid())
-  userId    String?
-  user      User?      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  title     String     @default("新对话")
-  isPinned  Boolean    @default(false)
-  createdAt DateTime   @default(now())
-  updatedAt DateTime   @updatedAt
+  id              String           @id @default(cuid())
+  userId          String?
+  user            User?            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title           String           @default("新对话")
+  isPinned        Boolean          @default(false)
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
   messages        Message[]
   canvasDocuments CanvasDocument[]
 
@@ -93,18 +93,38 @@ model CanvasDocument {
 
 /// 用户全局文献资产库（跨会话持久化）
 model Document {
-  id        String   @id @default(cuid())
-  userId    String
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  title     String
-  fileUrl   String
-  fileSize  Int
-  fileType  String
-  tags      String[] @default([])
-  folders   String[] @default([])
-  createdAt DateTime @default(now())
+  id          String          @id @default(cuid())
+  userId      String
+  user        User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title       String
+  fileUrl     String
+  fileSize    Int
+  fileType    String
+  tags        String[]        @default([])
+  folders     String[]        @default([])
+  indexStatus String          @default("pending")
+  indexError  String?         @db.Text
+  indexedAt   DateTime?
+  createdAt   DateTime        @default(now())
+  chunks      DocumentChunk[]
 
   @@index([userId])
+}
+
+/// Parsed, bounded evidence units for query-time Library retrieval.
+model DocumentChunk {
+  id         String   @id @default(cuid())
+  documentId String
+  document   Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  chunkIndex Int
+  section    String
+  page       Int?
+  content    String   @db.Text
+  charCount  Int
+  createdAt  DateTime @default(now())
+
+  @@unique([documentId, chunkIndex])
+  @@index([documentId])
 }
 
 model Message {

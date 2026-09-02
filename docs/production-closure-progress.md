@@ -16,7 +16,7 @@ Last updated: 2026-09-02
 - [x] Phase 2: frontend SSE state restoration
 - [x] Phase 3: object storage Library
 - [x] Phase 4: Canvas recovery
-- [ ] Phase 5: chunked retrieval RAG
+- [x] Phase 5: chunked retrieval RAG
 - [ ] Phase 6: unified execution semantics
 - [ ] Phase 7: transparent source/degradation status
 - [ ] Phase 8: documentation and release gates
@@ -64,6 +64,16 @@ Last updated: 2026-09-02
 - Conversation switching selects the latest Canvas document, restores it into Zustand, and opens the Canvas workspace.
 - Empty conversations continue with a closed Canvas.
 - Relevant tests: 13 conversation, Canvas recovery, create, and update tests passed.
+
+### Phase 5
+
+- Added additive `DocumentChunk` storage plus document index status fields; the migration preserves existing `Document` rows.
+- Uploads are parsed into section/page-aware, bounded chunks and indexed transactionally after object storage succeeds.
+- Existing documents without chunks are indexed lazily on first Agent retrieval.
+- Agent Library context is now query-ranked and capped at 10 chunks / 12,000 characters instead of injecting complete documents.
+- Retrieved context retains document title, section, page, and chunk identity for later evidence tracing.
+- Relevant tests: 10 focused retrieval, indexing, lazy migration, and upload tests passed.
+- Full suite after implementation: 63 files / 309 tests passed; full lint passed with warnings only.
 
 ## External blockers
 

@@ -1,12 +1,16 @@
-import { parseLayoutAwareDocument } from "@/lib/document/layout-aware-parser"
-import { formatLibraryContextBlock } from "@/lib/my-library"
+import { indexLibraryDocumentBuffer } from "@/lib/library-index"
+import {
+  formatRetrievedLibraryContext,
+  retrieveRelevantLibraryChunks,
+  type LibraryChunkCandidate,
+} from "@/lib/library-rag"
 import { readStoredLibraryObject } from "@/lib/library-storage"
 import { prisma } from "@/lib/prisma"
 
-export async function loadLibraryDocumentsForUser(
+export async function loadLibraryChunksForUser(
   userId: string,
   documentIds: string[]
-): Promise<Array<{ id: string; title: string; fileType: string; text: string }>> {
+): Promise<LibraryChunkCandidate[]> {
   const ids = [...new Set(documentIds.map((id) => id.trim()).filter(Boolean))]
   if (!ids.length) return []
 
@@ -15,32 +19,45 @@ export async function loadLibraryDocumentsForUser(
     select: { id: true, title: true, fileType: true, fileUrl: true },
   })
 
-  const out: Array<{ id: string; title: string; fileType: string; text: string }> = []
+  const storedChunks = await prisma.documentChunk.findMany({
+    where: { documentId: { in: rows.map((row) => row.id) } },
+    orderBy: [{ documentId: "asc" }, { chunkIndex: "asc" }],
+  })
+  const titleById = new Map(rows.map((row) => [row.id, row.title]))
+  const out: LibraryChunkCandidate[] = storedChunks.map((chunk) => ({
+    documentId: chunk.documentId,
+    documentTitle: titleById.get(chunk.documentId) ?? "Untitled",
+    chunkIndex: chunk.chunkIndex,
+    section: chunk.section,
+    page: chunk.page,
+    content: chunk.content,
+  }))
+  const indexedIds = new Set(storedChunks.map((chunk) => chunk.documentId))
+
   for (const row of rows) {
+    if (indexedIds.has(row.id)) continue
     const buf = await readStoredLibraryObject(row.fileUrl)
     if (!buf) continue
-
-    let text = ""
-    try {
-      const parsed = await parseLayoutAwareDocument({
-        buffer: buf,
-        filename: row.title,
-      })
-      text = parsed.ragContext?.trim() || parsed.text?.trim() || ""
-    } catch {
-      text = buf.toString("utf8")
-    }
-    if (!text.trim()) continue
-    out.push({ id: row.id, title: row.title, fileType: row.fileType, text })
+    const indexed = await indexLibraryDocumentBuffer({
+      documentId: row.id,
+      documentTitle: row.title,
+      filename: row.title,
+      fileType: row.fileType,
+      buffer: buf,
+    })
+    out.push(...indexed.chunks)
   }
   return out
 }
 
 export async function buildLibraryContextForAgent(
   userId: string | undefined,
-  documentIds: string[] | undefined
+  documentIds: string[] | undefined,
+  query = ""
 ): Promise<string> {
   if (!userId || !documentIds?.length) return ""
-  const docs = await loadLibraryDocumentsForUser(userId, documentIds)
-  return formatLibraryContextBlock(docs)
+  const chunks = await loadLibraryChunksForUser(userId, documentIds)
+  return formatRetrievedLibraryContext(
+    retrieveRelevantLibraryChunks(query, chunks, { maxChunks: 10, maxChars: 12_000 })
+  )
 }

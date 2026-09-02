@@ -51,7 +51,7 @@ export async function runAgentOnServer(
   const envKeys = runtimeKeysFromEnv()
   const runtimeKeys = mergeRuntimeKeysForServer(input.runtimeKeys, envKeys)
   const billingRecorder = input.userId ? createTokenUsageRecorder(input.userId, input.jobId) : null
-  const libraryContext = await buildLibraryContextForAgent(input.userId, input.documentIds)
+  const libraryContext = await buildLibraryContextForAgent(input.userId, input.documentIds, input.userInput)
 
   let resumeSnapshots = input.resumeSnapshots
   if (input.targetNodeId && input.jobId && !resumeSnapshots?.length) {
