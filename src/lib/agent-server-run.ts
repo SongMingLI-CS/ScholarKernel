@@ -72,7 +72,15 @@ export async function runAgentOnServer(
           }
         : undefined,
       recordTokenUsage: billingRecorder
-        ? (payload) => billingRecorder.record(payload)
+        ? (payload) => {
+            billingRecorder.record(payload)
+            hooks?.onUsage?.({
+              model: payload.modelUsed,
+              inputTokens: payload.inputTokens,
+              outputTokens: payload.outputTokens,
+              ttftMs: payload.ttftMs,
+            })
+          }
         : undefined,
       interventionSessionId: input.interventionSessionId ?? input.jobId,
       peerReviewCheckpoint: input.peerReviewCheckpoint,

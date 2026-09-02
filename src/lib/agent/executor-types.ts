@@ -88,6 +88,12 @@ export type AgentExecutorHooks = {
     sources: AcademicSearchHit[]
     citationsMarkdown: string
   }) => void
+  onUsage?: (usage: {
+    model: string
+    inputTokens: number
+    outputTokens: number
+    ttftMs?: number | null
+  }) => void
 }
 
 export type SubtaskResult = {
