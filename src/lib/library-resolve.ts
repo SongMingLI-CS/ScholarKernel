@@ -1,6 +1,6 @@
 import { parseLayoutAwareDocument } from "@/lib/document/layout-aware-parser"
 import { formatLibraryContextBlock } from "@/lib/my-library"
-import { readLibraryFile, resolveStoredFilePath } from "@/lib/library-storage"
+import { readStoredLibraryObject } from "@/lib/library-storage"
 import { prisma } from "@/lib/prisma"
 
 export async function loadLibraryDocumentsForUser(
@@ -17,9 +17,7 @@ export async function loadLibraryDocumentsForUser(
 
   const out: Array<{ id: string; title: string; fileType: string; text: string }> = []
   for (const row of rows) {
-    const abs = resolveStoredFilePath(row.fileUrl)
-    if (!abs) continue
-    const buf = readLibraryFile(abs)
+    const buf = await readStoredLibraryObject(row.fileUrl)
     if (!buf) continue
 
     let text = ""

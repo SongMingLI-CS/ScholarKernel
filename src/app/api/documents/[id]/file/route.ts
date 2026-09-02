@@ -1,5 +1,5 @@
 import { resolveUserIdFromRequest } from "@/lib/auth-user"
-import { readLibraryFile, resolveStoredFilePath } from "@/lib/library-storage"
+import { LibraryStorageNotConfiguredError, readStoredLibraryObject } from "@/lib/library-storage"
 import { prisma } from "@/lib/prisma"
 
 type RouteCtx = { params: Promise<{ id: string }> }
@@ -16,10 +16,7 @@ export async function GET(req: Request, ctx: RouteCtx) {
     })
     if (!doc) return new Response("Not found", { status: 404 })
 
-    const abs = resolveStoredFilePath(doc.fileUrl)
-    if (!abs) return new Response("File missing", { status: 404 })
-
-    const buf = readLibraryFile(abs)
+    const buf = await readStoredLibraryObject(doc.fileUrl)
     if (!buf) return new Response("File missing", { status: 404 })
 
     return new Response(new Uint8Array(buf), {
@@ -31,6 +28,9 @@ export async function GET(req: Request, ctx: RouteCtx) {
     })
   } catch (e) {
     console.error("[GET /api/documents/[id]/file]", e)
+    if (e instanceof LibraryStorageNotConfiguredError) {
+      return new Response(e.message, { status: 503 })
+    }
     return new Response("Internal error", { status: 500 })
   }
 }

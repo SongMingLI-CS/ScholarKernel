@@ -14,7 +14,7 @@ Last updated: 2026-09-02
 
 - [x] Phase 1: server Agent SSE mainline
 - [x] Phase 2: frontend SSE state restoration
-- [ ] Phase 3: object storage Library
+- [x] Phase 3: object storage Library
 - [ ] Phase 4: Canvas recovery
 - [ ] Phase 5: chunked retrieval RAG
 - [ ] Phase 6: unified execution semantics
@@ -49,9 +49,18 @@ Last updated: 2026-09-02
 - Keys entered for configuration are uploaded to encrypted server storage and cleared from component state after submission.
 - Relevant tests: 12 stream/settings/event-adapter tests passed.
 
+### Phase 3
+
+- Added a provider-neutral `LibraryObjectStorage` interface with a private Vercel Blob adapter.
+- New uploads are stored as `object://` references; no new upload writes to the server filesystem.
+- File download, Agent document loading, and deletion resolve object references through the adapter.
+- Existing `file://` records retain read/delete compatibility for a non-destructive migration window.
+- Upload failure removes the temporary `Document` row; missing Blob configuration returns HTTP 503 with an actionable message.
+- Relevant tests: 18 storage, upload-route, Library, and academic-RAG tests passed.
+
 ## External blockers
 
-No external blocker has been confirmed. Production object-storage credentials are expected to be deployment-specific; implementation and tests will use provider-neutral interfaces and test doubles.
+- Production Vercel Blob credentials are not available in this workspace. The adapter, failure behavior, and tests are complete; real remote upload/download verification requires `BLOB_READ_WRITE_TOKEN` or Vercel OIDC configuration before deployment.
 
 ## Notes
 

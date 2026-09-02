@@ -7,10 +7,10 @@ import {
   type LibraryDocumentRecord,
 } from "@/lib/my-library"
 import {
-  deleteLibraryFile,
+  deleteStoredLibraryObject,
+  LibraryStorageNotConfiguredError,
   libraryFileApiUrl,
-  resolveStoredFilePath,
-  writeLibraryFile,
+  storeLibraryObject,
 } from "@/lib/library-storage"
 import { prisma } from "@/lib/prisma"
 
@@ -99,8 +99,19 @@ export async function POST(req: Request) {
       },
     })
 
-    const abs = writeLibraryFile(userId, created.id, file.name, buffer)
-    const fileUrl = `file://${abs}`
+    let fileUrl: string
+    try {
+      fileUrl = await storeLibraryObject({
+        userId,
+        documentId: created.id,
+        filename: file.name,
+        data: buffer,
+        contentType: fileType,
+      })
+    } catch (error) {
+      await prisma.document.delete({ where: { id: created.id } }).catch(() => undefined)
+      throw error
+    }
 
     const document = await prisma.document.update({
       where: { id: created.id },
@@ -116,6 +127,9 @@ export async function POST(req: Request) {
     )
   } catch (e) {
     console.error("[POST /api/documents]", e)
+    if (e instanceof LibraryStorageNotConfiguredError) {
+      return jsonError(e.message, 503)
+    }
     return jsonError("Failed to upload document", 500)
   }
 }
@@ -134,8 +148,7 @@ export async function DELETE(req: Request) {
     })
     if (!existing) return jsonError("Document not found", 404)
 
-    const abs = resolveStoredFilePath(existing.fileUrl)
-    if (abs) deleteLibraryFile(abs)
+    await deleteStoredLibraryObject(existing.fileUrl)
 
     await prisma.document.delete({ where: { id } })
     return jsonOk({ deleted: true, id })
