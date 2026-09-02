@@ -14,6 +14,8 @@ import { KeysPanel } from "@/components/keys-panel"
 import { ModelsPanel } from "@/components/models-panel"
 import { SettingsPanel } from "@/components/settings-panel"
 import { Sidebar } from "@/components/sidebar"
+import { MyLibraryPanel } from "@/components/my-library-panel"
+import { TemplateWorkshopPanel } from "@/components/template-workshop-panel"
 import { ToastHost } from "@/components/toast-host"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
@@ -25,6 +27,10 @@ function PanelBody({ panel }: { panel: PanelId }) {
       return <DashboardPanel />
     case "chat":
       return <ChatPanel />
+    case "workshop":
+      return <TemplateWorkshopPanel />
+    case "library":
+      return <MyLibraryPanel />
     case "keys":
       return <KeysPanel />
     case "models":
@@ -36,12 +42,17 @@ function PanelBody({ panel }: { panel: PanelId }) {
   }
 }
 
-export const AppShell = memo(function AppShell() {
+export const AppShell = memo(function AppShell({ initialPanel }: { initialPanel?: PanelId }) {
   const active = useAgentStore((s) => s.ui.activePanel)
+  const setActive = useAgentStore((s) => s.actions.setActivePanel)
   const mobileNavOpen = useAgentStore((s) => s.ui.sidebarDrawerOpen)
   const setMobileNavOpen = useAgentStore((s) => s.actions.setSidebarDrawerOpen)
   const heartbeat = useAgentStore((s) => s.actions.heartbeatSessionKeys)
   const pushToast = useAgentStore((s) => s.actions.pushToast)
+
+  useEffect(() => {
+    if (initialPanel) setActive(initialPanel)
+  }, [initialPanel, setActive])
 
   useEffect(() => {
     heartbeat()

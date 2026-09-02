@@ -38,6 +38,8 @@
     "@tiptap/pm": "^3.24.0",
     "@tiptap/react": "^3.24.0",
     "@tiptap/starter-kit": "^3.24.0",
+    "@upstash/ratelimit": "^2.0.8",
+    "@upstash/redis": "^1.38.0",
     "ai": "^6.0.168",
     "ai-sdk-ollama": "^3.8.3",
     "bcryptjs": "^3.0.3",

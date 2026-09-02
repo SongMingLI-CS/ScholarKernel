@@ -13,7 +13,8 @@ import { ScholarCanvas, ScholarCanvasMobileDrawer } from "@/components/scholar-c
 import { TopologyView } from "@/components/topology-view"
 import { isParallelPeerReviewActive, PeerReviewStreamPanels } from "@/components/peer-review-stream-panels"
 import { MobileWorkspaceTabBar, type MobileWorkspaceTab } from "@/components/mobile-workspace-tabs"
-import { WelcomeEmptyState } from "@/components/welcome-empty-state"
+import { LibraryPickerPopover } from "@/components/library-picker-popover"
+import { TemplateHub } from "@/components/template-hub"
 import { Button } from "@/components/ui/button"
 import {
   copyTextToClipboard,
@@ -26,10 +27,12 @@ import {
 import { collectSourcesFromMessages, exportSourcesAsBibTeX, exportSourcesAsRIS } from "@/lib/citation-export"
 import { gatherExportMetadataFromStore } from "@/lib/export-metadata"
 import { downloadConversationAsDocx, downloadConversationAsPdf } from "@/lib/export-utils"
-import { formatFileAttachmentBlock, readBrowserFileAsText } from "@/lib/browser-file"
+import { formatFileAttachmentBlock, isLayoutAwareUpload, readBrowserFileAsText } from "@/lib/browser-file"
+import { uploadLibraryDocument } from "@/lib/library-api"
 import { connKey, looksLikeWorkflowPlanJson, randomChatId } from "@/lib/chat-bubble-utils"
 import { bubbleContentToPlainText } from "@/lib/scholar-canvas"
 import { useChatSend } from "@/hooks/use-chat-send"
+import { consumeTemplateLaunchInput, useTemplateLaunch } from "@/hooks/use-template-launch"
 import { useMediaQuery } from "@/hooks/use-media-query"
 import { extractDoi, fetchMetadataByDoi, formatReferenceBlock } from "@/lib/reference-import"
 import { parseCitations } from "@/lib/utils/citation-parser"
@@ -219,6 +222,7 @@ const ChatPanelInner = memo(function ChatPanelInner() {
   const lang = useAgentStore((s) => s.settings.lang)
   const chatMessages = useAgentStore((s) => s.chat.messages)
   const attachedReferences = useAgentStore((s) => s.chat.attachedReferences)
+  const selectedLibraryDocuments = useAgentStore((s) => s.chat.selectedLibraryDocuments)
   const currentConversationId = useAgentStore((s) => s.conversations.currentId)
   const conversationLoading = useAgentStore((s) => s.conversations.loading)
   const canvasOpen = useAgentStore((s) => s.canvas.canvasOpen)
@@ -327,6 +331,14 @@ const ChatPanelInner = memo(function ChatPanelInner() {
     setTopologyOpen,
     maybeAutoTitle,
   })
+
+  const { launchWithInput } = useTemplateLaunch()
+
+  useEffect(() => {
+    return consumeTemplateLaunchInput((text) => {
+      void onSend(text)
+    })
+  }, [onSend])
 
   const onClearChat = useCallback(() => {
     if (streaming) return
@@ -518,10 +530,21 @@ const ChatPanelInner = memo(function ChatPanelInner() {
     async (file: File | null) => {
       if (!file || streaming) return
       try {
+        if (/\.pdf$/i.test(file.name)) {
+          const blobUrl = URL.createObjectURL(file)
+          useAgentStore.getState().actions.setSessionPdfUrl({ url: blobUrl, name: file.name })
+          useAgentStore.getState().actions.setCoReaderViewMode("pdf")
+          useAgentStore.getState().actions.setCanvasOpen(true)
+        }
         const text = await readBrowserFileAsText(file)
         const block = formatFileAttachmentBlock(file.name, text)
         setInput((prev) => (prev.trim() ? `${block}${prev}` : block))
-        pushToast({ messageKey: "chat.upload.done", variant: "success", ttlMs: 2400 })
+        void uploadLibraryDocument(file).catch((e) => console.error("[library sync]", e))
+        pushToast({
+          messageKey: isLayoutAwareUpload(file.name) && /\.pdf$/i.test(file.name) ? "chat.coReader.uploadDone" : "chat.upload.done",
+          variant: "success",
+          ttlMs: 2400,
+        })
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e)
         pushToast({
@@ -931,8 +954,8 @@ const ChatPanelInner = memo(function ChatPanelInner() {
           >
             <div className="space-y-3 pb-10">
               {!hasUserFacingMessages && !streaming ? (
-                <div className="flex min-h-[40vh] items-center justify-center py-8">
-                  <WelcomeEmptyState variant="chat" />
+                <div className="py-6">
+                  <TemplateHub variant="embedded" onLaunch={launchWithInput} />
                 </div>
               ) : null}
               {chatMessages.map((m) => {
@@ -1187,6 +1210,16 @@ const ChatPanelInner = memo(function ChatPanelInner() {
                   </span>
                 </div>
               ) : null}
+              {selectedLibraryDocuments.length > 0 ? (
+                <div className="px-0.5">
+                  <span className="inline-flex items-center gap-2 rounded-full border border-sky-500/35 bg-sky-500/10 px-3 py-1.5 font-sans text-[12px] font-medium text-sky-200/95 shadow-[inset_0_1px_0_oklch(1_0_0/0.06)]">
+                    <span aria-hidden className="text-base leading-none">
+                      📄
+                    </span>
+                    {t("library.picker.badge", { count: selectedLibraryDocuments.length })}
+                  </span>
+                </div>
+              ) : null}
               <div className="flex flex-wrap items-center gap-1.5 px-0.5">
                 <span className="shrink-0 font-mono text-[10px] text-muted-foreground">{t("chat.quickPrompts")}</span>
                 {QUICK_PROMPTS.map((p) => (
@@ -1229,6 +1262,7 @@ const ChatPanelInner = memo(function ChatPanelInner() {
               >
                 <Paperclip className="h-4 w-4" />
               </Button>
+              <LibraryPickerPopover disabled={streaming} />
               <Button
                 type="button"
                 variant="outline"

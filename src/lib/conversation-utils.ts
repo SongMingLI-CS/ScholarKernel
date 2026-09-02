@@ -86,7 +86,7 @@ export async function copyTextToClipboard(text: string): Promise<boolean> {
   return ok
 }
 
-const DEFAULT_TITLES = new Set(["新对话", "new chat", "new conversation"])
+const DEFAULT_TITLES = new Set(["新对话", "新学术对话...", "new chat", "new conversation"])
 
 export function deriveConversationTitle(firstUserMessage: string, maxLen = 32): string {
   const s = firstUserMessage.trim().replace(/\s+/g, " ")

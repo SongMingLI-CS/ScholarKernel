@@ -33,7 +33,9 @@ export const ToastHost = memo(function ToastHost() {
       ? CheckCircle2
       : toast.variant === "error"
         ? TriangleAlert
-        : Info
+        : toast.variant === "warning"
+          ? TriangleAlert
+          : Info
     : Info
 
   const frameClass =
@@ -41,7 +43,9 @@ export const ToastHost = memo(function ToastHost() {
       ? "border-emerald-500/25 bg-emerald-500/10 text-emerald-50"
       : toast.open && toast.variant === "error"
         ? "border-rose-500/25 bg-rose-500/10 text-rose-50"
-        : "border-border/60 bg-background/80 text-foreground"
+        : toast.open && toast.variant === "warning"
+          ? "border-amber-500/30 bg-amber-500/10 text-amber-50"
+          : "border-border/60 bg-background/80 text-foreground"
 
   return (
     <div className="pointer-events-none fixed inset-x-0 top-3 z-[70] flex justify-center px-4">

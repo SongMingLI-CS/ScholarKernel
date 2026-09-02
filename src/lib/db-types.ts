@@ -11,6 +11,17 @@ export type ConversationSummary = {
   updatedAt: string
 }
 
+export type TemplateBootstrapResponse = {
+  templateId: string
+  systemPrompt: string
+  initialAgents: import("@/store/types").WorkflowNode[]
+  jobId: string
+}
+
+export type CreateConversationResponse = ConversationSummary & {
+  templateBootstrap?: TemplateBootstrapResponse
+}
+
 export type PaginatedConversations = {
   items: ConversationSummary[]
   nextCursor: string | null

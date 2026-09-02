@@ -15,7 +15,7 @@ vi.mock("@/lib/auth-user", () => ({
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     conversation: { findFirst },
-    document: { create },
+    canvasDocument: { create },
   },
 }))
 

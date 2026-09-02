@@ -17,6 +17,7 @@ import "reactflow/dist/style.css"
 
 import { ComponentSandbox } from "@/components/component-sandbox"
 import { HumanInterventionPanel } from "@/components/human-intervention-panel"
+import { ThinkingAgentNode } from "@/components/nodes/ThinkingAgentNode"
 import { WelcomeEmptyState } from "@/components/welcome-empty-state"
 import { t as tGlobal } from "@/lib/locales"
 import { findPeerReviewGroups, peerReviewGroupToFlowLayout } from "@/lib/agent/topology-layout"
@@ -26,7 +27,9 @@ import {
   readStreamDrafts,
   readStreamStatusLines,
 } from "@/lib/agent/peer-review-stream-ui"
+import { useT } from "@/lib/locales"
 import { cn } from "@/lib/utils"
+import { useNodeRetry } from "@/hooks/use-node-retry"
 import { useAgentStore, type TopologyState, type WorkflowNode, type WorkflowNodeStatus } from "@/store/useAgentStore"
 
 type FlowStatus = TopologyState["nodes"][number]["status"] | WorkflowNodeStatus
@@ -76,6 +79,24 @@ type WorkflowNodeData = {
   active?: boolean
   error?: string
   metadata?: WorkflowNode["metadata"]
+  thinkingText?: string
+  finalResponse?: string
+  thinkingComplete?: boolean
+  onRetry?: (nodeId: string) => void
+  retrying?: boolean
+}
+
+function readR1NodeFields(n: WorkflowNode): Pick<WorkflowNodeData, "thinkingText" | "finalResponse" | "thinkingComplete"> {
+  const out = n.output && typeof n.output === "object" ? (n.output as Record<string, unknown>) : null
+  const thinkingText = typeof out?.["thinkingText"] === "string" ? String(out["thinkingText"]) : ""
+  const finalResponse =
+    typeof out?.["finalResponse"] === "string"
+      ? String(out["finalResponse"])
+      : typeof out?.["text"] === "string"
+        ? String(out["text"])
+        : ""
+  const thinkingComplete = Boolean(n.metadata?.["thinkingComplete"]) || (thinkingText.length > 0 && n.status === "done")
+  return { thinkingText, finalResponse, thinkingComplete }
 }
 
 function extractProgress(meta: WorkflowNode["metadata"] | undefined): { ratio: number; label?: string } | null {
@@ -101,6 +122,7 @@ function extractProgress(meta: WorkflowNode["metadata"] | undefined): { ratio: n
 }
 
 function IndustrialNode({ data, id }: NodeProps<ProviderNodeData | WorkflowNodeData>) {
+  const t = useT()
   const streaming = useAgentStore((s) => s.inference.streaming?.active)
   const interventionNodeId = useAgentStore((s) => s.intervention.pendingNodeId)
   const interventionReason = useAgentStore((s) => s.intervention.reason)
@@ -124,6 +146,9 @@ function IndustrialNode({ data, id }: NodeProps<ProviderNodeData | WorkflowNodeD
   const streamStyle = personaId ? peerReviewStreamStyle(personaId) : null
   const showIntervention =
     isWorkflow && nodeStatus === "pending_approval" && interventionNodeId === id && interventionReason
+  const wfData = isWorkflow ? (data as WorkflowNodeData) : null
+  const showRetry = Boolean(wfData?.onRetry && nodeStatus === "error")
+  const isRetrying = Boolean(wfData?.retrying)
 
   return (
     <div
@@ -199,11 +224,32 @@ function IndustrialNode({ data, id }: NodeProps<ProviderNodeData | WorkflowNodeD
           </div>
         </div>
       ) : null}
+
+      {showRetry ? (
+        <button
+          type="button"
+          disabled={isRetrying}
+          onClick={(e) => {
+            e.stopPropagation()
+            wfData?.onRetry?.(id)
+          }}
+          className={cn(
+            "absolute -right-2 top-1/2 z-20 -translate-y-1/2 translate-x-full",
+            "flex items-center gap-1 rounded-sm border border-amber-400/50 bg-gradient-to-r from-amber-500/25 to-orange-500/20",
+            "px-2 py-1 font-mono text-[9px] font-bold tracking-wide text-amber-50",
+            "shadow-[0_0_16px_oklch(0.72_0.17_75/0.35)] transition-all hover:border-amber-300/70 hover:shadow-[0_0_22px_oklch(0.75_0.18_75/0.5)]",
+            "disabled:cursor-not-allowed disabled:opacity-60",
+            isRetrying && "sk-node-running animate-pulse"
+          )}
+        >
+          {isRetrying ? "…" : t("topology.retry.node")}
+        </button>
+      ) : null}
     </div>
   )
 }
 
-const nodeTypes = { industrial: IndustrialNode }
+const nodeTypes = { industrial: IndustrialNode, thinking: ThinkingAgentNode }
 
 function workflowNodeLabel(n: WorkflowNode): string {
   if (n.type === "research") return "全球检索 (Global Search)"
@@ -211,7 +257,11 @@ function workflowNodeLabel(n: WorkflowNode): string {
   return n.title ?? n.id
 }
 
-function workflowToFlow(nodes: WorkflowNode[], activeNodeId: string | null): { nodes: Node[]; edges: Edge[] } {
+function workflowToFlow(
+  nodes: WorkflowNode[],
+  activeNodeId: string | null,
+  retry?: { onRetry: (nodeId: string) => void; retryingNodeId: string | null }
+): { nodes: Node[]; edges: Edge[] } {
   if (!Array.isArray(nodes) || nodes.length === 0) {
     return { nodes: [], edges: [] }
   }
@@ -246,6 +296,8 @@ function workflowToFlow(nodes: WorkflowNode[], activeNodeId: string | null): { n
       }
     }
 
+    const r1Fields = n.type === "reasoning" ? readR1NodeFields(n) : {}
+
     return {
       id: n.id,
       position,
@@ -258,8 +310,11 @@ function workflowToFlow(nodes: WorkflowNode[], activeNodeId: string | null): { n
         active: n.id === activeNodeId,
         error: typeof n.error === "string" ? n.error : undefined,
         metadata: n.metadata,
+        onRetry: retry?.onRetry,
+        retrying: retry?.retryingNodeId === n.id,
+        ...r1Fields,
       } satisfies WorkflowNodeData,
-      type: "industrial",
+      type: n.type === "reasoning" ? "thinking" : "industrial",
       draggable: false,
       selectable: true,
       style: { width: 220, minWidth: 0, maxWidth: "100%" },
@@ -510,9 +565,13 @@ export const TopologyView = memo(function TopologyView({
   const wfNodes = useMemo(() => (Array.isArray(wfNodesRaw) ? wfNodesRaw : []), [wfNodesRaw])
   const activeNodeId = useAgentStore((s) => s.workflow.activeNodeId)
   const pushToast = useAgentStore((s) => s.actions.pushToast)
+  const { retryNode, retryingNodeId } = useNodeRetry()
 
   const shouldShowWorkflow = wfNodes.length > 0
-  const workflow = useMemo(() => workflowToFlow(wfNodes, activeNodeId), [activeNodeId, wfNodes])
+  const workflow = useMemo(
+    () => workflowToFlow(wfNodes, activeNodeId, { onRetry: retryNode, retryingNodeId }),
+    [activeNodeId, retryNode, retryingNodeId, wfNodes]
+  )
 
   const providerNodes: Node[] = useMemo(() => {
     const t = topology

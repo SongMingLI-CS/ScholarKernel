@@ -2,9 +2,16 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 
 import { GET, POST } from "../route"
 
-const { findMany, create } = vi.hoisted(() => ({
+const { findMany, create, messageCreate } = vi.hoisted(() => ({
   findMany: vi.fn(),
   create: vi.fn(),
+  messageCreate: vi.fn(),
+}))
+
+const { createAgentJob, markAgentJobRunning, updateAgentJobCheckpoint } = vi.hoisted(() => ({
+  createAgentJob: vi.fn(),
+  markAgentJobRunning: vi.fn(),
+  updateAgentJobCheckpoint: vi.fn(),
 }))
 
 vi.mock("@/lib/auth-user", () => ({
@@ -12,11 +19,28 @@ vi.mock("@/lib/auth-user", () => ({
   conversationOwnerWhere: (userId: string) => ({ userId }),
 }))
 
+vi.mock("@/auth", () => ({
+  auth: vi.fn(async () => null),
+}))
+
+vi.mock("@/lib/agent-jobs", () => ({
+  createAgentJob,
+  markAgentJobRunning,
+  updateAgentJobCheckpoint,
+}))
+
 vi.mock("@/lib/prisma", () => ({
   prisma: {
+    user: {
+      findUnique: vi.fn(async () => ({ id: "user-test" })),
+      upsert: vi.fn(),
+    },
     conversation: {
       findMany,
       create,
+    },
+    message: {
+      create: messageCreate,
     },
   },
 }))
@@ -68,5 +92,50 @@ describe("/api/conversations", () => {
     expect(res.status).toBe(201)
     const json = (await res.json()) as { id: string }
     expect(json.id).toBe("c-new")
+  })
+
+  it("POST with templateId injects systemPrompt and running agent checkpoint", async () => {
+    create.mockResolvedValueOnce({
+      id: "c-template",
+      title: "顶会双盲评审模拟器",
+      isPinned: false,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    })
+    createAgentJob.mockResolvedValueOnce({ id: "job-1" })
+    markAgentJobRunning.mockResolvedValueOnce({ id: "job-1", status: "running" })
+    updateAgentJobCheckpoint.mockResolvedValueOnce({ id: "job-1" })
+    messageCreate.mockResolvedValue({ id: "m1" })
+
+    const res = await POST(
+      new Request("http://localhost/api/conversations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ templateId: "neurips-peer-review" }),
+      })
+    )
+    expect(res.status).toBe(201)
+    const json = (await res.json()) as {
+      templateBootstrap?: { systemPrompt: string; templateId: string; jobId: string }
+    }
+    expect(json.templateBootstrap?.templateId).toBe("neurips-peer-review")
+    expect(json.templateBootstrap?.systemPrompt).toContain("NeurIPS")
+    expect(json.templateBootstrap?.jobId).toBe("job-1")
+    expect(createAgentJob).toHaveBeenCalled()
+    expect(updateAgentJobCheckpoint).toHaveBeenCalledWith(
+      "job-1",
+      expect.objectContaining({ phase: "running", nodes: expect.any(Array) })
+    )
+  })
+
+  it("POST returns 400 for unknown templateId", async () => {
+    const res = await POST(
+      new Request("http://localhost/api/conversations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ templateId: "not-a-template" }),
+      })
+    )
+    expect(res.status).toBe(400)
   })
 })

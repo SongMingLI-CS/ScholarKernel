@@ -10,6 +10,8 @@ import remarkMath from "remark-math"
 import type { Components } from "react-markdown"
 import type { PluggableList } from "unified"
 
+import { CitationAnchor } from "@/components/CitationAnchor"
+import { segmentPageCitations } from "@/lib/page-citation"
 import { cn } from "@/lib/utils"
 
 import "katex/dist/katex.min.css"
@@ -201,6 +203,48 @@ const components: Components = {
   },
 }
 
+function isInlineMarkdownSegment(text: string): boolean {
+  return (
+    !/^#{1,6}\s/m.test(text) &&
+    !/```/.test(text) &&
+    !/^\s*[-*+]\s/m.test(text) &&
+    !/^\s*\d+\.\s/m.test(text) &&
+    !text.includes("\n\n")
+  )
+}
+
+const MarkdownChunk = memo(function MarkdownChunk({
+  content,
+  inline,
+}: {
+  content: string
+  inline?: boolean
+}) {
+  const remarkPlugins = useMemo(() => [remarkGfm, remarkMath], [])
+  const rehypePlugins = useMemo(
+    () => [rehypeKatex, [rehypeHighlight, { detect: true, ignoreMissing: true }]] as PluggableList,
+    []
+  )
+  const chunkComponents = useMemo(
+    () =>
+      inline
+        ? ({
+            ...components,
+            p: ({ children }) => <span className="inline">{children}</span>,
+          } as Components)
+        : components,
+    [inline]
+  )
+
+  if (!content) return null
+
+  return (
+    <ReactMarkdown remarkPlugins={remarkPlugins} rehypePlugins={rehypePlugins} components={chunkComponents}>
+      {content}
+    </ReactMarkdown>
+  )
+})
+
 export const AcademicMarkdown = memo(function AcademicMarkdown({
   content,
   className,
@@ -210,12 +254,8 @@ export const AcademicMarkdown = memo(function AcademicMarkdown({
   className?: string
   fallbackPrefix?: string
 }) {
-  const remarkPlugins = useMemo(() => [remarkGfm, remarkMath], [])
-  const rehypePlugins = useMemo(
-    () => [rehypeKatex, [rehypeHighlight, { detect: true, ignoreMissing: true }]] as PluggableList,
-    []
-  )
   const safeContent = useMemo(() => safeMarkdownContent(content), [content])
+  const segments = useMemo(() => segmentPageCitations(safeContent), [safeContent])
 
   return (
     <MarkdownRenderErrorBoundary fallbackPrefix={fallbackPrefix}>
@@ -232,9 +272,17 @@ export const AcademicMarkdown = memo(function AcademicMarkdown({
           className
         )}
       >
-        <ReactMarkdown remarkPlugins={remarkPlugins} rehypePlugins={rehypePlugins} components={components}>
-          {safeContent}
-        </ReactMarkdown>
+        {segments.map((seg, i) =>
+          seg.kind === "citation" ? (
+            <CitationAnchor key={`cite-${i}-${seg.page}`} page={seg.page} label={seg.content} />
+          ) : (
+            <MarkdownChunk
+              key={`md-${i}`}
+              content={seg.content}
+              inline={isInlineMarkdownSegment(seg.content)}
+            />
+          )
+        )}
       </div>
     </MarkdownRenderErrorBoundary>
   )

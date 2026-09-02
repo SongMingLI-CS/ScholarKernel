@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
 
-import { ApiUnauthorizedError, apiFetch, buildLoginRedirectUrl, isApiUnauthorizedError, notifySessionExpired } from "@/lib/api-fetch"
+import { ApiUnauthorizedError, ApiRateLimitError, apiFetch, buildLoginRedirectUrl, isApiRateLimitError, isApiUnauthorizedError, notifySessionExpired } from "@/lib/api-fetch"
 
 describe("api-fetch", () => {
   afterEach(() => {
@@ -32,6 +32,26 @@ describe("api-fetch", () => {
     expect(caught).toBeInstanceOf(ApiUnauthorizedError)
     expect(isApiUnauthorizedError(caught)).toBe(true)
     expect(dispatch).toHaveBeenCalled()
+  })
+
+  it("throws ApiRateLimitError on 429", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(
+          JSON.stringify({
+            error: "Too Many Requests",
+            message: "您的学术操作过于频繁，请稍后再试。",
+          }),
+          { status: 429 }
+        )
+      )
+    )
+
+    await expect(apiFetch("/api/conversations", { method: "POST" })).rejects.toBeInstanceOf(ApiRateLimitError)
+    await expect(apiFetch("/api/conversations", { method: "POST" })).rejects.toSatisfy((e: unknown) =>
+      isApiRateLimitError(e)
+    )
   })
 
   it("returns parsed JSON on success", async () => {

@@ -1,4 +1,4 @@
-export type PanelId = "dashboard" | "chat" | "keys" | "models" | "settings"
+export type PanelId = "dashboard" | "chat" | "workshop" | "library" | "keys" | "models" | "settings"
 
 export type ProviderId =
   | "ollama"
@@ -142,7 +142,7 @@ export type CorsHelpState =
       hints: readonly string[]
     }
 
-export type ToastVariant = "info" | "error" | "success"
+export type ToastVariant = "info" | "error" | "success" | "warning"
 export type ToastState =
   | { open: false }
   | {

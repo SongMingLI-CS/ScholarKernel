@@ -2,6 +2,7 @@ import { apiFetch } from "@/lib/api-fetch"
 import type {
   ConversationDetail,
   ConversationSummary,
+  CreateConversationResponse,
   CreateMessageBody,
   PaginatedConversations,
   SettingsPatchBody,
@@ -10,7 +11,7 @@ import type {
 import { chatMessageToCreateBody } from "@/lib/db-types"
 import type { ChatMessage, RuntimeKeys, ThemeMode } from "@/store/useAgentStore"
 
-export { ApiUnauthorizedError, isApiUnauthorizedError } from "@/lib/api-fetch"
+export { ApiUnauthorizedError, isApiUnauthorizedError, isApiRateLimitError, isHttp429Error } from "@/lib/api-fetch"
 
 export async function fetchConversations(): Promise<ConversationSummary[]> {
   return apiFetch<ConversationSummary[]>("/api/conversations")
@@ -26,8 +27,15 @@ export async function fetchConversationsPage(input?: {
   return apiFetch<PaginatedConversations>(`/api/conversations?${qp.toString()}`)
 }
 
-export async function createConversation(): Promise<ConversationSummary> {
-  return apiFetch<ConversationSummary>("/api/conversations", { method: "POST" })
+export async function createConversation(input?: {
+  templateId?: string
+  initialInput?: string
+}): Promise<CreateConversationResponse> {
+  const hasBody = Boolean(input?.templateId?.trim())
+  return apiFetch<CreateConversationResponse>("/api/conversations", {
+    method: "POST",
+    ...(hasBody ? { body: JSON.stringify(input) } : {}),
+  })
 }
 
 export async function fetchConversation(

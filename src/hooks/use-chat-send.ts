@@ -22,8 +22,11 @@ import type { LocaleKey } from "@/lib/locales"
 import { isLikelyCorsBlocked } from "@/lib/network-errors"
 import { isAbortError } from "@/lib/run-abort"
 import { formatUserFacingErrorMessage } from "@/lib/user-facing-errors"
-import { isApiUnauthorizedError } from "@/lib/conversation-api"
+import { isApiUnauthorizedError, isApiRateLimitError, isHttp429Error } from "@/lib/conversation-api"
+import { fetchLibraryContext } from "@/lib/library-api"
+import { buildAgentRunPayload } from "@/lib/my-library"
 import { formatReferencesContextBlock } from "@/lib/utils/citation-parser"
+import { stripRedactedThinking } from "@/lib/r1-stream-parser"
 import { buildTopologyForActiveProvider, useAgentStore } from "@/store/useAgentStore"
 
 const OLLAMA_DEFAULT = { providerId: "ollama" as const, model: "llama3.1", baseUrl: "http://localhost:11434" }
@@ -119,8 +122,11 @@ export function useChatSend({
       const st0 = useAgentStore.getState()
       const citationPrefix = formatReferencesContextBlock(st0.chat.attachedReferences, st0.settings.lang)
       const sendText = citationPrefix ? `${citationPrefix}${rawInput}` : rawInput
+      const librarySelection = st0.chat.selectedLibraryDocuments
+      const documentIds = librarySelection.map((d) => d.id)
+      const agentPayload = buildAgentRunPayload(sendText, documentIds)
 
-      const localOnly = useAgentStore.getState().settings.behavior.localOnly
+      const localOnly = st0.settings.behavior.localOnly
       if (localOnly && provider.providerId !== "ollama") {
         useAgentStore.getState().actions.setActiveProvider(OLLAMA_DEFAULT)
       }
@@ -130,31 +136,11 @@ export function useChatSend({
           : OLLAMA_DEFAULT
         : provider
 
-      const effectiveKeys = runtimeKeys
-      const needKey = !localOnly && sendProvider.providerId !== "ollama"
-      if (needKey && !useAgentStore.getState().actions.hasRuntimeKeyForProvider(sendProvider.providerId)) {
-        useAgentStore.getState().actions.pushToast({ messageKey: "gateway.toast.missingKey", variant: "error", ttlMs: 5200 })
-        useAgentStore.getState().actions.setActivePanel("keys")
-        return
-      }
-
-      const k = connKey(sendProvider.providerId, sendProvider.baseUrl, sendProvider.model)
-      const conn = connectivity[k]
-      if (conn?.health === "offline") {
-        useAgentStore.getState().actions.pushToast({
-          messageKey: "conn.toast.offline.gotoModels",
-          detail: typeof conn.errorCode === "number" ? `(${conn.errorCode})` : conn.errorCode ? `(${conn.errorCode})` : "",
-          variant: "error",
-          ttlMs: 4200,
-        })
-        useAgentStore.getState().actions.setActivePanel("models")
-        return
-      }
-
       const userMsg = { id: randomChatId(), role: "user" as const, content: sendText }
       const assistantId = randomChatId()
       lastAssistantIdRef.current = assistantId
 
+      // Phase 2: optimistic bubble + topology — zero RTT wait before paint
       if (!isRegenerate) {
         useAgentStore.getState().actions.pushChatMessage(userMsg)
         maybeAutoTitle(sendText)
@@ -166,16 +152,15 @@ export function useChatSend({
         if (citationPrefix) {
           useAgentStore.getState().actions.clearAttachedReferences()
         }
+        if (documentIds.length) {
+          useAgentStore.getState().actions.clearSelectedLibraryDocuments()
+        }
       }
       followBottomRef.current = true
       queueMicrotask(lockToBottomOnce)
 
-      const ctrl = new AbortController()
-      abortRef.current = ctrl
-      userStoppedRef.current = false
-      setStreaming(true)
-
       setTopologyOpen(true)
+      setStreaming(true)
 
       const runId = randomChatId()
       activeRunIdRef.current = runId
@@ -183,10 +168,18 @@ export function useChatSend({
       streamAssistantTextLenRef.current = 0
       const st = useAgentStore.getState()
       st.actions.resetWorkflowPlanOutput()
-
       st.actions.setTopology(buildTopologyForActiveProvider(sendProvider))
       st.actions.patchTopologyNodes({ edge: "running", route: "running", cloud: "idle", sink: "idle" })
-
+      st.actions.setWorkflowNodes([
+        {
+          id: "sk-init",
+          type: "reasoning",
+          provider: sendProvider.providerId === "ollama" ? "local" : "cloud",
+          status: "running",
+          title: "初始化编排",
+          logs: ["正在唤醒 Agent 执行器…"],
+        },
+      ])
       st.actions.startInferenceStream({
         runId,
         assistantMessageId: assistantId,
@@ -195,6 +188,43 @@ export function useChatSend({
         model: sendProvider.model,
         baseUrl: sendProvider.baseUrl,
       })
+
+      const rollbackOptimisticSend = () => {
+        const ids = isRegenerate ? [assistantId] : [userMsg.id, assistantId]
+        useAgentStore.getState().actions.rollbackChatMessages(ids)
+        useAgentStore.getState().actions.finishInferenceStream({ runId, now: performance.now(), ok: false })
+        useAgentStore.getState().actions.setWorkflowNodes([])
+        useAgentStore.getState().actions.patchTopologyNodes({ edge: "idle", route: "idle", cloud: "idle", sink: "idle" })
+        setStreaming(false)
+        activeRunIdRef.current = null
+      }
+
+      const effectiveKeys = runtimeKeys
+      const needKey = !localOnly && sendProvider.providerId !== "ollama"
+      if (needKey && !useAgentStore.getState().actions.hasRuntimeKeyForProvider(sendProvider.providerId)) {
+        rollbackOptimisticSend()
+        useAgentStore.getState().actions.pushToast({ messageKey: "gateway.toast.missingKey", variant: "error", ttlMs: 5200 })
+        useAgentStore.getState().actions.setActivePanel("keys")
+        return
+      }
+
+      const k = connKey(sendProvider.providerId, sendProvider.baseUrl, sendProvider.model)
+      const conn = connectivity[k]
+      if (conn?.health === "offline") {
+        rollbackOptimisticSend()
+        useAgentStore.getState().actions.pushToast({
+          messageKey: "conn.toast.offline.gotoModels",
+          detail: typeof conn.errorCode === "number" ? `(${conn.errorCode})` : conn.errorCode ? `(${conn.errorCode})` : "",
+          variant: "error",
+          ttlMs: 4200,
+        })
+        useAgentStore.getState().actions.setActivePanel("models")
+        return
+      }
+
+      const ctrl = new AbortController()
+      abortRef.current = ctrl
+      userStoppedRef.current = false
 
       metricsTimerRef.current = window.setInterval(() => {
         useAgentStore.getState().actions.tickInferenceStream({
@@ -215,11 +245,23 @@ export function useChatSend({
       let errMsg: string | undefined
 
       const runOnce = async (p: ProviderConfig, agentUserInput: string, planOpts?: { planRetryMessage?: string }) => {
+        let libraryContext = ""
+        if (agentPayload.documentIds?.length) {
+          try {
+            const resolved = await fetchLibraryContext(agentPayload.documentIds)
+            libraryContext = resolved.context
+          } catch (e) {
+            console.error("[library context]", e)
+          }
+        }
+
         const { AgentExecutor } = await loadAgentExecutor()
         const executor = new AgentExecutor(
           {
             activeProvider: { providerId: p.providerId as ActiveProviderId, model: p.model, baseUrl: p.baseUrl },
             interventionSessionId: runId,
+            documentIds: agentPayload.documentIds,
+            libraryContext,
             inference: {
               temperature: useAgentStore.getState().settings.inference.temperature,
               maxTokens: useAgentStore.getState().settings.inference.maxTokens,
@@ -274,8 +316,14 @@ export function useChatSend({
                 if (node?.type !== "reasoning") return
                 const out = patch.output ?? node.output
                 const rec = out && typeof out === "object" ? (out as Record<string, unknown>) : null
-                const txt = typeof rec?.["text"] === "string" ? String(rec["text"]) : null
-                if (txt == null) return
+                const rawTxt =
+                  typeof rec?.["finalResponse"] === "string"
+                    ? String(rec["finalResponse"])
+                    : typeof rec?.["text"] === "string"
+                      ? String(rec["text"])
+                      : null
+                if (rawTxt == null) return
+                const txt = stripRedactedThinking(rawTxt)
                 const lang = store.settings.lang
                 const displayTxt = bubbleAfterPlanIntercept(txt, lang)
                 const prevLen = streamAssistantTextLenRef.current
@@ -374,6 +422,15 @@ export function useChatSend({
         queueMicrotask(lockToBottomOnce)
       } catch (e) {
         if (isAbortError(e) || userStoppedRef.current || ctrl.signal.aborted) {
+          return
+        }
+        if (isApiRateLimitError(e) || isHttp429Error(e)) {
+          rollbackOptimisticSend()
+          useAgentStore.getState().actions.pushToast({
+            messageKey: "rateLimit.toast",
+            variant: "warning",
+            ttlMs: 5200,
+          })
           return
         }
         ok = false

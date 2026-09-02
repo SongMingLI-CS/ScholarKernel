@@ -10,6 +10,8 @@ import {
   MessageSquareText,
   MoreHorizontal,
   Network,
+  BookOpen,
+  PenTool,
   Pin,
   PinOff,
   Plus,
@@ -43,6 +45,7 @@ type NavItem = {
 const NAV_ITEMS: readonly NavItem[] = [
   { id: "dashboard", label: "nav.dashboard", icon: Activity },
   { id: "chat", label: "nav.chat", icon: MessageSquareText },
+  { id: "workshop", label: "nav.workshop", icon: PenTool },
   { id: "keys", label: "nav.keys", icon: KeyRound },
   { id: "models", label: "nav.models", icon: Cpu },
   { id: "settings", label: "nav.settings", icon: Settings },
@@ -249,9 +252,16 @@ export const Sidebar = memo(function Sidebar({ onNavigate }: { onNavigate?: () =
   const [now, setNow] = useState<number | null>(null)
   const [manifestOpen, setManifestOpen] = useState(false)
   const [quickStartOpen, setQuickStartOpen] = useState(false)
-  const [creating, setCreating] = useState(false)
   const [searchQuery, setSearchQuery] = useState("")
   const searchInputRef = useRef<HTMLInputElement>(null)
+
+  const handleNewConversation = useCallback(() => {
+    void (async () => {
+      const conv = await createConversation()
+      goPanel("chat")
+      router.push(`/?c=${conv.id}`)
+    })()
+  }, [createConversation, goPanel, router])
 
   useEffect(() => {
     setMounted(true)
@@ -292,18 +302,6 @@ export const Sidebar = memo(function Sidebar({ onNavigate }: { onNavigate?: () =
   const pinned = useMemo(() => filteredConversations.filter((c) => c.isPinned), [filteredConversations])
   const recent = useMemo(() => filteredConversations.filter((c) => !c.isPinned), [filteredConversations])
   const searchActive = searchQuery.trim().length > 0
-
-  const handleNewConversation = useCallback(async () => {
-    if (creating) return
-    setCreating(true)
-    try {
-      const conv = await createConversation()
-      goPanel("chat")
-      router.push(`/?c=${conv.id}`)
-    } finally {
-      setCreating(false)
-    }
-  }, [createConversation, creating, goPanel, router])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -376,12 +374,11 @@ export const Sidebar = memo(function Sidebar({ onNavigate }: { onNavigate?: () =
         <motion.div whileTap={{ scale: 0.985 }} transition={{ type: "spring", stiffness: 520, damping: 28 }}>
           <Button
             variant="outline"
-            disabled={creating}
             className="h-10 w-full justify-start gap-2 rounded-xl border-sidebar-primary/35 bg-gradient-to-r from-sidebar-primary/10 to-transparent font-mono text-[13px] shadow-[inset_0_0_0_1px_oklch(0.488_0.243_264.376/0.22)] hover:from-sidebar-primary/16"
-            onClick={() => void handleNewConversation()}
+            onClick={() => handleNewConversation()}
           >
             <Plus className="h-4 w-4 text-sidebar-primary" />
-            <span>{creating ? "创建中…" : "新建对话"}</span>
+            <span>新建对话</span>
           </Button>
         </motion.div>
 
@@ -459,21 +456,43 @@ export const Sidebar = memo(function Sidebar({ onNavigate }: { onNavigate?: () =
         {NAV_ITEMS.map((it) => {
           const Icon = it.icon
           const isActive = it.id === active
+          const isWorkshop = it.id === "workshop"
           return (
-            <motion.div key={it.id} whileTap={{ scale: 0.985 }} transition={{ type: "spring", stiffness: 520, damping: 28 }}>
-              <Button
-                variant="outline"
-                className={cn(
-                  "h-10 w-full justify-start gap-2 rounded-sm border-border/60 bg-background/30 font-mono text-[13px] hover:bg-background/60",
-                  isActive &&
-                    "border-sidebar-primary/50 bg-sidebar-primary/10 shadow-[inset_0_0_0_1px_oklch(0.488_0.243_264.376/0.35)]"
-                )}
-                onClick={() => goPanel(it.id)}
-              >
-                <Icon className="h-4 w-4" />
-                <span className="truncate">{t(it.label)}</span>
-              </Button>
-            </motion.div>
+            <div key={it.id} className="space-y-2">
+              <motion.div whileTap={{ scale: 0.985 }} transition={{ type: "spring", stiffness: 520, damping: 28 }}>
+                <Button
+                  variant="outline"
+                  className={cn(
+                    "h-10 w-full justify-start gap-2 rounded-sm border-border/60 bg-background/30 font-mono text-[13px] hover:bg-background/60",
+                    isActive &&
+                      "border-sidebar-primary/50 bg-sidebar-primary/10 shadow-[inset_0_0_0_1px_oklch(0.488_0.243_264.376/0.35)]"
+                  )}
+                  onClick={() => goPanel(it.id)}
+                >
+                  <Icon className="h-4 w-4" />
+                  <span className="truncate">{t(it.label)}</span>
+                </Button>
+              </motion.div>
+              {isWorkshop ? (
+                <motion.div whileTap={{ scale: 0.985 }} transition={{ type: "spring", stiffness: 520, damping: 28 }}>
+                  <Button
+                    variant="outline"
+                    className={cn(
+                      "h-10 w-full justify-start gap-2 rounded-sm border-border/60 bg-background/30 font-mono text-[13px] hover:bg-background/60",
+                      active === "library" &&
+                        "border-emerald-500/40 bg-emerald-500/10 shadow-[inset_0_0_0_1px_oklch(0.72_0.17_155/0.35)]"
+                    )}
+                    onClick={() => {
+                      goPanel("library")
+                      router.push("/workshop/library")
+                    }}
+                  >
+                    <BookOpen className="h-4 w-4 text-emerald-400" />
+                    <span className="truncate">{t("nav.library")}</span>
+                  </Button>
+                </motion.div>
+              ) : null}
+            </div>
           )
         })}
       </nav>

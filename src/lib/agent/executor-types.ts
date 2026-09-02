@@ -1,6 +1,7 @@
 import type { HumanInterventionDecision, InterventionPendingEvent } from "@/lib/agent/human-intervention-gate"
 import type { RecordTokenUsageInput } from "@/lib/billing/token-usage-bridge"
 import type { PeerReviewCheckpointData } from "@/lib/agent/peer-review-checkpoint"
+import type { NodeSnapshotRecord } from "@/lib/agent/node-resume"
 import type { AcademicSearchHit } from "@/lib/tools/search-tool"
 import type { ChatHistoryEntry, ActiveProviderConfig, WorkflowNode } from "@/lib/agent/planner"
 
@@ -57,6 +58,18 @@ export type AgentExecutorDeps = {
   sourceApiBase?: string
   signal?: AbortSignal
   localOnly?: boolean
+  /** 断点续跑：仅重试该节点及其后续依赖 */
+  targetNodeId?: string
+  /** 已完成节点的 DB/内存快照 */
+  resumeSnapshots?: NodeSnapshotRecord[]
+  /** 跳过 plan 阶段，直接使用已有拓扑 */
+  resumeNodes?: WorkflowNode[]
+  /** 节点 done 时异步持久化快照 */
+  onNodeSnapshotPersist?: (record: NodeSnapshotRecord) => void | Promise<void>
+  /** 跨会话文献库勾选 ID，由 Agent 调度器注入工作流上下文 */
+  documentIds?: string[]
+  /** 服务端解析文献库正文；浏览器端由 deps 预注入 libraryContext */
+  libraryContext?: string
 }
 
 export type AgentExecutorHooks = {

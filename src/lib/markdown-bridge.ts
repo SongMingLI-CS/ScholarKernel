@@ -2,6 +2,8 @@ import katex from "katex"
 import { marked } from "marked"
 import TurndownService from "turndown"
 
+import { injectPageCitationAnchors } from "@/lib/page-citation"
+
 marked.setOptions({ gfm: true, breaks: true })
 
 function renderKatex(tex: string, displayMode: boolean): string {
@@ -44,11 +46,13 @@ export function markdownToHtml(markdown: string): string {
   return marked.parse(md, { async: false }) as string
 }
 
-/** Scholar Canvas: Markdown + LaTeX delimiters → HTML for TipTap. */
+/** Scholar Canvas: Markdown + LaTeX delimiters + page citations → HTML for TipTap. */
 export function markdownToCanvasHtml(markdown: string): string {
   const md = markdown.trim()
   if (!md) return "<p></p>"
-  return marked.parse(injectCanvasMathDelimiters(md), { async: false }) as string
+  const withMath = injectCanvasMathDelimiters(md)
+  const withCitations = injectPageCitationAnchors(withMath)
+  return marked.parse(withCitations, { async: false }) as string
 }
 
 export function htmlToMarkdown(html: string): string {

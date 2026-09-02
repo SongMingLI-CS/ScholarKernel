@@ -17,6 +17,7 @@ import {
   type StreamTextCallExtras,
 } from "@/lib/agent/llm-utils"
 import { recordLlmUsageAsync } from "@/lib/billing/token-usage-bridge"
+import { createR1StreamParser } from "@/lib/r1-stream-parser"
 
 export type ReasoningNodeContext = {
   node: WorkflowNode
@@ -195,16 +196,34 @@ export async function executeReasoningNode(ctx: ReasoningNodeContext): Promise<S
     },
   })
 
-  let acc = ""
-  acc = await consumeStreamTextOutput(
+  const r1Parser = createR1StreamParser()
+  let rawAcc = ""
+  let rawLen = 0
+
+  rawAcc = await consumeStreamTextOutput(
     streamed,
     (text) => {
       if (!sawFirst && text.length > 0) {
         sawFirst = true
         hooks.onNodeLog?.(n.id, "首个 token 已到达 (TTFT)")
       }
-      acc = text
-      hooks.onNodePatch?.(n.id, { output: { text: acc } })
+      const delta = text.slice(rawLen)
+      rawLen = text.length
+      rawAcc = text
+      if (!delta) return
+
+      const parsed = r1Parser.append(delta)
+      hooks.onNodePatch?.(n.id, {
+        output: {
+          text: parsed.finalResponse,
+          thinkingText: parsed.thinkingText,
+          finalResponse: parsed.finalResponse,
+        },
+        metadata: {
+          thinkingComplete: parsed.thinkingComplete,
+          r1Track: parsed.track,
+        },
+      })
     },
     deps.signal,
     {
@@ -216,10 +235,26 @@ export async function executeReasoningNode(ctx: ReasoningNodeContext): Promise<S
     }
   )
 
+  const finalParsed = r1Parser.flush()
+  const cleanFinal = finalParsed.finalResponse
+
   hooks.onNodePatch?.(n.id, {
     status: "done",
-    output: { text: acc },
-    metadata: { durationMs: Math.round(performance.now() - nodeStartedAt) },
+    output: {
+      text: cleanFinal,
+      thinkingText: finalParsed.thinkingText,
+      finalResponse: cleanFinal,
+    },
+    metadata: {
+      durationMs: Math.round(performance.now() - nodeStartedAt),
+      thinkingComplete: finalParsed.thinkingComplete || finalParsed.thinkingText.length > 0,
+      r1Track: "response",
+    },
   })
-  return { id: n.id, ok: true, summary: "推理整合完成", output: { text: acc } }
+  return {
+    id: n.id,
+    ok: true,
+    summary: "推理整合完成",
+    output: { text: cleanFinal, thinkingText: finalParsed.thinkingText, finalResponse: cleanFinal },
+  }
 }

@@ -7,6 +7,14 @@ import {
   isPublicPath,
   unauthorizedJsonBody,
 } from "@/lib/middleware-auth"
+import {
+  buildRateLimitKey,
+  checkCoreApiRateLimit,
+  isCoreApiWriteRequest,
+  rateLimitExceededBody,
+  rateLimitResponseHeaders,
+  resolveClientIp,
+} from "@/lib/ratelimit"
 
 function readAuthSecret(): string | undefined {
   const raw =
@@ -19,11 +27,27 @@ function readAuthSecret(): string | undefined {
 }
 
 export async function middleware(req: NextRequest) {
+  const { pathname } = req.nextUrl
+
+  if (isCoreApiWriteRequest(pathname, req.method)) {
+    const secret = readAuthSecret()
+    const token = secret
+      ? await getToken({ req, secret, secureCookie: req.nextUrl.protocol === "https:" })
+      : null
+    const key = buildRateLimitKey(resolveClientIp(req), token?.sub)
+    const rate = await checkCoreApiRateLimit(key)
+    if (!rate.success) {
+      return NextResponse.json(rateLimitExceededBody, {
+        status: 429,
+        headers: rateLimitResponseHeaders(rate),
+      })
+    }
+  }
+
   if (!isAuthEnabledInMiddleware()) {
     return NextResponse.next()
   }
 
-  const { pathname } = req.nextUrl
   if (isPublicPath(pathname) || !isProtectedPath(pathname)) {
     return NextResponse.next()
   }
@@ -51,9 +75,11 @@ export const config = {
     "/api/conversations/:path*",
     "/api/agent/:path*",
     "/api/canvas/:path*",
+    "/api/public/:path*",
     "/dashboard",
     "/dashboard/:path*",
     "/workspace",
     "/workspace/:path*",
+    "/share/:path*",
   ],
 }

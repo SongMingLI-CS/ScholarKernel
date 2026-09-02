@@ -1,15 +1,20 @@
 import { AgentExecutor } from "@/lib/agent-executor"
+import { buildLibraryContextForAgent } from "@/lib/library-resolve"
 import { runtimeKeysFromEnv } from "@/lib/agent/llm-utils"
 import type { AgentExecutorDeps, AgentExecutorHooks } from "@/lib/agent/executor-types"
 import type { PeerReviewCheckpointData } from "@/lib/agent/peer-review-checkpoint"
-import type { ActiveProviderConfig, ChatHistoryEntry } from "@/lib/agent/planner"
+import type { NodeSnapshotRecord } from "@/lib/agent/node-resume"
+import type { ActiveProviderConfig, ChatHistoryEntry, WorkflowNode } from "@/lib/agent/planner"
 import { createTokenUsageRecorder } from "@/lib/billing/token-audit"
+import { loadAgentNodeSnapshots, persistAgentNodeSnapshotAsync } from "@/lib/agent-jobs"
 
 export type AgentRunInput = {
   userId?: string
   userInput: string
   activeProvider: ActiveProviderConfig
   jobId?: string
+  /** 断点续跑：仅重试该节点及其后续 */
+  targetNodeId?: string
   interventionSessionId?: string
   peerReviewCheckpoint?: PeerReviewCheckpointData | null
   onPeerReviewCheckpoint?: AgentExecutorDeps["onPeerReviewCheckpoint"]
@@ -20,6 +25,9 @@ export type AgentRunInput = {
   runtimeKeys?: AgentExecutorDeps["runtimeKeys"]
   sourceApiBase?: string
   signal?: AbortSignal
+  resumeNodes?: WorkflowNode[]
+  resumeSnapshots?: NodeSnapshotRecord[]
+  documentIds?: string[]
 }
 
 export function mergeRuntimeKeysForServer(
@@ -43,12 +51,26 @@ export async function runAgentOnServer(
   const envKeys = runtimeKeysFromEnv()
   const runtimeKeys = mergeRuntimeKeysForServer(input.runtimeKeys, envKeys)
   const billingRecorder = input.userId ? createTokenUsageRecorder(input.userId, input.jobId) : null
+  const libraryContext = await buildLibraryContextForAgent(input.userId, input.documentIds)
+
+  let resumeSnapshots = input.resumeSnapshots
+  if (input.targetNodeId && input.jobId && !resumeSnapshots?.length) {
+    resumeSnapshots = await loadAgentNodeSnapshots(input.jobId)
+  }
 
   const executor = new AgentExecutor(
     {
       userId: input.userId,
       activeProvider: input.activeProvider,
       jobId: input.jobId,
+      targetNodeId: input.targetNodeId,
+      resumeSnapshots,
+      resumeNodes: input.resumeNodes,
+      onNodeSnapshotPersist: input.jobId
+        ? (record) => {
+            void persistAgentNodeSnapshotAsync(input.jobId!, record)
+          }
+        : undefined,
       recordTokenUsage: billingRecorder
         ? (payload) => billingRecorder.record(payload)
         : undefined,
@@ -63,9 +85,15 @@ export async function runAgentOnServer(
       sourceApiBase: input.sourceApiBase,
       signal: input.signal,
       localOnly: input.localOnly,
+      documentIds: input.documentIds,
+      libraryContext,
     },
     hooks
   )
 
-  return executor.run(input.userInput, input.planRetryMessage ? { planRetryMessage: input.planRetryMessage } : undefined)
+  return executor.run(input.userInput, {
+    ...(input.planRetryMessage ? { planRetryMessage: input.planRetryMessage } : {}),
+    ...(input.targetNodeId ? { targetNodeId: input.targetNodeId } : {}),
+    ...(input.resumeNodes?.length ? { resumeNodes: input.resumeNodes } : {}),
+  })
 }

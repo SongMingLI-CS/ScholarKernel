@@ -1,8 +1,15 @@
 import { auth } from "@/auth"
-import { jsonError, jsonOk } from "@/lib/api-utils"
+import { createAgentJob, markAgentJobRunning, updateAgentJobCheckpoint } from "@/lib/agent-jobs"
+import { jsonError, jsonOk, parseJsonBody } from "@/lib/api-utils"
 import { conversationOwnerWhere, resolveUserIdFromRequest } from "@/lib/auth-user"
 import { prisma } from "@/lib/prisma"
 import { isAuthEnabled } from "@/lib/session-auth"
+import {
+  buildTemplateWorkflowNodes,
+  getTemplateById,
+  parseTemplateIdFromBody,
+  validateTemplateCreateBody,
+} from "@/lib/template-hub"
 
 function parseLimit(raw: string | null, fallback = 50, max = 100) {
   const n = raw ? Number.parseInt(raw, 10) : fallback
@@ -68,8 +75,16 @@ export async function POST(req: Request) {
       })
     }
 
+    const body = await parseJsonBody<unknown>(req).catch(() => null)
+    const rawTemplateId = parseTemplateIdFromBody(body)
+    if (rawTemplateId && !getTemplateById(rawTemplateId)) {
+      return jsonError("Unknown templateId", 400)
+    }
+    const templateBody = validateTemplateCreateBody(body)
+    const template = templateBody ? getTemplateById(templateBody.templateId) : null
+
     const conversation = await prisma.conversation.create({
-      data: { title: "新对话", userId },
+      data: { title: template?.title ?? "新对话", userId },
       select: {
         id: true,
         title: true,
@@ -78,7 +93,55 @@ export async function POST(req: Request) {
         updatedAt: true,
       },
     })
-    return jsonOk(conversation, { status: 201 })
+
+    if (!template) {
+      return jsonOk(conversation, { status: 201 })
+    }
+
+    const initialAgents = buildTemplateWorkflowNodes(template)
+    const job = await createAgentJob(userId, {
+      userInput: templateBody?.initialInput ?? template.title,
+      provider: { providerId: "ollama", model: "llama3.1" },
+    })
+    await markAgentJobRunning(job.id)
+    await updateAgentJobCheckpoint(job.id, {
+      phase: "running",
+      nodes: initialAgents,
+      partialResults: [{ templateId: template.id, systemPrompt: template.systemPrompt }],
+    })
+
+    await prisma.message.create({
+      data: {
+        conversationId: conversation.id,
+        role: "system",
+        content: template.systemPrompt,
+        metadata: { templateId: template.id, jobId: job.id },
+      },
+    })
+
+    if (templateBody?.initialInput?.trim()) {
+      await prisma.message.create({
+        data: {
+          conversationId: conversation.id,
+          role: "user",
+          content: templateBody.initialInput.trim(),
+          metadata: { templateId: template.id },
+        },
+      })
+    }
+
+    return jsonOk(
+      {
+        ...conversation,
+        templateBootstrap: {
+          templateId: template.id,
+          systemPrompt: template.systemPrompt,
+          initialAgents,
+          jobId: job.id,
+        },
+      },
+      { status: 201 }
+    )
   } catch (e) {
     console.error("[POST /api/conversations]", e)
     return jsonError("Failed to create conversation", 500)

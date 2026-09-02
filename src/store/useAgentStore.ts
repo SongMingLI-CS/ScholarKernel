@@ -2,6 +2,7 @@ import { create } from "zustand"
 import { persist, subscribeWithSelector } from "zustand/middleware"
 
 import type { ConversationSummary, ScholarDocument } from "@/lib/db-types"
+import { stripRedactedThinking } from "@/lib/r1-stream-parser"
 import { prismaMessageToChat, chatMessageToCreateBody } from "@/lib/db-types"
 import {
   appendMessage,
@@ -13,9 +14,19 @@ import {
   fetchConversations,
   fetchSettings,
   isApiUnauthorizedError,
+  isApiRateLimitError,
   patchConversation as apiPatchConversation,
   patchDocument as apiPatchDocument,
 } from "@/lib/conversation-api"
+import {
+  createOptimisticConversation,
+  createTempConversationId,
+  isTempConversationId,
+  reduceOptimisticConversationState,
+  replaceConversationIdInUrl,
+  rollbackChatMessages,
+} from "@/lib/optimistic-ui"
+import { buildTemplateWorkflowNodes, createOptimisticConversationFromTemplate, getTemplateById } from "@/lib/template-hub"
 
 import {
   PROVIDER_DEFAULTS,
@@ -98,6 +109,44 @@ import type {
 
 const messagePersistTimers = new Map<string, ReturnType<typeof setTimeout>>()
 const documentPersistTimer: { id: ReturnType<typeof setTimeout> | null } = { id: null }
+/** Tracks in-flight optimistic conversation creates keyed by temp id. */
+const pendingConversationCreates = new Map<string, Promise<ConversationSummary>>()
+/** Temp ids dismissed locally before server reconcile (delete / rollback). */
+const dismissedTempConversationIds = new Set<string>()
+
+async function flushChatMessagesToServer(convId: string, messages: ChatMessage[]): Promise<void> {
+  for (const m of messages) {
+    if (m.role === "system") continue
+    await appendMessage(convId, chatMessageToCreateBody(m))
+  }
+}
+
+function revokeSessionPdfUrl(url: string | null | undefined) {
+  if (typeof window !== "undefined" && url?.startsWith("blob:")) {
+    try {
+      URL.revokeObjectURL(url)
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
+function resetConversationWorkspace(s: AgentStore): Partial<AgentStore> {
+  revokeSessionPdfUrl(s.pdfCoReader.sessionPdfUrl)
+  return {
+    chat: { messages: [], attachedReferences: [], selectedLibraryDocuments: [] },
+    workflow: { version: Date.now(), activeNodeId: null, isPlannerOutput: false, nodes: [] },
+    topology: buildTopologyForActiveProvider(s.providers.active),
+    canvas: { activeDocument: null, canvasOpen: false },
+    pdfCoReader: {
+      viewMode: "canvas",
+      sessionPdfUrl: null,
+      sessionPdfName: null,
+      targetPage: null,
+      scrollNonce: 0,
+    },
+  }
+}
 
 type AgentStore = {
   settings: AgentSettings
@@ -110,6 +159,7 @@ type AgentStore = {
   chat: {
     messages: ChatMessage[]
     attachedReferences: AcademicReference[]
+    selectedLibraryDocuments: Array<{ id: string; title: string }>
   }
   conversations: {
     items: ConversationSummary[]
@@ -141,6 +191,13 @@ type AgentStore = {
   canvas: {
     activeDocument: ScholarDocument | null
     canvasOpen: boolean
+  }
+  pdfCoReader: {
+    viewMode: "canvas" | "pdf"
+    sessionPdfUrl: string | null
+    sessionPdfName: string | null
+    targetPage: number | null
+    scrollNonce: number
   }
   intervention: {
     sessionId: string | null
@@ -176,14 +233,20 @@ type AgentStore = {
     patchTopologyNodes: (patch: Partial<Record<string, TopologyState["nodes"][number]["status"]>>) => void
     setChatMessages: (messages: ChatMessage[]) => void
     pushChatMessage: (m: ChatMessage) => void
+    rollbackChatMessages: (ids: string[]) => void
     patchChatMessage: (id: string, patch: Partial<ChatMessage>) => void
     setAttachedReferences: (refs: AcademicReference[]) => void
     appendAttachedReferences: (refs: AcademicReference[]) => void
     clearAttachedReferences: () => void
+    setSelectedLibraryDocuments: (docs: Array<{ id: string; title: string }>) => void
+    clearSelectedLibraryDocuments: () => void
     /** Route B: bootstrap cloud settings + conversation list */
     initializeCloud: () => Promise<void>
     fetchConversationsList: () => Promise<void>
-    createConversation: () => Promise<ConversationSummary>
+    createConversation: (opts?: {
+      awaitPersist?: boolean
+      templateId?: string
+    }) => Promise<ConversationSummary>
     switchConversation: (id: string) => Promise<void>
     renameConversation: (id: string, title: string) => Promise<void>
     togglePinConversation: (id: string, isPinned: boolean) => Promise<void>
@@ -222,6 +285,9 @@ type AgentStore = {
     closeCanvas: () => void
     applyScholarCanvasStream: (input: { title: string; content: string; complete: boolean }) => void
     updateCanvasContent: (content: string) => void
+    setCoReaderViewMode: (mode: "canvas" | "pdf") => void
+    setSessionPdfUrl: (input: { url: string; name: string } | null) => void
+    scrollToPdfPage: (pageNumber: number) => void
   }
 }
 
@@ -389,6 +455,7 @@ export const useAgentStore = create<AgentStore>()(
         chat: {
           messages: [],
           attachedReferences: [],
+          selectedLibraryDocuments: [],
         },
         conversations: {
           items: [],
@@ -417,6 +484,13 @@ export const useAgentStore = create<AgentStore>()(
         workflow: { version: 1, activeNodeId: null, isPlannerOutput: false, nodes: [] },
         inference: { streaming: null, last: null, history: [] },
         canvas: { activeDocument: null, canvasOpen: false },
+        pdfCoReader: {
+          viewMode: "canvas",
+          sessionPdfUrl: null,
+          sessionPdfName: null,
+          targetPage: null,
+          scrollNonce: 0,
+        },
         intervention: { sessionId: null, pendingNodeId: null, reason: null },
 
         actions: {
@@ -650,13 +724,43 @@ export const useAgentStore = create<AgentStore>()(
           }))
         },
         clearAttachedReferences: () => set((s) => ({ ...s, chat: { ...s.chat, attachedReferences: [] } })),
+        setSelectedLibraryDocuments: (docs) =>
+          set((s) => ({ ...s, chat: { ...s.chat, selectedLibraryDocuments: docs } })),
+        clearSelectedLibraryDocuments: () =>
+          set((s) => ({ ...s, chat: { ...s.chat, selectedLibraryDocuments: [] } })),
         pushChatMessage: (m) => {
           set((s) => ({ ...s, chat: { ...s.chat, messages: [...s.chat.messages, m] } }))
           const convId = get().conversations.currentId
-          if (!convId || m.role === "system") return
-          void appendMessage(convId, chatMessageToCreateBody(m)).catch((e) =>
+          if (!convId || m.role === "system" || isTempConversationId(convId)) return
+          void appendMessage(convId, chatMessageToCreateBody(m)).catch((e) => {
             console.error("[persist message]", e)
-          )
+            const rollbackIds = [m.id]
+            if (isApiRateLimitError(e)) {
+              const msgs = get().chat.messages
+              const last = msgs[msgs.length - 1]
+              if (last?.role === "assistant" && last.id !== m.id && !last.content?.trim()) {
+                rollbackIds.push(last.id)
+              }
+            }
+            get().actions.rollbackChatMessages(rollbackIds)
+            get().actions.pushToast(
+              isApiRateLimitError(e)
+                ? { messageKey: "rateLimit.toast", variant: "warning", ttlMs: 5200 }
+                : {
+                    messageKey: "optimistic.networkFailed",
+                    detail: e instanceof Error ? e.message : undefined,
+                    variant: "error",
+                    ttlMs: 5200,
+                  }
+            )
+          })
+        },
+        rollbackChatMessages: (ids) => {
+          if (!ids.length) return
+          set((s) => ({
+            ...s,
+            chat: { ...s.chat, messages: rollbackChatMessages(s.chat.messages, ids) },
+          }))
         },
         patchChatMessage: (id, patch) => {
           set((s) => ({
@@ -668,12 +772,23 @@ export const useAgentStore = create<AgentStore>()(
         },
         persistChatMessage: (m) => {
           const convId = get().conversations.currentId
-          if (!convId || m.role === "system") return
+          if (!convId || m.role === "system" || isTempConversationId(convId)) return
 
           const run = () => {
-            void appendMessage(convId, chatMessageToCreateBody(m)).catch((e) =>
+            void appendMessage(convId, chatMessageToCreateBody(m)).catch((e) => {
               console.error("[persist message]", e)
-            )
+              get().actions.rollbackChatMessages([m.id])
+              get().actions.pushToast(
+                isApiRateLimitError(e)
+                  ? { messageKey: "rateLimit.toast", variant: "warning", ttlMs: 5200 }
+                  : {
+                      messageKey: "optimistic.networkFailed",
+                      detail: e instanceof Error ? e.message : undefined,
+                      variant: "error",
+                      ttlMs: 5200,
+                    }
+              )
+            })
           }
 
           const prev = messagePersistTimers.get(m.id)
@@ -740,36 +855,182 @@ export const useAgentStore = create<AgentStore>()(
           const list = await fetchConversations()
           set((s) => ({ ...s, conversations: { ...s.conversations, items: list } }))
         },
-        createConversation: async () => {
-          const conv = await apiCreateConversation()
-          set((s) => ({
-            ...s,
-            conversations: {
-              ...s.conversations,
-              items: [conv, ...s.conversations.items.filter((c) => c.id !== conv.id)],
-              currentId: conv.id,
-            },
-            chat: { messages: [], attachedReferences: [] },
-            workflow: { version: Date.now(), activeNodeId: null, isPlannerOutput: false, nodes: [] },
-            topology: buildTopologyForActiveProvider(s.providers.active),
-            canvas: { activeDocument: null, canvasOpen: false },
-          }))
-          return conv
+        createConversation: async (opts) => {
+          const tempId = createTempConversationId()
+          const templateId = opts?.templateId
+          const template = templateId ? getTemplateById(templateId) : null
+          const optimistic =
+            template && templateId
+              ? (createOptimisticConversationFromTemplate(tempId, templateId) ??
+                createOptimisticConversation(tempId))
+              : createOptimisticConversation(tempId)
+
+          set((s) => {
+            const convPatch = reduceOptimisticConversationState(
+              { items: s.conversations.items, currentId: s.conversations.currentId },
+              { type: "create", tempId, optimistic }
+            )
+            const workspace = resetConversationWorkspace(s)
+            if (template) {
+              workspace.chat = { messages: [], attachedReferences: [], selectedLibraryDocuments: [] }
+              workspace.workflow = {
+                version: Date.now(),
+                activeNodeId: null,
+                isPlannerOutput: true,
+                nodes: buildTemplateWorkflowNodes(template),
+              }
+              workspace.topology = buildTopologyForActiveProvider(s.providers.active)
+            }
+            return {
+              ...s,
+              conversations: {
+                ...s.conversations,
+                items: convPatch.items,
+                currentId: convPatch.currentId,
+              },
+              ...workspace,
+            }
+          })
+
+          const persistPromise = (async () => {
+            try {
+              const conv = await apiCreateConversation(templateId ? { templateId } : undefined)
+              pendingConversationCreates.delete(tempId)
+
+              if (dismissedTempConversationIds.has(tempId)) {
+                dismissedTempConversationIds.delete(tempId)
+                void apiDeleteConversation(conv.id).catch(() => {})
+                return conv
+              }
+
+              const st = get()
+              const wasCurrent = st.conversations.currentId === tempId
+              const messagesToFlush = wasCurrent ? [...st.chat.messages] : []
+
+              set((s) => {
+                const convPatch = reduceOptimisticConversationState(
+                  { items: s.conversations.items, currentId: s.conversations.currentId },
+                  { type: "reconcile", tempId, real: conv }
+                )
+                const next: Partial<AgentStore> = {
+                  ...s,
+                  conversations: {
+                    ...s.conversations,
+                    items: convPatch.items,
+                    currentId: convPatch.currentId,
+                  },
+                }
+                if (wasCurrent && conv.templateBootstrap?.initialAgents?.length) {
+                  next.workflow = {
+                    version: Date.now(),
+                    activeNodeId: null,
+                    isPlannerOutput: true,
+                    nodes: conv.templateBootstrap.initialAgents,
+                  }
+                }
+                return next as AgentStore
+              })
+
+              if (wasCurrent) {
+                replaceConversationIdInUrl(tempId, conv.id)
+                if (messagesToFlush.length > 0) {
+                  await flushChatMessagesToServer(conv.id, messagesToFlush)
+                }
+              }
+
+              return conv
+            } catch (e) {
+              pendingConversationCreates.delete(tempId)
+              console.error("[createConversation]", e)
+
+              if (!dismissedTempConversationIds.has(tempId)) {
+                const st = get()
+                const wasCurrent = st.conversations.currentId === tempId
+                set((s) => {
+                  const convPatch = reduceOptimisticConversationState(
+                    { items: s.conversations.items, currentId: s.conversations.currentId },
+                    { type: "rollback", tempId }
+                  )
+                  return {
+                    ...s,
+                    conversations: {
+                      ...s.conversations,
+                      items: convPatch.items,
+                      currentId: convPatch.currentId,
+                    },
+                    ...(wasCurrent ? resetConversationWorkspace(s) : {}),
+                  }
+                })
+
+                if (isApiUnauthorizedError(e)) {
+                  get().actions.pushToast({
+                    messageKey: "session.heartbeat.expired",
+                    variant: "error",
+                    ttlMs: 6200,
+                  })
+                } else if (isApiRateLimitError(e)) {
+                  get().actions.pushToast({
+                    messageKey: "rateLimit.toast",
+                    variant: "warning",
+                    ttlMs: 5200,
+                  })
+                } else {
+                  get().actions.pushToast({
+                    messageKey: "optimistic.networkFailed",
+                    detail: e instanceof Error ? e.message : undefined,
+                    variant: "error",
+                    ttlMs: 5200,
+                  })
+                }
+              } else {
+                dismissedTempConversationIds.delete(tempId)
+              }
+
+              throw e
+            }
+          })()
+
+          pendingConversationCreates.set(tempId, persistPromise)
+
+          if (opts?.awaitPersist) {
+            return persistPromise
+          }
+          return optimistic
         },
         switchConversation: async (id) => {
           if (get().conversations.currentId === id && get().chat.messages.length > 0) return
-          set((s) => ({
-            ...s,
-            conversations: { ...s.conversations, currentId: id, loading: true },
-            workflow: { version: Date.now(), activeNodeId: null, isPlannerOutput: false, nodes: [] },
-            canvas: { activeDocument: null, canvasOpen: false },
-          }))
+
+          if (isTempConversationId(id)) {
+            set((s) => ({
+              ...s,
+              conversations: { ...s.conversations, currentId: id, loading: false },
+              ...(s.conversations.currentId !== id ? resetConversationWorkspace(s) : {}),
+            }))
+            return
+          }
+
+          set((s) => {
+            revokeSessionPdfUrl(s.pdfCoReader.sessionPdfUrl)
+            return {
+              ...s,
+              conversations: { ...s.conversations, currentId: id, loading: true },
+              workflow: { version: Date.now(), activeNodeId: null, isPlannerOutput: false, nodes: [] },
+              canvas: { activeDocument: null, canvasOpen: false },
+              pdfCoReader: {
+                viewMode: "canvas",
+                sessionPdfUrl: null,
+                sessionPdfName: null,
+                targetPage: null,
+                scrollNonce: 0,
+              },
+            }
+          })
           try {
             const detail = await fetchConversation(id)
             const messages = detail.messages.map(prismaMessageToChat)
             set((s) => ({
               ...s,
-              chat: { messages, attachedReferences: [] },
+              chat: { messages, attachedReferences: [], selectedLibraryDocuments: [] },
               conversations: { ...s.conversations, currentId: id, loading: false },
               topology: buildTopologyForActiveProvider(s.providers.active),
             }))
@@ -781,6 +1042,16 @@ export const useAgentStore = create<AgentStore>()(
         clearCurrentConversation: async () => {
           const convId = get().conversations.currentId
           if (!convId) return
+          if (isTempConversationId(convId)) {
+            set((s) => ({
+              ...s,
+              chat: { messages: [], attachedReferences: [], selectedLibraryDocuments: [] },
+              workflow: { version: Date.now(), activeNodeId: null, isPlannerOutput: false, nodes: [] },
+              topology: buildTopologyForActiveProvider(s.providers.active),
+            }))
+            get().actions.pushToast({ messageKey: "chat.clear.done", variant: "success", ttlMs: 2400 })
+            return
+          }
           try {
             await clearConversationMessages(convId)
           } catch (e) {
@@ -795,13 +1066,31 @@ export const useAgentStore = create<AgentStore>()(
           }
           set((s) => ({
             ...s,
-            chat: { messages: [], attachedReferences: [] },
+            chat: { messages: [], attachedReferences: [], selectedLibraryDocuments: [] },
             workflow: { version: Date.now(), activeNodeId: null, isPlannerOutput: false, nodes: [] },
             topology: buildTopologyForActiveProvider(s.providers.active),
           }))
           get().actions.pushToast({ messageKey: "chat.clear.done", variant: "success", ttlMs: 2400 })
         },
         renameConversation: async (id, title) => {
+          if (isTempConversationId(id)) {
+            set((s) => ({
+              ...s,
+              conversations: {
+                ...s.conversations,
+                items: s.conversations.items.map((c) =>
+                  c.id === id ? { ...c, title, updatedAt: new Date().toISOString() } : c
+                ),
+              },
+            }))
+            const pending = pendingConversationCreates.get(id)
+            if (pending) {
+              void pending
+                .then((conv) => apiPatchConversation(conv.id, { title }))
+                .catch((e) => console.error("[renameConversation optimistic]", e))
+            }
+            return
+          }
           try {
             const updated = await apiPatchConversation(id, { title })
             set((s) => ({
@@ -834,6 +1123,28 @@ export const useAgentStore = create<AgentStore>()(
           })
         },
         deleteConversation: async (id) => {
+          if (isTempConversationId(id)) {
+            dismissedTempConversationIds.add(id)
+            pendingConversationCreates.delete(id)
+            const st = get()
+            const remaining = st.conversations.items.filter((c) => c.id !== id)
+            const wasCurrent = st.conversations.currentId === id
+            set((s) => ({
+              ...s,
+              conversations: {
+                ...s.conversations,
+                items: remaining,
+                currentId: wasCurrent ? null : s.conversations.currentId,
+              },
+              ...(wasCurrent
+                ? {
+                    ...resetConversationWorkspace(s),
+                    inference: { ...s.inference, streaming: null },
+                  }
+                : {}),
+            }))
+            return
+          }
           try {
             await apiDeleteConversation(id)
           } catch (e) {
@@ -858,7 +1169,7 @@ export const useAgentStore = create<AgentStore>()(
             },
             ...(wasCurrent
               ? {
-                  chat: { messages: [], attachedReferences: [] },
+                  chat: { messages: [], attachedReferences: [], selectedLibraryDocuments: [] },
                   workflow: { version: Date.now(), activeNodeId: null, isPlannerOutput: false, nodes: [] },
                   topology: buildTopologyForActiveProvider(s.providers.active),
                   inference: { ...s.inference, streaming: null },
@@ -1142,12 +1453,13 @@ export const useAgentStore = create<AgentStore>()(
           const convId = st.conversations.currentId
           const prev = st.canvas.activeDocument
           const nowIso = new Date().toISOString()
+          const safeContent = stripRedactedThinking(content)
 
           const nextDoc: ScholarDocument = prev
             ? {
                 ...prev,
                 title: title.trim() || prev.title,
-                content,
+                content: safeContent,
                 updatedAt: nowIso,
                 ...(complete && content !== prev.content ? { version: prev.version + 1 } : {}),
               }
@@ -1155,7 +1467,7 @@ export const useAgentStore = create<AgentStore>()(
                 id: `local-${randomId()}`,
                 conversationId: convId ?? "",
                 title: title.trim() || "未命名文档",
-                content,
+                content: safeContent,
                 version: 1,
                 createdAt: nowIso,
                 updatedAt: nowIso,
@@ -1241,6 +1553,42 @@ export const useAgentStore = create<AgentStore>()(
               console.error("[patch document]", e)
             )
           }, 900)
+        },
+        setCoReaderViewMode: (mode) =>
+          set((s) => ({
+            ...s,
+            pdfCoReader: { ...s.pdfCoReader, viewMode: mode },
+          })),
+        setSessionPdfUrl: (input) =>
+          set((s) => {
+            if (input?.url === s.pdfCoReader.sessionPdfUrl) {
+              return {
+                ...s,
+                pdfCoReader: { ...s.pdfCoReader, sessionPdfName: input.name },
+              }
+            }
+            revokeSessionPdfUrl(s.pdfCoReader.sessionPdfUrl)
+            return {
+              ...s,
+              pdfCoReader: {
+                ...s.pdfCoReader,
+                sessionPdfUrl: input?.url ?? null,
+                sessionPdfName: input?.name ?? null,
+              },
+            }
+          }),
+        scrollToPdfPage: (pageNumber) => {
+          const page = Math.max(1, Math.floor(pageNumber))
+          set((s) => ({
+            ...s,
+            canvas: { ...s.canvas, canvasOpen: true },
+            pdfCoReader: {
+              ...s.pdfCoReader,
+              viewMode: "pdf",
+              targetPage: page,
+              scrollNonce: Date.now(),
+            },
+          }))
         },
         },
       }

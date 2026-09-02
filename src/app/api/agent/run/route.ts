@@ -1,13 +1,15 @@
 import { resolveUserIdFromRequest } from "@/lib/auth-user"
-import { persistAgentJobError } from "@/lib/agent-jobs"
+import { getAgentJobForUser, persistAgentJobError } from "@/lib/agent-jobs"
 import { runAgentOnServer } from "@/lib/agent-server-run"
 import { assertQuotaAvailable, jsonQuotaExceeded, QuotaExceededError } from "@/lib/billing/quota-gate"
 import { jsonError, jsonOk, parseJsonBody } from "@/lib/api-utils"
-import type { ActiveProviderConfig, ChatHistoryEntry } from "@/lib/agent/planner"
+import type { ActiveProviderConfig, ChatHistoryEntry, WorkflowNode } from "@/lib/agent/planner"
 import type { AgentExecutorDeps } from "@/lib/agent/executor-types"
+import type { AgentJobCheckpoint } from "@/lib/agent-jobs"
 
 type AgentRunBody = {
   jobId?: string
+  targetNodeId?: string
   userInput?: string
   provider?: ActiveProviderConfig
   chatHistory?: ChatHistoryEntry[]
@@ -15,6 +17,8 @@ type AgentRunBody = {
   localOnly?: boolean
   planRetryMessage?: string
   runtimeKeys?: AgentExecutorDeps["runtimeKeys"]
+  resumeNodes?: WorkflowNode[]
+  documentIds?: string[]
 }
 
 function isValidProvider(p: unknown): p is ActiveProviderConfig {
@@ -42,11 +46,24 @@ export async function POST(req: Request) {
   const origin = new URL(req.url)
   const sourceApiBase = `${origin.protocol}//${origin.host}`
 
+  let resumeNodes = body.resumeNodes
+  if (body.targetNodeId?.trim() && body.jobId?.trim()) {
+    const job = await getAgentJobForUser(body.jobId.trim(), userId)
+    if (!job) return jsonError("Job not found", 404)
+    const cp = job.checkpoint as AgentJobCheckpoint | null
+    if (!resumeNodes?.length && Array.isArray(cp?.nodes)) {
+      resumeNodes = cp.nodes as WorkflowNode[]
+    }
+  }
+
   try {
     const result = await runAgentOnServer({
       userId,
       userInput: body.userInput.trim(),
       activeProvider: body.provider,
+      jobId: body.jobId,
+      targetNodeId: body.targetNodeId?.trim() || undefined,
+      resumeNodes,
       chatHistory: body.chatHistory,
       inference: body.inference,
       localOnly: body.localOnly,
@@ -54,6 +71,9 @@ export async function POST(req: Request) {
       runtimeKeys: body.runtimeKeys,
       sourceApiBase,
       signal: req.signal,
+      documentIds: Array.isArray(body.documentIds)
+        ? body.documentIds.filter((id): id is string => typeof id === "string" && id.trim().length > 0)
+        : undefined,
     })
     return jsonOk(result)
   } catch (e) {

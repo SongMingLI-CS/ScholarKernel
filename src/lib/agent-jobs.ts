@@ -8,6 +8,7 @@ import {
 } from "@/lib/agent/peer-review-checkpoint"
 import type { Prisma } from "../../generated/prisma/client"
 import type { ActiveProviderConfig } from "@/lib/agent/planner"
+import type { NodeSnapshotRecord } from "@/lib/agent/node-resume"
 
 export type { PeerReviewCheckpointData } from "@/lib/agent/peer-review-checkpoint"
 
@@ -191,4 +192,47 @@ export async function updateAgentJobWorkflowTopology(
 
 export async function getAgentJobForUser(id: string, userId: string) {
   return prisma.agentJob.findFirst({ where: { id, userId } })
+}
+
+/** 增量对账写入：节点 done 时 upsert 快照（outputs + nodeSnapshot）。 */
+export async function upsertAgentNodeSnapshot(
+  jobId: string,
+  record: NodeSnapshotRecord
+) {
+  return prisma.agentNode.upsert({
+    where: { jobId_nodeId: { jobId, nodeId: record.nodeId } },
+    create: {
+      jobId,
+      nodeId: record.nodeId,
+      status: record.status === "error" ? "error" : record.status === "done" ? "done" : "running",
+      outputs: record.outputs as Prisma.InputJsonValue | undefined,
+      nodeSnapshot: record.nodeSnapshot as Prisma.InputJsonValue | undefined,
+    },
+    update: {
+      status: record.status === "error" ? "error" : record.status === "done" ? "done" : "running",
+      outputs: record.outputs as Prisma.InputJsonValue | undefined,
+      nodeSnapshot: record.nodeSnapshot as Prisma.InputJsonValue | undefined,
+    },
+  })
+}
+
+/** 异步持久化节点快照，不阻塞流式调度循环。 */
+export function persistAgentNodeSnapshotAsync(jobId: string, record: NodeSnapshotRecord) {
+  return upsertAgentNodeSnapshot(jobId, record).catch((e) => {
+    console.error("[persistAgentNodeSnapshotAsync]", jobId, record.nodeId, e)
+  })
+}
+
+/** 读取 Job 下全部节点快照，供断点续跑汇聚 Context。 */
+export async function loadAgentNodeSnapshots(jobId: string): Promise<NodeSnapshotRecord[]> {
+  const rows = await prisma.agentNode.findMany({
+    where: { jobId },
+    orderBy: { updatedAt: "asc" },
+  })
+  return rows.map((row) => ({
+    nodeId: row.nodeId,
+    status: row.status as NodeSnapshotRecord["status"],
+    outputs: row.outputs ?? undefined,
+    nodeSnapshot: (row.nodeSnapshot as NodeSnapshotRecord["nodeSnapshot"]) ?? undefined,
+  }))
 }

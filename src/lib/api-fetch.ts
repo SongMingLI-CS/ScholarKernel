@@ -8,8 +8,29 @@ export class ApiUnauthorizedError extends Error {
   }
 }
 
+export class ApiRateLimitError extends Error {
+  readonly status = 429
+  readonly userMessage: string
+
+  constructor(message = "Too Many Requests", userMessage = message) {
+    super(message)
+    this.name = "ApiRateLimitError"
+    this.userMessage = userMessage
+  }
+}
+
 export function isApiUnauthorizedError(error: unknown): error is ApiUnauthorizedError {
   return error instanceof ApiUnauthorizedError
+}
+
+export function isApiRateLimitError(error: unknown): error is ApiRateLimitError {
+  return error instanceof ApiRateLimitError
+}
+
+export function isHttp429Error(error: unknown): boolean {
+  if (isApiRateLimitError(error)) return true
+  const msg = error instanceof Error ? error.message : String(error)
+  return /HTTP 429|Too Many Requests/i.test(msg)
 }
 
 let sessionExpiredNotified = false
@@ -63,6 +84,14 @@ export async function apiFetch<T>(input: RequestInfo, init?: RequestInit): Promi
     notifySessionExpired()
     const err = (await res.json().catch(() => null)) as { error?: string } | null
     throw new ApiUnauthorizedError(err?.error ?? "Unauthorized")
+  }
+
+  if (res.status === 429) {
+    const err = (await res.json().catch(() => null)) as { error?: string; message?: string } | null
+    throw new ApiRateLimitError(
+      err?.error ?? "Too Many Requests",
+      err?.message ?? "您的学术操作过于频繁，请稍后再试。"
+    )
   }
 
   if (!res.ok) {

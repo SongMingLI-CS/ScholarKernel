@@ -19,6 +19,7 @@ model User {
   accounts      Account[]
   sessions      Session[]
   conversations Conversation[]
+  documents     Document[]
   settings      UserSetting?
   agentJobs     AgentJob[]
   billing       UserBilling?
@@ -68,23 +69,42 @@ model Conversation {
   isPinned  Boolean    @default(false)
   createdAt DateTime   @default(now())
   updatedAt DateTime   @updatedAt
-  messages  Message[]
-  documents Document[]
+  messages        Message[]
+  canvasDocuments CanvasDocument[]
 
   @@index([userId, isPinned, updatedAt])
 }
 
-model Document {
+/// Scholar Canvas 会话内可编辑文档（与全局文献库解耦）
+model CanvasDocument {
   id             String       @id @default(cuid())
   conversationId String
   conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
   title          String       @default("未命名文档")
   content        String       @default("")
   version        Int          @default(1)
+  isShared       Boolean      @default(false)
+  shareToken     String?      @unique
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
 
   @@index([conversationId, updatedAt])
+}
+
+/// 用户全局文献资产库（跨会话持久化）
+model Document {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title     String
+  fileUrl   String
+  fileSize  Int
+  fileType  String
+  tags      String[] @default([])
+  folders   String[] @default([])
+  createdAt DateTime @default(now())
+
+  @@index([userId])
 }
 
 model Message {
@@ -129,8 +149,25 @@ model AgentJob {
   errorStack   String?        @db.Text
   createdAt    DateTime       @default(now())
   updatedAt    DateTime       @updatedAt
+  nodes        AgentNode[]
 
   @@index([userId, status, updatedAt])
+}
+
+/// 智能体工作流单节点快照：支持断点续跑与就地重试。
+model AgentNode {
+  id           String         @id @default(cuid())
+  jobId        String
+  job          AgentJob       @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  nodeId       String
+  status       AgentJobStatus @default(pending)
+  outputs      Json?
+  nodeSnapshot Json?
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+
+  @@unique([jobId, nodeId])
+  @@index([jobId, status])
 }
 
 // --- Billing models ---

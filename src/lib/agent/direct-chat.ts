@@ -13,6 +13,7 @@ import {
   type StreamTextCallExtras,
 } from "@/lib/agent/llm-utils"
 import { recordLlmUsageAsync } from "@/lib/billing/token-usage-bridge"
+import { createR1StreamParser } from "@/lib/r1-stream-parser"
 
 export type DirectChatContext = {
   deps: AgentExecutorDeps
@@ -75,10 +76,17 @@ export async function streamDirectChat(ctx: DirectChatContext): Promise<string> 
     throw e
   }
 
-  return consumeStreamTextOutput(
+  const r1Parser = createR1StreamParser()
+  let rawLen = 0
+
+  const raw = await consumeStreamTextOutput(
     streamed,
     (text) => {
-      hooks.onDirectChatStream?.(text)
+      const delta = text.slice(rawLen)
+      rawLen = text.length
+      if (!delta) return
+      const parsed = r1Parser.append(delta)
+      hooks.onDirectChatStream?.(parsed.finalResponse)
     },
     deps.signal,
     {
@@ -89,4 +97,6 @@ export async function streamDirectChat(ctx: DirectChatContext): Promise<string> 
       },
     }
   )
+
+  return r1Parser.flush().finalResponse || raw
 }

@@ -16,6 +16,8 @@ describe("middleware-auth", () => {
     expect(isPublicPath("/api/health")).toBe(true)
     expect(isPublicPath("/login")).toBe(true)
     expect(isPublicPath("/")).toBe(true)
+    expect(isPublicPath("/share/abc-token")).toBe(true)
+    expect(isPublicPath("/api/public/share/abc-token")).toBe(true)
   })
 
   it("classifies protected API prefixes", () => {
@@ -52,10 +54,12 @@ describe("middleware-auth", () => {
       "/api/conversations/:path*",
       "/api/agent/:path*",
       "/api/canvas/:path*",
+      "/api/public/:path*",
       "/dashboard",
       "/dashboard/:path*",
       "/workspace",
       "/workspace/:path*",
+      "/share/:path*",
     ])
     expect(MIDDLEWARE_MATCHER.join(" ")).not.toContain("_next")
   })

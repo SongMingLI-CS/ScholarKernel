@@ -15,7 +15,7 @@ async function findOwnedDocument(req: Request, conversationId: string, docId: st
   })
   if (!conversation) return { userId, document: null }
 
-  const document = await prisma.document.findFirst({
+  const document = await prisma.canvasDocument.findFirst({
     where: { id: docId, conversationId },
     select: { id: true, conversationId: true, version: true },
   })
@@ -38,7 +38,7 @@ export async function PATCH(req: Request, ctx: RouteCtx) {
     const nextVersion =
       body.content !== undefined ? existing.version + 1 : existing.version
 
-    const document = await prisma.document.update({
+    const document = await prisma.canvasDocument.update({
       where: { id: docId },
       data: {
         ...(body.title !== undefined ? { title: body.title.trim() || "未命名文档" } : {}),

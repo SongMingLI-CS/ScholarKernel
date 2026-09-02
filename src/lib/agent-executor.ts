@@ -70,6 +70,14 @@ import {
   type GenModel,
 } from "@/lib/agent/llm-utils"
 import { recordLlmUsageAsync, recordSearchUsageAsync } from "@/lib/billing/token-usage-bridge"
+import {
+  buildNodeSnapshotRecord,
+  findTargetNodeIndex,
+  prepareNodesForPartialResume,
+  restoreExecutionStateFromSnapshots,
+  shouldSkipNodeForResume,
+  snapshotMap,
+} from "@/lib/agent/node-resume"
 export {
   buildChatHistoryForExecutor,
   extractLlmHistory,
@@ -572,21 +580,48 @@ export class AgentExecutor {
     })
   }
 
+  private injectLibraryContext(userInput: string): string {
+    const block = this.deps.libraryContext?.trim()
+    if (!block) return userInput
+    return `${block}${userInput}`
+  }
+
   async run(
     userInput: string,
-    options?: { planRetryMessage?: string }
+    options?: { planRetryMessage?: string; targetNodeId?: string; resumeNodes?: WorkflowNode[] }
   ): Promise<{ final: string; nodes: WorkflowNode[]; sources: AcademicSearchHit[] }> {
-    console.log("🚀 Agent 收到输入:", userInput)
+    const effectiveInput = this.injectLibraryContext(userInput)
+    console.log("🚀 Agent 收到输入:", effectiveInput)
+    if (this.deps.documentIds?.length) {
+      console.log("📚 文献库注入:", this.deps.documentIds.join(", "))
+    }
 
-    if (isDirectChatInput(userInput)) {
+    if (isDirectChatInput(effectiveInput)) {
       console.log("💬 走普通对话路由")
-      const final = await this.runDirectChat(userInput)
+      const final = await this.runDirectChat(effectiveInput)
       return { final, nodes: [], sources: [] }
     }
 
     console.log("🛠️ 走任务规划路由")
     this.sessionContextMessages = []
-    let nodes = await this.plan(userInput, options?.planRetryMessage ? { retryMessage: options.planRetryMessage } : undefined)
+    const targetNodeId = options?.targetNodeId ?? this.deps.targetNodeId
+    const resumeSnapshots = this.deps.resumeSnapshots ?? []
+    const snapshotById = snapshotMap(resumeSnapshots)
+
+    let nodes: WorkflowNode[]
+    const resumeNodes = options?.resumeNodes ?? this.deps.resumeNodes
+    if (resumeNodes?.length) {
+      nodes = targetNodeId ? prepareNodesForPartialResume(resumeNodes, targetNodeId) : resumeNodes
+      this.hooks.onWorkflowPlanned?.(nodes)
+    } else {
+      nodes = await this.plan(
+        effectiveInput,
+        options?.planRetryMessage ? { retryMessage: options.planRetryMessage } : undefined
+      )
+    }
+
+    const targetIndex = targetNodeId ? findTargetNodeIndex(nodes, targetNodeId) : -1
+
     const tools = this.buildTools()
     const inf = this.inferenceCfg()
 
@@ -602,20 +637,71 @@ export class AgentExecutor {
     let sources: AcademicSearchHit[] = []
     let citationsMarkdown = ""
 
+    if (targetNodeId && resumeSnapshots.length) {
+      const restored = restoreExecutionStateFromSnapshots(resumeSnapshots, nodes, targetNodeId)
+      results.push(...restored.results)
+      sources = restored.sources
+      citationsMarkdown = restored.citationsMarkdown
+      this.sessionContextMessages = restored.sessionContextMessages
+      this.hooks.onNodeLog?.(targetNodeId, `断点续跑：已从前序 ${targetIndex} 个节点快照汇聚 Context`)
+    }
+
+    const persistNodeDone = (
+      node: WorkflowNode,
+      nodeIndex: number,
+      subtaskResult: { id: string; ok: boolean; summary: string; output?: unknown },
+      ctx: { sessionContextDelta?: import("@/lib/agent/planner").ChatHistoryEntry[] }
+    ) => {
+      if (!subtaskResult.ok) return
+      const record = buildNodeSnapshotRecord({
+        node: { ...node, status: "done", output: subtaskResult.output },
+        nodeIndex,
+        nodes,
+        subtaskResult,
+        sources,
+        citationsMarkdown,
+        sessionContextDelta: ctx.sessionContextDelta,
+      })
+      void this.deps.onNodeSnapshotPersist?.(record)
+    }
+
+    const commitResult = (
+      node: WorkflowNode,
+      nodeIndex: number,
+      subtaskResult: { id: string; ok: boolean; summary: string; output?: unknown },
+      sessionContextDelta?: import("@/lib/agent/planner").ChatHistoryEntry[]
+    ) => {
+      results.push(subtaskResult)
+      persistNodeDone(node, nodeIndex, subtaskResult, { sessionContextDelta })
+    }
+
     for (let ni = 0; ni < nodes.length; ni++) {
       const n = nodes[ni]!
       this.throwIfAborted()
+
+      if (targetNodeId && shouldSkipNodeForResume(ni, targetIndex, snapshotById.get(n.id))) {
+        const snap = snapshotById.get(n.id)!
+        this.hooks.onNodeLog?.(n.id, `断点续跑：跳过已完成节点 ${n.id}`)
+        execHooks.onNodePatch?.(n.id, {
+          status: "done",
+          output: snap.outputs,
+          metadata: snap.nodeSnapshot?.workflowNode?.metadata,
+        })
+        continue
+      }
+
       this.hooks.onNodeLog?.(n.id, `进入节点：${n.id}`)
       execHooks.onNodePatch?.(n.id, { status: "running" })
       execHooks.onNodeLog?.(n.id, `开始执行：${n.type} · ${n.provider}`)
       const nodeStartedAt = performance.now()
+      const sessionContextBefore = this.sessionContextMessages.length
 
       try {
         if (n.type === "peer_review" && isPeerReviewGroupStart(nodes, ni)) {
           const group = collectPeerReviewGroup(nodes, ni)
           const groupResults = await executePeerReviewGroup({
             groupNodes: group,
-            userInput,
+            userInput: effectiveInput,
             deps: this.deps,
             hooks: execHooks,
             checkpoint: this.deps.peerReviewCheckpoint ?? null,
@@ -623,6 +709,12 @@ export class AgentExecutor {
             allWorkflowNodes: nodes,
           })
           results.push(...groupResults)
+          for (const gr of groupResults) {
+            if (gr.ok) {
+              const gi = nodes.findIndex((x) => x.id === gr.id)
+              persistNodeDone(nodes[gi] ?? n, gi >= 0 ? gi : ni, gr, {})
+            }
+          }
           ni += group.length - 1
           continue
         }
@@ -637,15 +729,15 @@ export class AgentExecutor {
               ? String(payload["search_query"])
               : typeof payload["query"] === "string"
                 ? String(payload["query"])
-                : buildFallbackSearchQuery(userInput, this.deps.getChatHistory?.() ?? [])
+                : buildFallbackSearchQuery(effectiveInput, this.deps.getChatHistory?.() ?? [])
 
           const history = this.deps.getChatHistory?.() ?? []
           const search_query = await rewriteResearchSearchQuery(
             { ...this.deps, getRuntimeKeys: () => this.effectiveRuntimeKeys() },
-            { userInput, draftQuery, history }
+            { userInput: effectiveInput, draftQuery, history }
           )
           const academicOnly = typeof payload["academicOnly"] === "boolean" ? Boolean(payload["academicOnly"]) : true
-          const queryList = resolveResearchQueryList(payload, search_query, userInput)
+          const queryList = resolveResearchQueryList(payload, search_query, effectiveInput)
 
           console.log("🔍 research 节点执行，queries:", queryList)
 
@@ -697,7 +789,7 @@ export class AgentExecutor {
                 "[Diagnostic] 检测到网络/代理/CORS 类错误：将进入降级模式（基于内部知识提供初步分析，且明确无法获取实时数据）。"
               )
             }
-            this.hooks.onNodePatch?.(n.id, {
+            execHooks.onNodePatch?.(n.id, {
               status: "error",
               error: msg,
               metadata: { durationMs, fallback: true, fallbackReason: msg, fallbackKind: "academicSearch" },
@@ -733,7 +825,7 @@ export class AgentExecutor {
                 ? "Tavily 返回 0 条结果。请更换检索关键词（建议使用纯英文专业术语）后重新发起检索任务。"
                 : "检索工具未能找到相关文献，请提示用户更换关键词。")
             this.hooks.onNodeLog?.(n.id, `[${out.status === "failed" ? "Failed" : "Empty"}] ${emptyMsg}`)
-            this.hooks.onNodePatch?.(n.id, {
+            execHooks.onNodePatch?.(n.id, {
               status: "done",
               output: out,
               metadata: {
@@ -769,7 +861,7 @@ export class AgentExecutor {
             n.id,
             `已将 ${sources.length} 条文献结果同步进会话 messages 上下文，准备进入推理节点。`
           )
-          this.hooks.onNodePatch?.(n.id, {
+          execHooks.onNodePatch?.(n.id, {
             status: "done",
             output: { provider: out.provider, query: out.query, academicOnly: out.academicOnly, total: out.total },
             metadata: {
@@ -779,7 +871,12 @@ export class AgentExecutor {
               searchCompletedAt: new Date().toISOString(),
             },
           })
-          results.push({ id: n.id, ok: true, summary: `完成学术检索（${out.total} 条）`, output: out })
+          commitResult(
+            n,
+            ni,
+            { id: n.id, ok: true, summary: `完成学术检索（${out.total} 条）`, output: out },
+            this.sessionContextMessages.slice(sessionContextBefore)
+          )
           continue
         }
 
@@ -789,7 +886,7 @@ export class AgentExecutor {
           if (!path || !path.trim()) {
             const msg = "Error: 请提供具体的文件路径"
             const durationMs = Math.round(performance.now() - nodeStartedAt)
-            this.hooks.onNodePatch?.(n.id, {
+            execHooks.onNodePatch?.(n.id, {
               status: "error",
               error: msg,
               metadata: { durationMs, fallback: true, fallbackReason: msg, fallbackKind: "read_file" },
@@ -815,7 +912,7 @@ export class AgentExecutor {
           if (!this.deps.sourceApiBase) {
             const msg = "SourceApiDisabled"
             const durationMs = Math.round(performance.now() - nodeStartedAt)
-            this.hooks.onNodePatch?.(n.id, {
+            execHooks.onNodePatch?.(n.id, {
               status: "error",
               error: msg,
               metadata: { durationMs, fallback: true, fallbackReason: msg, fallbackKind: "read_file" },
@@ -851,7 +948,7 @@ export class AgentExecutor {
             if (isReadFileNotFoundError(msg, path) && !isLogLike) {
               const fallbackText = READ_FILE_LITERATURE_FALLBACK
               this.hooks.onNodeLog?.(n.id, `[Fallback] 路径不存在或非本地文件：${path}`)
-              this.hooks.onNodePatch?.(n.id, {
+              execHooks.onNodePatch?.(n.id, {
                 status: "done",
                 output: { path, chars: fallbackText.length, text: fallbackText, fallback: true },
                 metadata: {
@@ -861,7 +958,7 @@ export class AgentExecutor {
                   fallbackKind: "read_file_not_found",
                 },
               })
-              results.push({
+              commitResult(n, ni, {
                 id: n.id,
                 ok: true,
                 summary: `read_file 未找到（已降级继续）`,
@@ -870,7 +967,7 @@ export class AgentExecutor {
               continue
             }
 
-            this.hooks.onNodePatch?.(n.id, {
+            execHooks.onNodePatch?.(n.id, {
               status: "error",
               error: msg,
               metadata: { durationMs, fallback: true, fallbackReason: msg, fallbackKind: "read_file" },
@@ -894,12 +991,12 @@ export class AgentExecutor {
             continue
           }
           this.hooks.onNodeLog?.(n.id, `读取完成：${path}（${text.length} chars）`)
-          this.hooks.onNodePatch?.(n.id, {
+          execHooks.onNodePatch?.(n.id, {
             status: "done",
             output: { path, chars: text.length },
             metadata: { durationMs: Math.round(performance.now() - nodeStartedAt) },
           })
-          results.push({ id: n.id, ok: true, summary: `读取 ${path}（${text.length} chars）`, output: { path, text } })
+          commitResult(n, ni, { id: n.id, ok: true, summary: `读取 ${path}（${text.length} chars）`, output: { path, text } })
           continue
         }
 
@@ -913,12 +1010,12 @@ export class AgentExecutor {
             {
               path: typeof payload["path"] === "string" ? String(payload["path"]) : undefined,
               content: typeof payload["content"] === "string" ? String(payload["content"]) : undefined,
-              focus: typeof payload["focus"] === "string" ? String(payload["focus"]) : userInput,
+              focus: typeof payload["focus"] === "string" ? String(payload["focus"]) : effectiveInput,
             },
             toolOpts
           )
-          this.hooks.onNodePatch?.(n.id, { status: "done", output: out, metadata: { durationMs: Math.round(performance.now() - nodeStartedAt) } })
-          results.push({ id: n.id, ok: true, summary: "完成本地源码审计", output: out })
+          execHooks.onNodePatch?.(n.id, { status: "done", output: out, metadata: { durationMs: Math.round(performance.now() - nodeStartedAt) } })
+          commitResult(n, ni, { id: n.id, ok: true, summary: "完成本地源码审计", output: out })
           continue
         }
 
@@ -926,8 +1023,8 @@ export class AgentExecutor {
         const reasoningResult = await executeReasoningNode({
           node: n,
           deps: this.deps,
-          hooks: this.hooks,
-          userInput,
+          hooks: execHooks,
+          userInput: effectiveInput,
           nodes,
           results,
           sources,
@@ -938,7 +1035,7 @@ export class AgentExecutor {
           buildConversationMessages: (a, b) => this.buildConversationMessages(a, b),
           nodeStartedAt,
         })
-        results.push(reasoningResult)
+        commitResult(n, ni, reasoningResult)
         continue
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e)
@@ -969,7 +1066,7 @@ export class AgentExecutor {
             )
           }
         }
-        this.hooks.onNodePatch?.(n.id, { status: "error", error: msg, metadata: { durationMs } })
+        execHooks.onNodePatch?.(n.id, { status: "error", error: msg, metadata: { durationMs } })
         results.push({
           id: n.id,
           ok: false,

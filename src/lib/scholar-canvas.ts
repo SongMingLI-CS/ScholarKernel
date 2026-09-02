@@ -1,5 +1,6 @@
 /** Scholar Canvas XML tag intercept — long-form academic artifacts rendered in the side panel. */
 
+import { stripRedactedThinking } from "@/lib/r1-stream-parser"
 import type { Lang } from "@/store/types"
 
 export const SCHOLAR_CANVAS_OUTPUT_DISCIPLINE = [
@@ -126,8 +127,8 @@ export function interceptScholarCanvasInAssistantBubble(raw: string): ScholarCan
   const contentStart = (openMatch.index ?? 0) + openMatch[0].length
   const tail = raw.slice(contentStart)
   const closeMatch = CANVAS_CLOSE_RE.exec(tail)
-  const content = (closeMatch ? tail.slice(0, closeMatch.index) : tail).trim()
-  const cleanedText = stripScholarCanvasBlocks(raw)
+  const content = stripRedactedThinking((closeMatch ? tail.slice(0, closeMatch.index) : tail).trim())
+  const cleanedText = stripRedactedThinking(stripScholarCanvasBlocks(raw))
 
   return {
     title,

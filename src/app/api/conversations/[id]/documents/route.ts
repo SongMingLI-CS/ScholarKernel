@@ -22,7 +22,7 @@ export async function POST(req: Request, ctx: RouteCtx) {
     const title = typeof body?.title === "string" ? body.title.trim() || "未命名文档" : "未命名文档"
     const content = typeof body?.content === "string" ? body.content : ""
 
-    const document = await prisma.document.create({
+    const document = await prisma.canvasDocument.create({
       data: { conversationId, title, content },
       select: {
         id: true,
