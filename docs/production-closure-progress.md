@@ -5,9 +5,9 @@ Last updated: 2026-09-03
 ## Current state: Phases 1–8 implemented and locally verified
 
 - Current branch: `fix/production-closure`.
-- Completed phase commits: `8984cd3`, `0b49d9a`, `b1174c3`, `8ff424b`, `b0a50e5`, `7f3f837`, `caf5529` (plus baseline/lint checkpoints `c3bbab3` and `4585b1c`).
+- Completed phase commits: `8984cd3`, `0b49d9a`, `b1174c3`, `8ff424b`, `b0a50e5`, `7f3f837`, `caf5529`, and `f734994` (plus baseline/lint checkpoints `c3bbab3` and `4585b1c`).
 - The nested `qiushi-skill` repository remains pre-existing dirty state and was not changed.
-- Phase 8 is verified below and is ready for its independent commit. Production deployment remains out of scope and externally blocked on real PostgreSQL/Blob validation.
+- Phases 1–8 are independently committed. Final deployment-acceptance tooling and documentation are verified below and included in their own independent acceptance commit. Production deployment remains out of scope and externally blocked on real PostgreSQL/Blob validation.
 
 ## Baseline
 
@@ -121,15 +121,48 @@ Last updated: 2026-09-03
 - `npx prisma validate`: passed.
 - `npx prisma migrate status`: blocked with Prisma P1013 because the local `.env` URL is `file:./dev.db`, not PostgreSQL. No migration application or remote Blob operation is claimed as verified.
 
+## Final deployment acceptance preparation
+
+### Code complete
+
+- Added a guarded PostgreSQL staging verifier. Its default mode is plan-only; `--status` and `--apply` require a PostgreSQL `STAGING_DATABASE_URL`, an independently repeated hostname, and the exact staging confirmation string. It never invokes `prisma db push`.
+- Added a read-only SQL verification script for the `cancelled` enum, Prisma migration record, and Agent job status counts.
+- Added a guarded Vercel Blob smoke script covering upload, byte-identical read, indexed marker retrieval, deletion of only the newly created document, and post-delete 404 verification. Its default mode performs no network request.
+- Added a client-bundle credential scanner that reports only finding categories and asset filenames, never matched values.
+- Added a copy-and-verify-only migration procedure for legacy `file://` documents. It never deletes, moves, truncates, or overwrites original files; cleanup requires a separate approval and audit trail.
+- Corrected stale Models, Setup, sidebar, and chat copy so it describes authenticated server SSE, encrypted server-side credential storage, and status-only browser responses.
+- `.env.example` documents all 39 application, provider, storage, parser, reranking, staging-verification, and test variables expected by the current code and acceptance tools (39/39, none missing).
+
+### Local validation complete
+
+- `npm run lint`: passed, 0 errors and 0 warnings.
+- `npm run typecheck`: passed.
+- `npm test`: passed, 66 test files / 326 tests.
+- Synthetic-sentinel `npm run build`: passed with Next.js 16.2.4. The only output warnings were the known middleware convention deprecation and NFT trace warning involving `next.config.ts` and `src/app/api/source/route.ts`.
+- `npm run audit:client-bundle`: passed after the final build, with 0 credential-like literals across 82 browser asset files. Fake server-secret sentinels overrode the audited server credential names for the build; no real secret value was manually inspected or echoed.
+- Acceptance-script tests verify plan-only defaults, refusal without explicit staging targets, additive/idempotent enum SQL, and non-disclosure of a detected synthetic credential.
+- `docs/deployment.md` was checked against the actual package scripts and `/api/documents`, `/api/documents/:id/file`, and `/api/documents/context` behavior.
+
+### Staging validation requiring real credentials
+
+- PostgreSQL remains unverified externally. A real staging clone must provide `STAGING_DATABASE_URL`, `STAGING_EXPECTED_DB_HOST`, and `STAGING_CONFIRMATION=scholarkernel-staging`; the deployed application also requires valid `DATABASE_URL` and `DIRECT_URL`. Run the documented status check before the explicitly reviewed apply step.
+- Vercel Blob remains unverified externally. The staging application needs `BLOB_READ_WRITE_TOKEN`, or both `VERCEL_OIDC_TOKEN` and `BLOB_STORE_ID`; the smoke runner needs `STAGING_BASE_URL`, `STAGING_EXPECTED_HOST`, and the staging confirmation, plus `STAGING_AUTH_COOKIE` when authentication requires it.
+- The `cancelled` migration is statically compatible: it uses only `ADD VALUE IF NOT EXISTS`, preserves all existing enum labels and rows, and is repeatable. Its execution and resulting enum order have not been verified on a real PostgreSQL instance.
+
+### Production deployment not completed
+
+- No production deployment, production database operation, staging database operation, remote Blob operation, or user-data deletion was performed during this acceptance pass.
+- The revision is code- and local-gate-ready, but it is not production-release-ready until both guarded staging workflows pass against real infrastructure and their results are reviewed.
+
 ## Known failures and unresolved risks
 
 - PostgreSQL migration application remains unverified until a real PostgreSQL `DATABASE_URL`/`DIRECT_URL` is supplied; the local `file:./dev.db` URL cannot be used with this schema.
 - The “no provider API key in browser” invariant is improved but not fully structural: Models/Setup/legacy gateway still contain browser-side provider-probe functions. They currently receive no runtime key from the store, but a future server-side probe endpoint should replace them.
-- Vercel Blob production credentials are unavailable here, so remote object upload/download remains deployment-time verification.
+- Vercel Blob credentials were not used here, so remote upload/read/index/delete remains a staging release gate.
 - Existing `file://` Library records are kept for a non-destructive compatibility window; a monitored migration/cleanup policy is still needed.
 - Library indexing currently runs inline after upload. Large PDFs or parser outages can increase upload latency; background indexing/retry policy is not implemented.
 
-## Unfinished external verification after Phase 8
+## Unfinished external verification after final local acceptance
 
 - Supply a real staging PostgreSQL `DATABASE_URL`/`DIRECT_URL`, verify migration status, apply the additive migrations, and execute the documented database smoke tests.
 - Supply staging Blob credentials and verify private upload/read/delete plus RAG indexing end to end.
@@ -142,4 +175,4 @@ Last updated: 2026-09-03
 
 ## Notes
 
-- The pre-existing worktree contains broad uncommitted changes in Agent, Canvas, Library, README, Prisma, and UI code. Commits in this effort must be path-scoped and reviewed against the saved baseline to avoid claiming unrelated work.
+- The only preserved unrelated worktree item is the pre-existing dirty nested `qiushi-skill` repository. It was not modified or staged by this effort.

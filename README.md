@@ -14,7 +14,7 @@
 [![Neon PostgreSQL](https://img.shields.io/badge/Neon-PostgreSQL-00E599?style=for-the-badge&logo=postgresql&logoColor=white)](https://neon.tech/)
 [![Upstash Redis](https://img.shields.io/badge/Upstash-Redis-00E9A3?style=for-the-badge&logo=redis&logoColor=white)](https://upstash.com/)
 [![DeepSeek-R1](https://img.shields.io/badge/DeepSeek--R1-Reasoning-0052FF?style=for-the-badge)](https://www.deepseek.com/)
-[![Tests](https://img.shields.io/badge/Tests-319%20Passed-22C55E?style=for-the-badge&logo=vitest&logoColor=white)](https://vitest.dev/)
+[![Tests](https://img.shields.io/badge/Tests-326%20Passed-22C55E?style=for-the-badge&logo=vitest&logoColor=white)](https://vitest.dev/)
 [![License](https://img.shields.io/badge/License-Private-lightgrey?style=for-the-badge)](https://github.com/SongMingLI-CS/ScholarKernel)
 
 [English](#english-quick-reference) · [快速启动](#-快速启动) · [架构拓扑](#-架构拓扑) · [功能矩阵](#-核心技术护城河-features-matrix) · [Issues](https://github.com/SongMingLI-CS/ScholarKernel/issues)
@@ -44,7 +44,7 @@
 
 ## 概述 · Overview
 
-**ScholarKernel** 是一套面向学术场景的全栈多智能体平台：从 DeepSeek-R1 思考流渲染、React Flow Agent 拓扑编排，到 Canvas / PDF 双模态协同阅读、跨会话文献库与公网只读分享。当前代码门禁覆盖 **319 项 Vitest 测试**；生产发布仍须按[部署清单](docs/deployment.md)完成 PostgreSQL migration 与私有对象存储实测。
+**ScholarKernel** 是一套面向学术场景的全栈多智能体平台：从 DeepSeek-R1 思考流渲染、React Flow Agent 拓扑编排，到 Canvas / PDF 双模态协同阅读、跨会话文献库与公网只读分享。当前代码门禁覆盖 **326 项 Vitest 测试**；生产发布仍须按[部署清单](docs/deployment.md)完成 PostgreSQL migration 与私有对象存储实测。
 
 | 维度 | 能力 |
 |------|------|
@@ -186,7 +186,7 @@ model Document {
 | **ORM / DB** | Prisma 7 · Neon PostgreSQL | 关系持久化 · Serverless Pool |
 | **缓存 / 限流** | Upstash Redis · @upstash/ratelimit | Edge 滑动窗口限流 |
 | **认证** | NextAuth.js 5 (JWT · GitHub · Credentials) | 影子用户 · 路由守卫 |
-| **测试** | Vitest 3 · Playwright | 319 单元测试 · E2E |
+| **测试** | Vitest 3 · Playwright | 326 单元测试 · E2E |
 
 ---
 
@@ -320,7 +320,7 @@ docker compose up --build -d
 本项目以 **测试驱动** 保障核心链路可靠性：
 
 ```bash
-npm test             # Vitest — 65 文件 · 319 项单测
+npm test             # Vitest — 66 文件 · 326 项单测
 npm run lint         # ESLint 静态分析
 npm run typecheck    # TypeScript noEmit
 npm run build        # prisma generate + next build
@@ -328,7 +328,7 @@ npm run build        # prisma generate + next build
 
 | 指标 | 状态 |
 |------|------|
-| **单元测试** | **319 / 319 Passed** ✅ |
+| **单元测试** | **326 / 326 Passed** ✅ |
 | **测试框架** | Vitest 3 |
 | **类型检查** | TypeScript strict · `npm run build` 零错误 |
 | **E2E** | Playwright（`npm run test:e2e`） |
@@ -394,7 +394,7 @@ scholarkernel-web/
 
 ```bash
 npm install && npm run db:push && npm run dev
-npm test    # 319 tests passed
+npm test    # 326 tests passed
 ```
 
 ---

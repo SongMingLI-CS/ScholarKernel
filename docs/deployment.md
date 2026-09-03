@@ -52,11 +52,64 @@ Do not use `prisma db push` for production. Do not use `prisma migrate resolve` 
 
 The `20260902203000_agent_job_cancelled` migration adds the PostgreSQL enum value `cancelled`. It is additive, but its application has not been verified from this workspace because no real PostgreSQL credentials are available; the local `.env` currently points at an incompatible SQLite URL. This remains a release blocker until `prisma migrate status` and `prisma migrate deploy` succeed on PostgreSQL.
 
+### Repeatable staging verification
+
+The repository includes a guarded verifier. With no arguments it only prints the plan and never connects:
+
+```bash
+npm run verify:staging:migration
+```
+
+For a confirmed staging clone, provide a direct PostgreSQL URL and repeat its hostname separately. The explicit confirmation prevents accidental execution when variables are incomplete. The script never invokes `prisma db push`.
+
+```bash
+export STAGING_DATABASE_URL='postgresql://...'
+export STAGING_EXPECTED_DB_HOST='staging-db-host.example'
+export STAGING_CONFIRMATION='scholarkernel-staging'
+
+npm run verify:staging:migration -- --status
+# Review backup, target identity, migration SQL, and status output before continuing.
+npm run verify:staging:migration -- --apply
+psql "$STAGING_DATABASE_URL" -f scripts/sql/verify-cancelled-migration.sql
+```
+
+Both `--status` and `--apply` run `prisma validate` and `prisma migrate status`; `--apply` additionally runs the idempotent `prisma migrate deploy` followed by another status check. Capture pre/post counts for existing `pending`, `running`, `done`, and `error` jobs. The read-only SQL verifies the migration record, enum label/order, and post-migration job counts.
+
+The enum SQL is compatible with existing values because it only runs `ALTER TYPE "AgentJobStatus" ADD VALUE IF NOT EXISTS 'cancelled'`. It does not rewrite rows, tables, or existing enum labels, and a repeat execution is a no-op. Do not attempt to remove the value during rollback; deploy the earlier application first and leave the additive label in place.
+
 ## Object storage verification
 
 Unit tests use an injected storage adapter and do not contact Vercel Blob. Before release, upload a small PDF in staging, retrieve it through `/api/documents/:id/file`, run a query that uses its indexed chunks, then delete it and verify the private object is removed. Missing Blob configuration returns an intentional 503 for uploads and does not block unrelated application routes.
 
 Existing `file://` Library records remain readable during the compatibility window. Database migrations never delete those files or private Blob objects. Plan a separate, monitored copy-and-verify job before retiring local records.
+
+The guarded HTTP smoke script defaults to a no-network plan. `--run` creates one uniquely named Markdown document, checks its `object://` reference, reads and compares its bytes, retrieves its indexed marker, deletes that exact document, and confirms it is no longer available. Cleanup is attempted if an intermediate assertion fails.
+
+```bash
+npm run smoke:staging:blob
+
+export STAGING_BASE_URL='https://staging.example.com'
+export STAGING_EXPECTED_HOST='staging.example.com'
+export STAGING_CONFIRMATION='scholarkernel-staging'
+# Required only when the staging application enforces authentication:
+export STAGING_AUTH_COOKIE='authjs.session-token=...'
+
+npm run smoke:staging:blob -- --run
+```
+
+The staging application—not this client script—must already have `BLOB_READ_WRITE_TOKEN`, or the Vercel OIDC pair `VERCEL_OIDC_TOKEN` and `BLOB_STORE_ID`. The script never prints those values or the auth cookie.
+
+The legacy migration procedure is documented separately in [`library-file-migration.md`](library-file-migration.md). It permits copying, byte/digest verification, indexing verification, and a conditional database-reference switch. Original files are never deleted by that procedure.
+
+## Browser credential audit
+
+After every production build, scan only the browser assets:
+
+```bash
+npm run audit:client-bundle
+```
+
+The audit detects credential-shaped literals, private-key material, credentialed PostgreSQL URLs, and synthetic build sentinels. Findings report only category and asset filename; matched values are never printed. For stronger evidence, build with known fake sentinel credentials supplied through the process environment, then rerun the audit. This tests whether server-only variables are inlined without reading real secrets.
 
 ## Start and health check
 
