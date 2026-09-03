@@ -2,12 +2,12 @@
 
 Last updated: 2026-09-03
 
-## Current state: Phases 1–8 implemented and locally verified
+## Current state: Phases 1–8 locally verified; PostgreSQL staging migration passed
 
 - Current branch: `fix/production-closure`.
 - Completed phase commits: `8984cd3`, `0b49d9a`, `b1174c3`, `8ff424b`, `b0a50e5`, `7f3f837`, `caf5529`, and `f734994` (plus baseline/lint checkpoints `c3bbab3` and `4585b1c`).
 - The nested `qiushi-skill` repository remains pre-existing dirty state and was not changed.
-- Phases 1–8 are independently committed. Final deployment-acceptance tooling and documentation are verified below and included in their own independent acceptance commit. Production deployment remains out of scope and externally blocked on real PostgreSQL/Blob validation.
+- Phases 1–8 are independently committed. Final deployment-acceptance tooling and documentation are included in their own independent acceptance commit. A disposable PostgreSQL 16 staging migration run has now passed; production deployment remains out of scope and blocked on real Blob and live application staging validation.
 
 ## Baseline
 
@@ -143,35 +143,63 @@ Last updated: 2026-09-03
 - Acceptance-script tests verify plan-only defaults, refusal without explicit staging targets, additive/idempotent enum SQL, and non-disclosure of a detected synthetic credential.
 - `docs/deployment.md` was checked against the actual package scripts and `/api/documents`, `/api/documents/:id/file`, and `/api/documents/context` behavior.
 
-### Staging validation requiring real credentials
+### Staging validation status
 
-- PostgreSQL remains unverified externally. A real staging clone must provide `STAGING_DATABASE_URL`, `STAGING_EXPECTED_DB_HOST`, and `STAGING_CONFIRMATION=scholarkernel-staging`; the deployed application also requires valid `DATABASE_URL` and `DIRECT_URL`. Run the documented status check before the explicitly reviewed apply step.
+- PostgreSQL migration execution is now verified on the disposable PostgreSQL 16 instance documented below. A production-shaped hosted clone still requires `STAGING_DATABASE_URL`, `STAGING_EXPECTED_DB_HOST`, and `STAGING_CONFIRMATION=scholarkernel-staging`; the deployed application also requires valid `DATABASE_URL` and `DIRECT_URL`.
 - Vercel Blob remains unverified externally. The staging application needs `BLOB_READ_WRITE_TOKEN`, or both `VERCEL_OIDC_TOKEN` and `BLOB_STORE_ID`; the smoke runner needs `STAGING_BASE_URL`, `STAGING_EXPECTED_HOST`, and the staging confirmation, plus `STAGING_AUTH_COOKIE` when authentication requires it.
-- The `cancelled` migration is statically compatible: it uses only `ADD VALUE IF NOT EXISTS`, preserves all existing enum labels and rows, and is repeatable. Its execution and resulting enum order have not been verified on a real PostgreSQL instance.
+- The `cancelled` migration is statically compatible and successfully executed on disposable PostgreSQL 16: it uses only `ADD VALUE IF NOT EXISTS`, preserves the existing labels, and produced the expected enum order. Historical production-shaped rows remain untested.
 
 ### Production deployment not completed
 
-- No production deployment, production database operation, staging database operation, remote Blob operation, or user-data deletion was performed during this acceptance pass.
-- The revision is code- and local-gate-ready, but it is not production-release-ready until both guarded staging workflows pass against real infrastructure and their results are reviewed.
+- No production deployment, production database operation, remote Blob operation, old `file://` deletion, or user-data deletion was performed. The later staging run below used only an empty disposable PostgreSQL container.
+- The revision is code- and local-gate-ready, but it is not production-release-ready until the remaining real Blob and authenticated application staging workflows pass and their results are reviewed.
+
+## Staging acceptance run — 2026-09-03
+
+The complete sanitized record is in [`staging-acceptance-2026-09-03.md`](staging-acceptance-2026-09-03.md).
+
+### PostgreSQL staging: passed
+
+- Used an empty, disposable PostgreSQL 16 container with no host filesystem volume. A generated credential existed only inside the validation process and was never printed, saved, or committed.
+- `npx prisma validate` passed.
+- Initial `npx prisma migrate status` correctly reported all five migrations pending.
+- `npx prisma migrate deploy` applied all five migrations successfully; the final status reported the schema up to date.
+- Read-only SQL confirmed `cancelled` appears once as the fifth `AgentJobStatus` label and `20260902203000_agent_job_cancelled` is finished and not rolled back.
+- The temporary container was removed after verification. No production database or persistent user data was touched.
+- Limitation: this was an empty staging database. Production-shaped historical rows and divergent migration history were not exercised.
+
+### Blob staging: blocked, not run
+
+- The current process did not have a staging application URL/authentication context or Vercel Blob credentials. No remote request was attempted and no Blob result is claimed.
+- Real PDF upload, byte-identical read, indexed query, exact-document deletion, and private-object deletion confirmation remain required.
+
+### Application staging flows: blocked, not run
+
+- A live Agent SSE request, live cancellation/checkpoint recovery, conversation/Canvas recovery, and Library failure-state presentation require an authenticated staging deployment plus model/Blob configuration, which were unavailable.
+- Local evidence was rerun: 6 focused files / 18 tests passed for Agent SSE events, checkpoint-before-cancel ordering, Canvas recovery, and loaded/missing/failed evidence states. These tests are not represented as live staging verification.
+
+### Release condition
+
+- **Not met.** PostgreSQL empty-staging migration passed, but real Vercel Blob staging and authenticated live application staging flows remain release blockers. A production-shaped PostgreSQL clone check is also recommended before production deployment.
 
 ## Known failures and unresolved risks
 
-- PostgreSQL migration application remains unverified until a real PostgreSQL `DATABASE_URL`/`DIRECT_URL` is supplied; the local `file:./dev.db` URL cannot be used with this schema.
+- The full migration chain now passes on an empty disposable PostgreSQL 16 instance. Compatibility with production-shaped historical rows or a database previously synchronized outside Prisma migration history remains unverified.
 - The “no provider API key in browser” invariant is improved but not fully structural: Models/Setup/legacy gateway still contain browser-side provider-probe functions. They currently receive no runtime key from the store, but a future server-side probe endpoint should replace them.
 - Vercel Blob credentials were not used here, so remote upload/read/index/delete remains a staging release gate.
 - Existing `file://` Library records are kept for a non-destructive compatibility window; a monitored migration/cleanup policy is still needed.
 - Library indexing currently runs inline after upload. Large PDFs or parser outages can increase upload latency; background indexing/retry policy is not implemented.
 
-## Unfinished external verification after final local acceptance
+## Unfinished external verification after PostgreSQL staging acceptance
 
-- Supply a real staging PostgreSQL `DATABASE_URL`/`DIRECT_URL`, verify migration status, apply the additive migrations, and execute the documented database smoke tests.
+- Repeat PostgreSQL verification on a staging clone with production-shaped data and reconciled Prisma migration history before production deployment.
 - Supply staging Blob credentials and verify private upload/read/delete plus RAG indexing end to end.
 - Replace Models/Setup legacy browser provider probes with an authenticated server probe in a future hardening phase; this was intentionally not added to the Phase 8 documentation/release-gate scope.
 
 ## External blockers
 
-- Production Vercel Blob credentials are not available in this workspace. The adapter, failure behavior, and tests are complete; real remote upload/download verification requires `BLOB_READ_WRITE_TOKEN` or Vercel OIDC configuration before deployment.
-- Real PostgreSQL credentials are not available. The cancelled enum migration is statically valid but remains unapplied/unverified in this environment.
+- Staging Vercel Blob credentials were not injected into this process. The adapter, failure behavior, and tests are complete; real remote upload/download verification requires `BLOB_READ_WRITE_TOKEN` or Vercel OIDC configuration on the staging application before deployment.
+- No persistent hosted PostgreSQL staging credential was available. The migration chain and `cancelled` enum passed on disposable PostgreSQL 16, but a production-shaped clone remains unverified.
 
 ## Notes
 
