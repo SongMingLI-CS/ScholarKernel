@@ -50,7 +50,7 @@ The build performs `prisma generate`. It does not prove that a target database a
 
 Do not use `prisma db push` for production. Do not use `prisma migrate resolve` unless the actual database history has been independently reconciled. This repository may encounter databases previously synchronized with `db push`; validate their tables and migration history on a clone before deployment.
 
-The `20260902203000_agent_job_cancelled` migration adds the PostgreSQL enum value `cancelled`. It is additive, but its application has not been verified from this workspace because no real PostgreSQL credentials are available; the local `.env` currently points at an incompatible SQLite URL. This remains a release blocker until `prisma migrate status` and `prisma migrate deploy` succeed on PostgreSQL.
+The `20260902203000_agent_job_cancelled` migration adds the PostgreSQL enum value `cancelled`. It is additive. See `production-closure-progress.md` for the latest staging evidence; every release must still run `prisma migrate status` and `prisma migrate deploy` against its confirmed target before application smoke tests.
 
 ### Repeatable staging verification
 

@@ -2,12 +2,12 @@
 
 Last updated: 2026-09-03
 
-## Current state: Phases 1–8 locally verified; PostgreSQL staging migration passed
+## Current state: Phases 1–8 locally verified; hosted Neon staging migration passed
 
 - Current branch: `fix/production-closure`.
 - Completed phase commits: `8984cd3`, `0b49d9a`, `b1174c3`, `8ff424b`, `b0a50e5`, `7f3f837`, `caf5529`, and `f734994` (plus baseline/lint checkpoints `c3bbab3` and `4585b1c`).
 - The nested `qiushi-skill` repository remains pre-existing dirty state and was not changed.
-- Phases 1–8 are independently committed. Final deployment-acceptance tooling and documentation are included in their own independent acceptance commit. A disposable PostgreSQL 16 staging migration run has now passed; production deployment remains out of scope and blocked on real Blob and live application staging validation.
+- Phases 1–8 are independently committed. Final deployment-acceptance tooling and documentation are included in their own independent acceptance commit. Both disposable PostgreSQL 16 and the user-identified hosted Neon staging target are schema-up-to-date; Preview deployment remains blocked on Vercel setup, private Blob, and live application validation.
 
 ## Baseline
 
@@ -182,6 +182,26 @@ The complete sanitized record is in [`staging-acceptance-2026-09-03.md`](staging
 
 - **Not met.** PostgreSQL empty-staging migration passed, but real Vercel Blob staging and authenticated live application staging flows remain release blockers. A production-shaped PostgreSQL clone check is also recommended before production deployment.
 
+## Hosted Neon and Vercel Preview follow-up — 2026-09-03
+
+### Hosted Neon PostgreSQL: passed
+
+- The active pooler/direct/staging URL relationship passed a value-redacted fingerprint check, and the old endpoint was absent from `.env.staging.local`.
+- `prisma validate`, guarded `prisma migrate deploy`, and final `prisma migrate status` passed; the final schema is up to date.
+- All five expected migration records are finished and not rolled back. The `cancelled` enum and its expected ordering were confirmed with read-only SQL.
+- An earlier status check showed five pending migrations, but this follow-up began with all five already applied. The deploy command was therefore an idempotent no-op; the external process that applied them between checks is unknown.
+
+### Vercel Preview: blocked, not deployed
+
+- Vercel CLI is absent, `.vercel` project linkage is absent, and the current branch has no Git upstream. Per the deployment guard, no Preview or production deployment was attempted.
+- Browser action is required to sign in to Vercel, authorize/import the GitHub repository, configure Preview-scoped variables, and create/connect a private Blob store.
+- No Preview URL exists. Blob lifecycle and all live Agent/Canvas/Library checks remain not run.
+- The current code uses `DEEPSEEK_API_KEY`, the fixed DeepSeek upstream `https://api.deepseek.com`, and default model `deepseek-chat`; it does not read `DEEPSEEK_BASE_URL`.
+
+### Web usability decision
+
+- **Not yet verified for normal web use.** Database migration is ready, but a Preview deployment with authentication, private Blob, model credentials, and full live smoke verification is still required.
+
 ## Known failures and unresolved risks
 
 - The full migration chain now passes on an empty disposable PostgreSQL 16 instance. Compatibility with production-shaped historical rows or a database previously synchronized outside Prisma migration history remains unverified.
@@ -192,14 +212,15 @@ The complete sanitized record is in [`staging-acceptance-2026-09-03.md`](staging
 
 ## Unfinished external verification after PostgreSQL staging acceptance
 
-- Repeat PostgreSQL verification on a staging clone with production-shaped data and reconciled Prisma migration history before production deployment.
+- Investigate or document the external process that applied the five hosted Neon migrations between the two read-only checks; preserve the final verified migration history.
+- Repeat PostgreSQL verification on a staging clone with production-shaped historical data before production deployment if the current hosted staging database remains empty.
 - Supply staging Blob credentials and verify private upload/read/delete plus RAG indexing end to end.
 - Replace Models/Setup legacy browser provider probes with an authenticated server probe in a future hardening phase; this was intentionally not added to the Phase 8 documentation/release-gate scope.
 
 ## External blockers
 
 - Staging Vercel Blob credentials were not injected into this process. The adapter, failure behavior, and tests are complete; real remote upload/download verification requires `BLOB_READ_WRITE_TOKEN` or Vercel OIDC configuration on the staging application before deployment.
-- No persistent hosted PostgreSQL staging credential was available. The migration chain and `cancelled` enum passed on disposable PostgreSQL 16, but a production-shaped clone remains unverified.
+- Hosted Neon staging is up to date. Production-shaped historical data compatibility remains unverified if this staging database has no representative rows.
 
 ## Notes
 

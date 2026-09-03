@@ -50,3 +50,50 @@ The first focused-test command did not start because zsh interpreted the `[id]` 
 Production release condition: **NOT MET**.
 
 The PostgreSQL empty-staging migration gate passed. Release remains blocked on real Vercel Blob staging and live staging application flows. A production-shaped PostgreSQL clone is also recommended before production deployment because this run contained no historical rows or migration history divergence.
+
+## Hosted Neon staging follow-up
+
+### Target safety checks: PASS
+
+- `.env.staging.local` is ignored by Git and has local mode `0600`.
+- Required database variables were present without printing their values.
+- The application URL used a Neon pooler endpoint; the Prisma direct and guarded staging URLs used the matching non-pooler endpoint.
+- The staging verifier's expected hostname matched the direct URL.
+- The previously supplied endpoint was absent from the active staging file.
+- The user identified this target as `ScholarKernel-staging`. The Neon display name cannot be independently derived from a PostgreSQL connection, so this final association depends on that user confirmation.
+
+### Hosted PostgreSQL migration: PASS
+
+- `npx prisma validate`: passed.
+- Pre-deploy `npx prisma migrate status`: schema up to date.
+- `npx prisma migrate deploy`: passed idempotently with no pending migration.
+- Post-deploy `npx prisma migrate status`: schema up to date.
+- All five expected Prisma migration records exist, are finished, and are not rolled back.
+- `AgentJobStatus.cancelled` exists once in the expected fifth position.
+- Migration `20260902203000_agent_job_cancelled` is finished and not rolled back.
+
+An earlier read-only check of the same direct endpoint reported five pending migrations. At the start of this follow-up, all five were already applied, so this run does not claim that its deploy command performed the writes; it verified the final state and the idempotent deployment path. The intervening external actor or process is unknown.
+
+### Vercel Preview readiness: BLOCKED / NOT DEPLOYED
+
+- Vercel CLI is not installed on this host.
+- The repository has no local `.vercel` project link.
+- `fix/production-closure` has no configured upstream branch.
+- No Preview deployment was created and no Preview URL exists yet.
+- No Vercel environment variable was read or written.
+
+Required browser setup:
+
+1. Sign in to Vercel and authorize access to the GitHub repository.
+2. Import or open the Vercel project and confirm its Production Branch remains the repository's production branch, not `fix/production-closure`.
+3. Under Project Settings → Environment Variables, add the staging values with **Preview** scope, preferably restricted to `fix/production-closure`.
+4. Required runtime names: `DATABASE_URL`, `DIRECT_URL`, `AUTH_SECRET`, `ENCRYPTION_SECRET`, `AUTH_PASSWORD`, `DEEPSEEK_API_KEY`, and `PROXY_ACCESS_TOKEN`. `AUTH_USER_ID` and `AUTH_USER_EMAIL` are optional identity settings.
+5. Create or connect a **Private** Blob store from the project's Storage page and confirm Vercel injects `BLOB_READ_WRITE_TOKEN` into Preview.
+6. If distributed limiting is desired, add both `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN`; neither alone is sufficient.
+7. Redeploy after changing variables because Vercel applies changes only to new deployments.
+
+The current code does not read `DEEPSEEK_BASE_URL`; its DeepSeek upstream is fixed to `https://api.deepseek.com` and the default active model is `deepseek-chat`. Adding that environment variable would have no runtime effect. This staging pass intentionally did not change the architecture to add it.
+
+### Current web-use decision
+
+Status: **NOT YET ACCESSIBLE AS A VERIFIED PREVIEW**. Hosted database migration is ready, but Vercel login/project linkage, Preview-scoped secrets, private Blob, Preview deployment, and all live HTTP/UI checks remain outstanding.
