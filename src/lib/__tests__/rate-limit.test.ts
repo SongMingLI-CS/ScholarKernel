@@ -49,8 +49,6 @@ describe("ratelimit", () => {
     const limiter = new InMemorySlidingWindowLimiter(CORE_API_RATE_LIMIT, 60_000)
     resetCoreApiRateLimiterForTests(limiter)
     const key = buildRateLimitKey("198.51.100.42")
-    const nowMs = 1_700_000_000_000
-
     const results = await Promise.all(
       Array.from({ length: 50 }, () => checkCoreApiRateLimit(key, limiter))
     )

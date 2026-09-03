@@ -14,7 +14,7 @@
 [![Neon PostgreSQL](https://img.shields.io/badge/Neon-PostgreSQL-00E599?style=for-the-badge&logo=postgresql&logoColor=white)](https://neon.tech/)
 [![Upstash Redis](https://img.shields.io/badge/Upstash-Redis-00E9A3?style=for-the-badge&logo=redis&logoColor=white)](https://upstash.com/)
 [![DeepSeek-R1](https://img.shields.io/badge/DeepSeek--R1-Reasoning-0052FF?style=for-the-badge)](https://www.deepseek.com/)
-[![Tests](https://img.shields.io/badge/Tests-283%20Passed-22C55E?style=for-the-badge&logo=vitest&logoColor=white)](https://vitest.dev/)
+[![Tests](https://img.shields.io/badge/Tests-319%20Passed-22C55E?style=for-the-badge&logo=vitest&logoColor=white)](https://vitest.dev/)
 [![License](https://img.shields.io/badge/License-Private-lightgrey?style=for-the-badge)](https://github.com/SongMingLI-CS/ScholarKernel)
 
 [English](#english-quick-reference) · [快速启动](#-快速启动) · [架构拓扑](#-架构拓扑) · [功能矩阵](#-核心技术护城河-features-matrix) · [Issues](https://github.com/SongMingLI-CS/ScholarKernel/issues)
@@ -44,7 +44,7 @@
 
 ## 概述 · Overview
 
-**ScholarKernel** 是一套面向学术场景的全栈多智能体 SaaS 平台：从 DeepSeek-R1 原生思考流渲染、React Flow 分布式 Agent 拓扑编排，到 Canvas / PDF 双模态协同阅读、跨会话文献库与公网只读分享——全链路已在 **283 项 Vitest 单测** 下验证通过，可直接部署至 Vercel + Neon + Upstash 生产环境。
+**ScholarKernel** 是一套面向学术场景的全栈多智能体平台：从 DeepSeek-R1 思考流渲染、React Flow Agent 拓扑编排，到 Canvas / PDF 双模态协同阅读、跨会话文献库与公网只读分享。当前代码门禁覆盖 **319 项 Vitest 测试**；生产发布仍须按[部署清单](docs/deployment.md)完成 PostgreSQL migration 与私有对象存储实测。
 
 | 维度 | 能力 |
 |------|------|
@@ -162,7 +162,7 @@ model Document {
 }
 ```
 
-[`my-library`](src/lib/my-library.ts) + [`MyLibraryPanel`](src/components/my-library-panel.tsx) 提供文件夹分类树与卡片网格，支持跨会话多选复用、合流投喂 Agent Run。
+[`my-library`](src/lib/my-library.ts) + [`MyLibraryPanel`](src/components/my-library-panel.tsx) 提供文件夹分类树与卡片网格。新上传文件进入私有对象存储，解析后按页码/章节写入有界 `DocumentChunk`；Agent 只注入与当前问题最相关的片段。旧 `file://` 记录在迁移窗口内保持只读兼容。
 
 ---
 
@@ -186,7 +186,7 @@ model Document {
 | **ORM / DB** | Prisma 7 · Neon PostgreSQL | 关系持久化 · Serverless Pool |
 | **缓存 / 限流** | Upstash Redis · @upstash/ratelimit | Edge 滑动窗口限流 |
 | **认证** | NextAuth.js 5 (JWT · GitHub · Credentials) | 影子用户 · 路由守卫 |
-| **测试** | Vitest 3 · Playwright | 283 单元测试 · E2E |
+| **测试** | Vitest 3 · Playwright | 319 单元测试 · E2E |
 
 ---
 
@@ -213,12 +213,12 @@ model Document {
           ┌────────────────────────┼────────────────────────┐
           ▼                        ▼                        ▼
 ┌──────────────────┐   ┌───────────────────────┐   ┌──────────────────────┐
-│ /api/conversations│   │ /api/agent/run        │   │ /api/canvas · /docs  │
-│ 对话 CRUD · 消息  │   │ AgentExecutor         │   │ Canvas · Library     │
+│ /api/conversations│   │ /api/agent/stream     │   │ Canvas · /documents  │
+│ 对话 CRUD · 消息  │   │ Authenticated SSE     │   │ Canvas · Library     │
 └────────┬─────────┘   │ · node-resume 续跑     │   │ · Public Share       │
          │             │ · r1-stream-parser    │   └──────────┬───────────┘
          │             └───────────┬───────────┘              │
-         │                         │                          │
+         │                         │                          ├──────▶ Private Blob
          └─────────────────────────┼──────────────────────────┘
                                    ▼
                     ┌──────────────────────────────┐
@@ -235,7 +235,7 @@ model Document {
                     └──────────────────────────────┘
 ```
 
-**数据流向：** 用户操作 → Edge 限流（0ms 冷启动熔断）→ JWT 鉴权 → Route Handler → AgentExecutor 状态机 → Neon 持久化 ↔ DeepSeek-R1 推理 → Canvas / PDF 联动回显。
+**数据流向：** 浏览器只提交模型标识与任务数据 → 限流/JWT 鉴权 → Node.js Agent SSE Route → 服务端解密 Provider/Search Key → AgentExecutor → PostgreSQL checkpoint/usage 持久化与私有 Blob/RAG 检索 → SSE 回显拓扑、文本、Canvas、引用和证据状态。浏览器提交 `runtimeKeys` 会被 Agent API 拒绝。
 
 ---
 
@@ -245,8 +245,9 @@ model Document {
 
 - Node.js 20+
 - PostgreSQL 实例（推荐 [Neon](https://neon.tech/) Serverless）
+- 私有对象存储（当前适配 Vercel Blob；上传文献时必需）
 - Upstash Redis 实例（生产限流，本地可跳过）
-- DeepSeek API Key（R1 推理）
+- 至少一个受支持模型的 API Key，或可访问的 Ollama
 
 ### 1 · 克隆与安装
 
@@ -268,8 +269,9 @@ cp .env.example .env.local
 |------|:----:|------|
 | `DATABASE_URL` | ✅ | Neon **Pooler** 连接串（`-pooler` 后缀） |
 | `DIRECT_URL` | ✅ | Neon **直连** 串（Prisma 迁移 / CLI） |
-| `ENCRYPTION_SECRET` | ✅ | 32 字节 AES 密钥；生产环境强制校验 |
-| `NEXTAUTH_SECRET` / `AUTH_SECRET` | 建议 | NextAuth JWT 签名密钥 |
+| `ENCRYPTION_SECRET` | ✅ | 高熵服务端密钥；加密数据库中的 Provider Key |
+| `AUTH_SECRET` | 生产 | Auth.js JWT 签名密钥 |
+| `BLOB_READ_WRITE_TOKEN` | Library | Vercel Blob 私有读写凭据；也可使用 Vercel OIDC 配置 |
 | `UPSTASH_REDIS_REST_URL` | 生产 | Upstash Redis REST 端点 |
 | `UPSTASH_REDIS_REST_TOKEN` | 生产 | Upstash Redis REST Token |
 | `DEEPSEEK_API_KEY` | ✅ | DeepSeek-R1 推理 API Key |
@@ -279,7 +281,7 @@ cp .env.example .env.local
 | `TAVILY_API_KEY` / `SERPER_API_KEY` | 可选 | 学术检索增强 |
 | `GITHUB_ID` / `GITHUB_SECRET` | 可选 | GitHub OAuth 登录 |
 | `AUTH_PASSWORD` | 可选 | 启用应用级登录门禁 |
-| `PROXY_ACCESS_TOKEN` | 公开部署 | LLM Proxy 网关鉴权 |
+| `PROXY_ACCESS_TOKEN` | 可选 | 旧 Proxy Route 的附加鉴权；主 Agent SSE 不依赖浏览器代理 |
 
 生成生产密钥：
 
@@ -292,7 +294,7 @@ openssl rand -base64 32
 ### 3 · 初始化数据库
 
 ```bash
-npm run db:push      # 同步 Prisma Schema → PostgreSQL
+npm run db:push      # 仅本地开发：同步 Prisma Schema → PostgreSQL
 ```
 
 ### 4 · 启动开发服务器
@@ -309,6 +311,8 @@ docker compose up --build -d
 # 应用监听 http://localhost:3000
 ```
 
+容器不会附带 SQLite 或 PostgreSQL；`.env` 必须提供可达的 PostgreSQL 与对象存储配置。生产/预发布应执行 `npm run db:migrate`，并遵循[迁移、验证与回滚步骤](docs/deployment.md)，不要用 `db:push` 代替 migration。
+
 ---
 
 ## ✅ 工程质量 · Engineering Quality
@@ -316,14 +320,15 @@ docker compose up --build -d
 本项目以 **测试驱动** 保障核心链路可靠性：
 
 ```bash
-npm test             # Vitest — 53 文件 · 283 项单测 · 100% 绿灯
+npm test             # Vitest — 65 文件 · 319 项单测
 npm run lint         # ESLint 静态分析
-npm run build        # prisma generate + next build — 零类型错误编译
+npm run typecheck    # TypeScript noEmit
+npm run build        # prisma generate + next build
 ```
 
 | 指标 | 状态 |
 |------|------|
-| **单元测试** | **283 / 283 Passed** ✅ |
+| **单元测试** | **319 / 319 Passed** ✅ |
 | **测试框架** | Vitest 3 |
 | **类型检查** | TypeScript strict · `npm run build` 零错误 |
 | **E2E** | Playwright（`npm run test:e2e`） |
@@ -367,14 +372,14 @@ scholarkernel-web/
 │   ├── config/presets.ts         # 学术模板 DSL
 │   ├── middleware.ts             # Edge 限流 + Auth 守卫
 │   └── store/useAgentStore.ts    # Zustand 全局状态
-└── src/lib/__tests__/            # 283 项 Vitest 单测
+└── src/lib/__tests__/            # Vitest 单元测试
 ```
 
 ---
 
 ## English Quick Reference
 
-**ScholarKernel** is a production-grade, full-stack multi-agent academic review SaaS built on Next.js 16, React 19, Prisma 7, and Neon PostgreSQL — deployable on Vercel with Upstash Redis edge rate limiting.
+**ScholarKernel** is a full-stack multi-agent academic review application built on Next.js 16, React 19, Prisma 7, PostgreSQL, private object storage, and optional Upstash Redis rate limiting. Complete the documented migration and storage checks before production deployment.
 
 **Key differentiators:**
 
@@ -389,7 +394,7 @@ scholarkernel-web/
 
 ```bash
 npm install && npm run db:push && npm run dev
-npm test    # 283 tests passed
+npm test    # 319 tests passed
 ```
 
 ---

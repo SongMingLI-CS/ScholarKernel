@@ -71,7 +71,7 @@ export const ScholarCanvas = memo(function ScholarCanvas({
     } finally {
       setExporting(false)
     }
-  }, [doc])
+  }, [buildCanvasExportMeta, doc])
 
   const onEditorChange = useCallback(
     (markdown: string) => {

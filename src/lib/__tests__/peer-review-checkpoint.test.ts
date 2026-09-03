@@ -62,7 +62,9 @@ describe("executePeerReviewGroup checkpoint resume", () => {
         methodologyReview: "R1 from DB",
         completedStages: ["r1"],
       },
-      onCheckpoint: (cp) => checkpoints.push(cp),
+      onCheckpoint: (cp) => {
+        checkpoints.push(cp)
+      },
       generateReview,
       generateDebate: async () => "debate ok",
     })

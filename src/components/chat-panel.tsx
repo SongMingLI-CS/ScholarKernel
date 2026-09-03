@@ -29,7 +29,7 @@ import { gatherExportMetadataFromStore } from "@/lib/export-metadata"
 import { downloadConversationAsDocx, downloadConversationAsPdf } from "@/lib/export-utils"
 import { formatFileAttachmentBlock, isLayoutAwareUpload, readBrowserFileAsText } from "@/lib/browser-file"
 import { uploadLibraryDocument } from "@/lib/library-api"
-import { connKey, looksLikeWorkflowPlanJson, randomChatId } from "@/lib/chat-bubble-utils"
+import { connKey, looksLikeWorkflowPlanJson } from "@/lib/chat-bubble-utils"
 import { bubbleContentToPlainText } from "@/lib/scholar-canvas"
 import { useChatSend } from "@/hooks/use-chat-send"
 import { consumeTemplateLaunchInput, useTemplateLaunch } from "@/hooks/use-template-launch"
@@ -511,7 +511,7 @@ const ChatPanelInner = memo(function ChatPanelInner() {
         pushToast({ messageKey: "chat.citation.import.failed", variant: "error", ttlMs: 4200 })
       }
     },
-    [lockToBottomOnce, pushToast]
+    [pushToast]
   )
 
   const onImportCitations = useCallback(() => {

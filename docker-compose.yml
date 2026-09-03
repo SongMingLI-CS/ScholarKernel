@@ -5,11 +5,4 @@ services:
       - "3000:3000"
     env_file:
       - .env
-    environment:
-      DATABASE_URL: file:/data/scholarkernel.db
-    volumes:
-      - sk-data:/data
     restart: unless-stopped
-
-volumes:
-  sk-data:

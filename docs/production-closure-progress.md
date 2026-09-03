@@ -2,12 +2,12 @@
 
 Last updated: 2026-09-03
 
-## Current state: Phase 7 verified; Goal remains active for Phase 8
+## Current state: Phases 1–8 implemented and locally verified
 
 - Current branch: `fix/production-closure`.
-- Completed phase commits: `8984cd3`, `0b49d9a`, `b1174c3`, `8ff424b`, `b0a50e5`, `7f3f837` (plus baseline/lint checkpoints `c3bbab3` and `4585b1c`).
+- Completed phase commits: `8984cd3`, `0b49d9a`, `b1174c3`, `8ff424b`, `b0a50e5`, `7f3f837`, `caf5529` (plus baseline/lint checkpoints `c3bbab3` and `4585b1c`).
 - The nested `qiushi-skill` repository remains pre-existing dirty state and was not changed.
-- Phase 7 is verified below and is ready for its independent commit; Phase 8 remains untouched.
+- Phase 8 is verified below and is ready for its independent commit. Production deployment remains out of scope and externally blocked on real PostgreSQL/Blob validation.
 
 ## Baseline
 
@@ -26,7 +26,7 @@ Last updated: 2026-09-03
 - [x] Phase 5: chunked retrieval RAG
 - [x] Phase 6: unified execution semantics
 - [x] Phase 7: transparent source/degradation status
-- [ ] Phase 8: documentation and release gates
+- [x] Phase 8: documentation and release gates
 
 ## Test evidence
 
@@ -108,25 +108,37 @@ Last updated: 2026-09-03
 - `npm run lint`: passed with 0 errors and the same 9 pre-existing warnings.
 - `npx tsc --noEmit`: no Phase 7 errors; the 8 pre-existing test diagnostics remain.
 
+### Phase 8
+
+- Updated README, AGENTS.md, and `.env.example` to match PostgreSQL/Neon, private Vercel Blob storage, authenticated server Agent SSE, Canvas recovery, chunked Library RAG, evidence status, and server-only credentials.
+- Added `docs/deployment.md` with release gates, PostgreSQL migration procedure, staging smoke tests, object-storage verification, legacy `file://` compatibility, and rollback limitations for PostgreSQL enum values.
+- Removed obsolete SQLite paths and persistent SQLite volume configuration from Docker; the container now requires externally supplied PostgreSQL environment variables and runs `prisma migrate deploy` before start.
+- Added `npm run typecheck` and resolved all 8 pre-existing test type diagnostics. Removed all 9 pre-existing lint warnings without changing runtime architecture.
+- `npm run lint`: passed with 0 errors and 0 warnings.
+- `npm run typecheck`: passed.
+- `npm test`: passed, 65 test files / 319 tests.
+- `npm run build`: passed. Next.js reported only the existing middleware convention deprecation and NFT tracing warning for `src/app/api/source/route.ts`.
+- `npx prisma validate`: passed.
+- `npx prisma migrate status`: blocked with Prisma P1013 because the local `.env` URL is `file:./dev.db`, not PostgreSQL. No migration application or remote Blob operation is claimed as verified.
+
 ## Known failures and unresolved risks
 
-- `npx tsc --noEmit` still fails with 8 pre-existing test typing errors in billing, crypto, node-retry, peer-review-checkpoint, and proxy-gateway tests. These are not caused by Phase 6 or Phase 7 and must be fixed before the final release gate.
 - PostgreSQL migration application remains unverified until a real PostgreSQL `DATABASE_URL`/`DIRECT_URL` is supplied; the local `file:./dev.db` URL cannot be used with this schema.
-- Lint is green by exit code but still reports 9 warnings (unused variables and hook dependency warnings).
 - The “no provider API key in browser” invariant is improved but not fully structural: Models/Setup/legacy gateway still contain browser-side provider-probe functions. They currently receive no runtime key from the store, but a future server-side probe endpoint should replace them.
 - Vercel Blob production credentials are unavailable here, so remote object upload/download remains deployment-time verification.
 - Existing `file://` Library records are kept for a non-destructive compatibility window; a monitored migration/cleanup policy is still needed.
 - Library indexing currently runs inline after upload. Large PDFs or parser outages can increase upload latency; background indexing/retry policy is not implemented.
 
-## Unfinished tasks after Phase 7
+## Unfinished external verification after Phase 8
 
-- Implement Phase 8: synchronize README, AGENTS.md, `.env.example`, deployment/migration/rollback documentation, and release checklist.
-- Resolve the 8 baseline TypeScript diagnostics, reduce or consciously document remaining lint warnings, then rerun all release gates.
-- Verify additive Prisma migrations and Blob configuration in a staging-like environment before any production deployment.
+- Supply a real staging PostgreSQL `DATABASE_URL`/`DIRECT_URL`, verify migration status, apply the additive migrations, and execute the documented database smoke tests.
+- Supply staging Blob credentials and verify private upload/read/delete plus RAG indexing end to end.
+- Replace Models/Setup legacy browser provider probes with an authenticated server probe in a future hardening phase; this was intentionally not added to the Phase 8 documentation/release-gate scope.
 
 ## External blockers
 
 - Production Vercel Blob credentials are not available in this workspace. The adapter, failure behavior, and tests are complete; real remote upload/download verification requires `BLOB_READ_WRITE_TOKEN` or Vercel OIDC configuration before deployment.
+- Real PostgreSQL credentials are not available. The cancelled enum migration is statically valid but remains unapplied/unverified in this environment.
 
 ## Notes
 

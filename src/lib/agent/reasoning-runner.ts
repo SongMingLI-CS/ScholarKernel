@@ -197,10 +197,9 @@ export async function executeReasoningNode(ctx: ReasoningNodeContext): Promise<S
   })
 
   const r1Parser = createR1StreamParser()
-  let rawAcc = ""
   let rawLen = 0
 
-  rawAcc = await consumeStreamTextOutput(
+  await consumeStreamTextOutput(
     streamed,
     (text) => {
       if (!sawFirst && text.length > 0) {
@@ -209,7 +208,6 @@ export async function executeReasoningNode(ctx: ReasoningNodeContext): Promise<S
       }
       const delta = text.slice(rawLen)
       rawLen = text.length
-      rawAcc = text
       if (!delta) return
 
       const parsed = r1Parser.append(delta)

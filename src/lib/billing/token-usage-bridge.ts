@@ -11,7 +11,11 @@ export type RecordTokenUsageInput = {
   ttftMs?: number | null
 }
 
-export function extractUsageCounts(usage: LanguageModelUsage | undefined | null): {
+type UsageTokenCounts = Pick<LanguageModelUsage, "inputTokens" | "outputTokens"> & {
+  totalTokens?: number
+}
+
+export function extractUsageCounts(usage: UsageTokenCounts | undefined | null): {
   inputTokens: number
   outputTokens: number
 } {

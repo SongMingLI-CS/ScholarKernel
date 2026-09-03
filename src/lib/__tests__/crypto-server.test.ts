@@ -8,6 +8,7 @@ describe("crypto-server", () => {
   })
 
   afterEach(() => {
+    vi.unstubAllEnvs()
     process.env = { ...envSnapshot }
   })
 
@@ -29,7 +30,7 @@ describe("crypto-server", () => {
   })
 
   it("throws in production when encryption secret is missing", async () => {
-    process.env.NODE_ENV = "production"
+    vi.stubEnv("NODE_ENV", "production")
     delete process.env.ENCRYPTION_SECRET
     delete process.env.DATABASE_ENCRYPTION_KEY
     const { assertEncryptionSecretForProduction } = await import("@/lib/crypto-server")
@@ -37,7 +38,7 @@ describe("crypto-server", () => {
   })
 
   it("resolveEncryptionSecret throws in production when secret is missing", async () => {
-    process.env.NODE_ENV = "production"
+    vi.stubEnv("NODE_ENV", "production")
     delete process.env.ENCRYPTION_SECRET
     delete process.env.DATABASE_ENCRYPTION_KEY
     const { resolveEncryptionSecret } = await import("@/lib/crypto-server")
@@ -45,7 +46,7 @@ describe("crypto-server", () => {
   })
 
   it("uses dev fallback in non-production when secret is missing", async () => {
-    process.env.NODE_ENV = "development"
+    vi.stubEnv("NODE_ENV", "development")
     delete process.env.ENCRYPTION_SECRET
     delete process.env.DATABASE_ENCRYPTION_KEY
     const { encryptForStorage, decryptFromStorage } = await import("@/lib/crypto-server")

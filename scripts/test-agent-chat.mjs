@@ -30,7 +30,7 @@ async function tryRun(label, userInput, provider) {
       getChatHistory: () => [],
     },
     {
-      onDirectChatStream: (text) => process.stdout.write("."),
+      onDirectChatStream: () => process.stdout.write("."),
       onNodeLog: (id, line) => console.log(`  [${id}] ${line}`),
       onNodePatch: (id, patch) => {
         if (patch.status) console.log(`  node ${id} → ${patch.status}`)

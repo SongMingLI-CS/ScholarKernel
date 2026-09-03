@@ -261,7 +261,7 @@ describe("POST /api/agent/run partial resume", () => {
       status: "error",
       input: "test",
       provider: { providerId: "openai", model: "gpt-4" },
-      checkpoint: { phase: "running", nodes: serialWorkflowNodes() },
+      checkpoint: JSON.parse(JSON.stringify({ phase: "running", nodes: serialWorkflowNodes() })),
       result: null,
       error: null,
       errorMessage: null,

@@ -124,7 +124,8 @@ export function createAuthenticatedSessionToken(): string {
   return createSessionToken(readAuthenticatedUserId())
 }
 
-export async function hasValidAuthSession(_req?: Request): Promise<boolean> {
+export async function hasValidAuthSession(req?: Request): Promise<boolean> {
+  void req
   if (!isAuthEnabled()) return false
   const { auth } = await import("@/auth")
   const session = await auth()
