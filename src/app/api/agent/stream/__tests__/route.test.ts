@@ -69,6 +69,16 @@ describe("POST /api/agent/stream", () => {
         sources: [{ title: "Paper", url: "https://example.com" }],
         citationsMarkdown: "",
       })
+      hooks?.onEvidenceStatus?.([
+        {
+          id: "library:doc-1",
+          kind: "library",
+          label: "Paper",
+          state: "loaded",
+          detail: "upstream api_key=sk-supersecret123 failed",
+          sourceCount: 2,
+        },
+      ])
       return { final: "hello", nodes: [], sources: [] }
     })
   })
@@ -88,7 +98,7 @@ describe("POST /api/agent/stream", () => {
     const parser = createAgentSseParser()
     const events = [...parser.push(raw), ...parser.finish()]
     expect(events.map((event) => event.type)).toEqual(
-      expect.arrayContaining(["hello", "plan", "log", "node", "token", "source", "usage", "done"])
+      expect.arrayContaining(["hello", "plan", "log", "node", "token", "source", "evidence", "usage", "done"])
     )
     expect(mocks.runAgentOnServer).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -100,6 +110,8 @@ describe("POST /api/agent/stream", () => {
       expect.any(Object)
     )
     expect(raw).not.toContain("server-secret")
+    expect(raw).not.toContain("sk-supersecret123")
+    expect(raw).toContain("[redacted]")
     expect(mocks.updateAgentJobCheckpoint).toHaveBeenCalled()
     expect(mocks.completeAgentJob).toHaveBeenCalledAfter(mocks.updateAgentJobCheckpoint)
   })

@@ -1,5 +1,6 @@
 import type { WorkflowNode } from "@/lib/agent/planner"
 import type { AcademicSearchHit } from "@/lib/tools/search-tool"
+import type { EvidenceStatus } from "@/lib/evidence-status"
 
 export const AGENT_STREAM_PROTOCOL_VERSION = 1 as const
 
@@ -18,6 +19,7 @@ export type AgentStreamEvent =
   | { type: "token"; nodeId?: string; text: string; delta?: string; thinkingText?: string }
   | { type: "canvas"; title: string; content: string; complete: boolean }
   | { type: "source"; nodeId?: string; sources: AcademicSearchHit[] }
+  | { type: "evidence"; statuses: EvidenceStatus[] }
   | ({ type: "usage" } & AgentStreamUsage)
   | { type: "intervention"; sessionId: string; nodeId: string; reason: string }
   | { type: "error"; code: string; message: string; retryable: boolean }

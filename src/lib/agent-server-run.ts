@@ -1,5 +1,5 @@
 import { AgentExecutor } from "@/lib/agent-executor"
-import { buildLibraryContextForAgent } from "@/lib/library-resolve"
+import { resolveLibraryContextForAgent } from "@/lib/library-resolve"
 import { runtimeKeysFromEnv } from "@/lib/agent/llm-utils"
 import type { AgentExecutorDeps, AgentExecutorHooks } from "@/lib/agent/executor-types"
 import type { PeerReviewCheckpointData } from "@/lib/agent/peer-review-checkpoint"
@@ -51,7 +51,8 @@ export async function runAgentOnServer(
   const envKeys = runtimeKeysFromEnv()
   const runtimeKeys = mergeRuntimeKeysForServer(input.runtimeKeys, envKeys)
   const billingRecorder = input.userId ? createTokenUsageRecorder(input.userId, input.jobId) : null
-  const libraryContext = await buildLibraryContextForAgent(input.userId, input.documentIds, input.userInput)
+  const libraryResolution = await resolveLibraryContextForAgent(input.userId, input.documentIds, input.userInput)
+  if (libraryResolution.statuses.length) hooks?.onEvidenceStatus?.(libraryResolution.statuses)
 
   let resumeSnapshots = input.resumeSnapshots
   if (input.targetNodeId && input.jobId && !resumeSnapshots?.length) {
@@ -97,7 +98,7 @@ export async function runAgentOnServer(
       signal: input.signal,
       localOnly: input.localOnly,
       documentIds: input.documentIds,
-      libraryContext,
+      libraryContext: libraryResolution.context,
     },
     hooks
   )

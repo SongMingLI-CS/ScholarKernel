@@ -16,7 +16,11 @@ vi.mock("@/lib/prisma", () => ({
 vi.mock("@/lib/library-storage", () => ({ readStoredLibraryObject: mocks.readObject }))
 vi.mock("@/lib/library-index", () => ({ indexLibraryDocumentBuffer: mocks.indexBuffer }))
 
-import { buildLibraryContextForAgent, loadLibraryChunksForUser } from "@/lib/library-resolve"
+import {
+  buildLibraryContextForAgent,
+  loadLibraryChunksForUser,
+  resolveLibraryContextForAgent,
+} from "@/lib/library-resolve"
 
 describe("Library retrieval resolution", () => {
   beforeEach(() => vi.clearAllMocks())
@@ -81,5 +85,29 @@ describe("Library retrieval resolution", () => {
       buffer: Buffer.from("legacy"),
     }))
     expect(chunks).toHaveLength(1)
+  })
+
+  it("reports loaded, missing, and failed Library documents independently", async () => {
+    mocks.findDocuments.mockResolvedValue([
+      { id: "loaded", title: "Loaded.pdf", fileType: "application/pdf", fileUrl: "object://loaded" },
+      { id: "failed", title: "Failed.pdf", fileType: "application/pdf", fileUrl: "object://failed" },
+    ])
+    mocks.findChunks.mockResolvedValue([
+      { documentId: "loaded", chunkIndex: 0, section: "Intro", page: 1, content: "Loaded evidence." },
+    ])
+    mocks.readObject.mockResolvedValue(Buffer.from("failed"))
+    mocks.indexBuffer.mockResolvedValue({ status: "failed", chunks: [], error: "Parser failed" })
+
+    const result = await resolveLibraryContextForAgent(
+      "user-1",
+      ["loaded", "failed", "missing"],
+      "evidence"
+    )
+
+    expect(result.statuses).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "library:loaded", state: "loaded" }),
+      expect.objectContaining({ id: "library:failed", state: "failed", detail: "Parser failed" }),
+      expect.objectContaining({ id: "library:missing", state: "missing" }),
+    ]))
   })
 })

@@ -50,6 +50,7 @@ describe("agent stream protocol", () => {
       { type: "token", text: "answer", delta: "answer" },
       { type: "canvas", title: "Report", content: "body", complete: false },
       { type: "source", sources: [{ source_id: "1", title: "Paper", url: "https://example.com" }] },
+      { type: "evidence", statuses: [{ id: "search:n1", kind: "search", label: "query", state: "degraded" }] },
       { type: "usage", model: "model", inputTokens: 1, outputTokens: 2 },
       { type: "error", code: "AgentFailed", message: "failed", retryable: false },
       { type: "done", final: "answer", nodes: [], sources: [], jobId: "job-1" },

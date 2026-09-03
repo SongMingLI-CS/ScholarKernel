@@ -12,6 +12,7 @@ function target(): AgentStreamEventTarget {
     onToken: vi.fn(),
     onCanvas: vi.fn(),
     onSources: vi.fn(),
+    onEvidence: vi.fn(),
     onUsage: vi.fn(),
     onIntervention: vi.fn(),
     onError: vi.fn(),
@@ -30,6 +31,7 @@ describe("applyAgentStreamEvent", () => {
       { type: "token", text: "answer", delta: "answer" },
       { type: "canvas", title: "Doc", content: "body", complete: true },
       { type: "source", sources: [{ source_id: "1", title: "Paper", url: "https://example.com" }] },
+      { type: "evidence", statuses: [{ id: "library:1", kind: "library", label: "Paper", state: "loaded" }] },
       { type: "usage", model: "model", inputTokens: 2, outputTokens: 3 },
       { type: "intervention", sessionId: "r", nodeId: "n", reason: "review" },
       { type: "error", code: "PlanHttpError", message: "failed", retryable: true },
@@ -44,6 +46,7 @@ describe("applyAgentStreamEvent", () => {
     expect(t.onToken).toHaveBeenCalledWith(expect.objectContaining({ text: "answer" }))
     expect(t.onCanvas).toHaveBeenCalledWith({ title: "Doc", content: "body", complete: true })
     expect(t.onSources).toHaveBeenCalledWith(expect.any(Array), undefined)
+    expect(t.onEvidence).toHaveBeenCalledWith([expect.objectContaining({ state: "loaded" })])
     expect(t.onUsage).toHaveBeenCalledWith(expect.objectContaining({ inputTokens: 2, outputTokens: 3 }))
     expect(t.onIntervention).toHaveBeenCalledWith({ sessionId: "r", nodeId: "n", reason: "review" })
     expect(t.onError).toHaveBeenCalledWith(expect.objectContaining({ code: "PlanHttpError" }))

@@ -119,6 +119,11 @@ export const dictionary = {
     "chat.sources": "参考文献 (Sources)",
     "chat.sources.show": "展开",
     "chat.sources.hide": "收起",
+    "chat.evidence.title": "资料读取状态",
+    "chat.evidence.loaded": "已载入",
+    "chat.evidence.missing": "未找到",
+    "chat.evidence.failed": "读取失败",
+    "chat.evidence.degraded": "已降级，回答可能不完整",
     "chat.export": "导出 Markdown",
     "chat.export.done": "对话已导出为 Markdown 文件。",
     "chat.export.empty": "当前对话为空，无法导出。",
@@ -656,6 +661,11 @@ export const dictionary = {
     "chat.sources": "Sources",
     "chat.sources.show": "Show",
     "chat.sources.hide": "Hide",
+    "chat.evidence.title": "Evidence status",
+    "chat.evidence.loaded": "Loaded",
+    "chat.evidence.missing": "Not found",
+    "chat.evidence.failed": "Failed to load",
+    "chat.evidence.degraded": "Degraded; answer may be incomplete",
     "chat.export": "Export Markdown",
     "chat.export.done": "Conversation exported as Markdown.",
     "chat.export.empty": "Nothing to export in this conversation.",
@@ -1115,4 +1125,3 @@ export function useT() {
     return s
   }
 }
-

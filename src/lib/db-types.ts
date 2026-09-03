@@ -30,6 +30,7 @@ export type PaginatedConversations = {
 
 export type MessageMetadata = {
   sources?: ChatMessage["sources"]
+  evidenceStatuses?: ChatMessage["evidenceStatuses"]
 }
 
 /** Full conversation with messages for chat panel hydration */
@@ -97,8 +98,7 @@ function parseMessageMetadata(raw: unknown): MessageMetadata {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {}
   const rec = raw as Record<string, unknown>
   const sources = rec.sources
-  if (!Array.isArray(sources)) return {}
-  const parsed = sources
+  const parsedSources = Array.isArray(sources) ? sources
     .map((s) => {
       if (!s || typeof s !== "object" || Array.isArray(s)) return null
       const item = s as Record<string, unknown>
@@ -113,8 +113,38 @@ function parseMessageMetadata(raw: unknown): MessageMetadata {
         ...(typeof item.source_id === "string" ? { source_id: item.source_id } : {}),
       }
     })
-    .filter((s): s is NonNullable<typeof s> => s != null)
-  return parsed.length ? { sources: parsed } : {}
+    .filter((s): s is NonNullable<typeof s> => s != null) : []
+  const states = new Set(["loaded", "missing", "failed", "degraded"])
+  const kinds = new Set(["library", "search", "file"])
+  const evidenceStatuses = Array.isArray(rec.evidenceStatuses)
+    ? rec.evidenceStatuses
+        .map((value) => {
+          if (!value || typeof value !== "object" || Array.isArray(value)) return null
+          const item = value as Record<string, unknown>
+          if (
+            typeof item.id !== "string" ||
+            typeof item.label !== "string" ||
+            typeof item.kind !== "string" ||
+            !kinds.has(item.kind) ||
+            typeof item.state !== "string" ||
+            !states.has(item.state)
+          ) return null
+          return {
+            id: item.id,
+            label: item.label,
+            kind: item.kind as NonNullable<ChatMessage["evidenceStatuses"]>[number]["kind"],
+            state: item.state as NonNullable<ChatMessage["evidenceStatuses"]>[number]["state"],
+            ...(typeof item.detail === "string" ? { detail: item.detail } : {}),
+            ...(typeof item.sourceCount === "number" ? { sourceCount: item.sourceCount } : {}),
+            ...(typeof item.nodeId === "string" ? { nodeId: item.nodeId } : {}),
+          }
+        })
+        .filter((status): status is NonNullable<typeof status> => status != null)
+    : []
+  return {
+    ...(parsedSources.length ? { sources: parsedSources } : {}),
+    ...(evidenceStatuses.length ? { evidenceStatuses } : {}),
+  }
 }
 
 export function prismaMessageToChat(m: {
@@ -129,11 +159,17 @@ export function prismaMessageToChat(m: {
     role: m.role as ChatMessage["role"],
     content: m.content,
     ...(meta.sources?.length ? { sources: meta.sources } : {}),
+    ...(meta.evidenceStatuses?.length ? { evidenceStatuses: meta.evidenceStatuses } : {}),
   }
 }
 
 export function chatMessageToCreateBody(m: ChatMessage): CreateMessageBody {
-  const metadata: MessageMetadata | undefined = m.sources?.length ? { sources: m.sources } : undefined
+  const metadata: MessageMetadata | undefined = m.sources?.length || m.evidenceStatuses?.length
+    ? {
+        ...(m.sources?.length ? { sources: m.sources } : {}),
+        ...(m.evidenceStatuses?.length ? { evidenceStatuses: m.evidenceStatuses } : {}),
+      }
+    : undefined
   return {
     id: m.id,
     role: m.role,

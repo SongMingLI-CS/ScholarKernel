@@ -1,6 +1,7 @@
 import type { AgentStreamEvent, AgentStreamUsage } from "@/lib/agent-stream-protocol"
 import type { WorkflowNode } from "@/lib/agent/planner"
 import type { AcademicSearchHit } from "@/lib/tools/search-tool"
+import type { EvidenceStatus } from "@/lib/evidence-status"
 
 export type AgentStreamEventTarget = {
   onHello?: (event: Extract<AgentStreamEvent, { type: "hello" }>) => void
@@ -10,6 +11,7 @@ export type AgentStreamEventTarget = {
   onToken?: (event: Extract<AgentStreamEvent, { type: "token" }>) => void
   onCanvas?: (canvas: { title: string; content: string; complete: boolean }) => void
   onSources?: (sources: AcademicSearchHit[], nodeId?: string) => void
+  onEvidence?: (statuses: EvidenceStatus[]) => void
   onUsage?: (usage: AgentStreamUsage) => void
   onIntervention?: (event: { sessionId: string; nodeId: string; reason: string }) => void
   onError?: (event: Extract<AgentStreamEvent, { type: "error" }>) => void
@@ -38,6 +40,9 @@ export function applyAgentStreamEvent(event: AgentStreamEvent, target: AgentStre
       return
     case "source":
       target.onSources?.(event.sources, event.nodeId)
+      return
+    case "evidence":
+      target.onEvidence?.(event.statuses)
       return
     case "usage": {
       const { type: _type, ...usage } = event

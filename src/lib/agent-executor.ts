@@ -783,6 +783,15 @@ export class AgentExecutor {
           } catch (e) {
             const msg = e instanceof Error ? e.message : String(e)
             const durationMs = Math.round(performance.now() - nodeStartedAt)
+            this.hooks.onEvidenceStatus?.([{
+              id: `search:${n.id}`,
+              kind: "search",
+              label: queryList.join(" | "),
+              state: "degraded",
+              detail: msg,
+              sourceCount: 0,
+              nodeId: n.id,
+            }])
             if (isNetworkishError(e)) {
               this.hooks.onNodeLog?.(
                 n.id,
@@ -825,6 +834,15 @@ export class AgentExecutor {
                 ? "Tavily 返回 0 条结果。请更换检索关键词（建议使用纯英文专业术语）后重新发起检索任务。"
                 : "检索工具未能找到相关文献，请提示用户更换关键词。")
             this.hooks.onNodeLog?.(n.id, `[${out.status === "failed" ? "Failed" : "Empty"}] ${emptyMsg}`)
+            this.hooks.onEvidenceStatus?.([{
+              id: `search:${n.id}`,
+              kind: "search",
+              label: queryList.join(" | "),
+              state: out.status === "failed" ? "failed" : "missing",
+              detail: emptyMsg,
+              sourceCount: 0,
+              nodeId: n.id,
+            }])
             execHooks.onNodePatch?.(n.id, {
               status: "done",
               output: out,
@@ -846,6 +864,14 @@ export class AgentExecutor {
           }
 
           this.hooks.onNodeLog?.(n.id, `正在分析 ${sources.length} 篇相关论文（本轮新增 ${out.total} 条）…`)
+          this.hooks.onEvidenceStatus?.([{
+            id: `search:${n.id}`,
+            kind: "search",
+            label: queryList.join(" | "),
+            state: "loaded",
+            sourceCount: out.total,
+            nodeId: n.id,
+          }])
           const resultChars = (out.results ?? []).reduce(
             (sum, hit) => sum + (hit.title?.length ?? 0) + (hit.snippet?.length ?? 0),
             0
@@ -886,6 +912,14 @@ export class AgentExecutor {
           if (!path || !path.trim()) {
             const msg = "Error: 请提供具体的文件路径"
             const durationMs = Math.round(performance.now() - nodeStartedAt)
+            this.hooks.onEvidenceStatus?.([{
+              id: `file:${n.id}`,
+              kind: "file",
+              label: n.title ?? n.id,
+              state: "missing",
+              detail: msg,
+              nodeId: n.id,
+            }])
             execHooks.onNodePatch?.(n.id, {
               status: "error",
               error: msg,
@@ -912,6 +946,14 @@ export class AgentExecutor {
           if (!this.deps.sourceApiBase) {
             const msg = "SourceApiDisabled"
             const durationMs = Math.round(performance.now() - nodeStartedAt)
+            this.hooks.onEvidenceStatus?.([{
+              id: `file:${n.id}`,
+              kind: "file",
+              label: path,
+              state: "degraded",
+              detail: msg,
+              nodeId: n.id,
+            }])
             execHooks.onNodePatch?.(n.id, {
               status: "error",
               error: msg,
@@ -947,6 +989,14 @@ export class AgentExecutor {
 
             if (isReadFileNotFoundError(msg, path) && !isLogLike) {
               const fallbackText = READ_FILE_LITERATURE_FALLBACK
+              this.hooks.onEvidenceStatus?.([{
+                id: `file:${n.id}`,
+                kind: "file",
+                label: path,
+                state: "degraded",
+                detail: msg,
+                nodeId: n.id,
+              }])
               this.hooks.onNodeLog?.(n.id, `[Fallback] 路径不存在或非本地文件：${path}`)
               execHooks.onNodePatch?.(n.id, {
                 status: "done",
@@ -972,6 +1022,14 @@ export class AgentExecutor {
               error: msg,
               metadata: { durationMs, fallback: true, fallbackReason: msg, fallbackKind: "read_file" },
             })
+            this.hooks.onEvidenceStatus?.([{
+              id: `file:${n.id}`,
+              kind: "file",
+              label: path,
+              state: "failed",
+              detail: msg,
+              nodeId: n.id,
+            }])
             results.push({
               id: n.id,
               ok: false,
@@ -991,6 +1049,14 @@ export class AgentExecutor {
             continue
           }
           this.hooks.onNodeLog?.(n.id, `读取完成：${path}（${text.length} chars）`)
+          this.hooks.onEvidenceStatus?.([{
+            id: `file:${n.id}`,
+            kind: "file",
+            label: path,
+            state: "loaded",
+            sourceCount: 1,
+            nodeId: n.id,
+          }])
           execHooks.onNodePatch?.(n.id, {
             status: "done",
             output: { path, chars: text.length },
@@ -1042,6 +1108,15 @@ export class AgentExecutor {
         const durationMs = Math.round(performance.now() - nodeStartedAt)
         logLlmCallFailure(`run: node ${n.id} (${n.type})`, e)
         if (n.type === "research") {
+          this.hooks.onEvidenceStatus?.([{
+            id: `search:${n.id}`,
+            kind: "search",
+            label: n.title ?? n.id,
+            state: "failed",
+            detail: msg,
+            sourceCount: 0,
+            nodeId: n.id,
+          }])
           // Provide actionable diagnostics for UI (node logs are rendered inline).
           if (isNetworkishError(e)) {
             this.hooks.onNodeLog?.(n.id, "[Diagnostic] 检测到网络/代理/CORS 类错误：请确认已启用同源代理（/api/proxy/*），或检查系统代理/VPN。")

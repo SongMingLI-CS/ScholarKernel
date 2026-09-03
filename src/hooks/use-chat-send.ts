@@ -5,6 +5,7 @@ import { type ProviderConfig } from "@/lib/ai-gateway"
 import { buildChatHistoryForExecutor } from "@/lib/agent/llm-utils"
 import { AgentStreamError, streamAgentRun } from "@/lib/agent-stream-client"
 import { applyAgentStreamEvent } from "@/lib/agent-stream-event-handler"
+import { mergeEvidenceStatuses } from "@/lib/evidence-status"
 import {
   bubbleAfterPlanIntercept,
   connKey,
@@ -280,6 +281,14 @@ export function useChatSend({
                 onSources: (sources) => {
                   const aid = store.inference.streaming?.assistantMessageId
                   if (aid && sources.length) store.actions.patchChatMessage(aid, { sources })
+                },
+                onEvidence: (statuses) => {
+                  const aid = store.inference.streaming?.assistantMessageId
+                  if (!aid) return
+                  const current = store.chat.messages.find((message) => message.id === aid)
+                  store.actions.patchChatMessage(aid, {
+                    evidenceStatuses: mergeEvidenceStatuses(current?.evidenceStatuses, statuses),
+                  })
                 },
                 onUsage: (usage) =>
                   store.actions.patchActiveInferenceStream({

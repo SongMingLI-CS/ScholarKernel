@@ -1,3 +1,5 @@
+import type { EvidenceStatus } from "@/lib/evidence-status"
+
 export type PanelId = "dashboard" | "chat" | "workshop" | "library" | "keys" | "models" | "settings"
 
 export type ProviderId =
@@ -91,6 +93,7 @@ export type ChatMessage = {
   role: "user" | "assistant" | "system"
   content: string
   sources?: Array<{ title: string; url: string; snippet?: string; publishedAt?: string; source_id?: string }>
+  evidenceStatuses?: EvidenceStatus[]
   /** Green badge when BibTeX/RIS references are loaded into session context */
   citationBadge?: { count: number }
 }

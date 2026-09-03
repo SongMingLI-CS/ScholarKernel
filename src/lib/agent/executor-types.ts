@@ -3,6 +3,7 @@ import type { RecordTokenUsageInput } from "@/lib/billing/token-usage-bridge"
 import type { PeerReviewCheckpointData } from "@/lib/agent/peer-review-checkpoint"
 import type { NodeSnapshotRecord } from "@/lib/agent/node-resume"
 import type { AcademicSearchHit } from "@/lib/tools/search-tool"
+import type { EvidenceStatus } from "@/lib/evidence-status"
 import type { ChatHistoryEntry, ActiveProviderConfig, WorkflowNode } from "@/lib/agent/planner"
 
 export type { HumanInterventionDecision, InterventionPendingEvent }
@@ -88,6 +89,7 @@ export type AgentExecutorHooks = {
     sources: AcademicSearchHit[]
     citationsMarkdown: string
   }) => void
+  onEvidenceStatus?: (statuses: EvidenceStatus[]) => void
   onUsage?: (usage: {
     model: string
     inputTokens: number

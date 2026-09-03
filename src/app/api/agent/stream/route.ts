@@ -12,7 +12,7 @@ import {
   type AgentJobCheckpoint,
 } from "@/lib/agent-jobs"
 import { runAgentOnServer } from "@/lib/agent-server-run"
-import { classifyAgentRunError } from "@/lib/agent-job-errors"
+import { classifyAgentRunError, sanitizeAgentErrorText } from "@/lib/agent-job-errors"
 import {
   AGENT_STREAM_PROTOCOL_VERSION,
   encodeAgentSseEvent,
@@ -209,6 +209,16 @@ export async function POST(req: Request) {
               onNodeLog: (nodeId, line) => emit({ type: "log", nodeId, line }),
               onDirectChatStream: (text) => emitText(text),
               onResearchResultsSynced: ({ nodeId, sources }) => emit({ type: "source", nodeId, sources }),
+              onEvidenceStatus: (statuses) =>
+                emit({
+                  type: "evidence",
+                  statuses: statuses.map((status) => ({
+                    ...status,
+                    ...(status.detail
+                      ? { detail: sanitizeAgentErrorText(status.detail, 500) }
+                      : {}),
+                  })),
+                }),
               onUsage: (usage) => emit({ type: "usage", ...usage }),
               onInterventionPending: (event) => {
                 jobCheckpoint = {

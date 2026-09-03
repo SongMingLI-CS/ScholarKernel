@@ -6,6 +6,7 @@ import { applyAgentStreamEvent } from "@/lib/agent-stream-event-handler"
 import { streamAgentRun } from "@/lib/agent-stream-client"
 import { bubbleAfterPlanIntercept } from "@/lib/chat-bubble-utils"
 import { formatUserFacingErrorMessage } from "@/lib/user-facing-errors"
+import { mergeEvidenceStatuses } from "@/lib/evidence-status"
 import { useAgentStore } from "@/store/useAgentStore"
 
 export function useNodeRetry() {
@@ -81,6 +82,13 @@ export function useNodeRetry() {
               onCanvas: (canvas) => store.actions.applyScholarCanvasStream(canvas),
               onSources: (sources) => {
                 if (assistantId && sources.length) store.actions.patchChatMessage(assistantId, { sources })
+              },
+              onEvidence: (statuses) => {
+                if (!assistantId) return
+                const current = store.chat.messages.find((message) => message.id === assistantId)
+                store.actions.patchChatMessage(assistantId, {
+                  evidenceStatuses: mergeEvidenceStatuses(current?.evidenceStatuses, statuses),
+                })
               },
               onIntervention: (intervention) => store.actions.setInterventionPending(intervention),
             })

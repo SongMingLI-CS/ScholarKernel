@@ -41,6 +41,7 @@ import { QUICK_PROMPTS } from "@/lib/quick-prompts"
 import { cn } from "@/lib/utils"
 import { useAgentStore } from "@/store/useAgentStore"
 import type { LocaleKey } from "@/lib/locales"
+import { evidenceStateTone, hasDegradedEvidence, type EvidenceStatus } from "@/lib/evidence-status"
 
 function displayMessageContent(
   raw: unknown,
@@ -107,6 +108,52 @@ const SourcesFoldout = memo(function SourcesFoldout({
           })}
         </ol>
       ) : null}
+    </div>
+  )
+})
+
+const EvidenceStatusPanel = memo(function EvidenceStatusPanel({
+  statuses,
+  title,
+  stateLabels,
+}: {
+  statuses?: EvidenceStatus[]
+  title: string
+  stateLabels: Record<EvidenceStatus["state"], string>
+}) {
+  if (!statuses?.length) return null
+  const degraded = hasDegradedEvidence(statuses)
+  return (
+    <div
+      className={cn(
+        "mt-3 rounded-sm border px-3 py-2 font-mono",
+        degraded ? "border-amber-500/35 bg-amber-500/10" : "border-emerald-500/25 bg-emerald-500/5"
+      )}
+    >
+      <div className="text-[11px] font-medium text-foreground/90">{title}</div>
+      <ul className="mt-2 space-y-1.5">
+        {statuses.map((status) => {
+          const tone = evidenceStateTone(status.state)
+          return (
+            <li key={status.id} className="flex items-start gap-2 text-[10px] leading-relaxed">
+              <span
+                className={cn(
+                  "mt-1 inline-block h-1.5 w-1.5 shrink-0 rounded-full",
+                  tone === "success" ? "bg-emerald-400" : tone === "error" ? "bg-rose-400" : "bg-amber-400"
+                )}
+              />
+              <span className="min-w-0">
+                <span className="text-foreground/85">{status.label}</span>
+                <span className="ml-1.5 text-muted-foreground">
+                  {stateLabels[status.state]}
+                  {typeof status.sourceCount === "number" && status.sourceCount > 0 ? ` · ${status.sourceCount}` : ""}
+                </span>
+                {status.detail ? <span className="block break-words text-muted-foreground/80">{status.detail}</span> : null}
+              </span>
+            </li>
+          )
+        })}
+      </ul>
     </div>
   )
 })
@@ -1159,6 +1206,16 @@ const ChatPanelInner = memo(function ChatPanelInner() {
                               title={t("chat.sources")}
                               showText={t("chat.sources.show")}
                               hideText={t("chat.sources.hide")}
+                            />
+                            <EvidenceStatusPanel
+                              statuses={m.evidenceStatuses}
+                              title={t("chat.evidence.title" as LocaleKey)}
+                              stateLabels={{
+                                loaded: t("chat.evidence.loaded" as LocaleKey),
+                                missing: t("chat.evidence.missing" as LocaleKey),
+                                failed: t("chat.evidence.failed" as LocaleKey),
+                                degraded: t("chat.evidence.degraded" as LocaleKey),
+                              }}
                             />
                           </>
                         ) : null}

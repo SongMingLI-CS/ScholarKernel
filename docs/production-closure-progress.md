@@ -1,13 +1,13 @@
 # Production Closure Progress
 
-Last updated: 2026-09-02
+Last updated: 2026-09-03
 
-## Current state: Phase 6 verified; Goal remains active for later phases
+## Current state: Phase 7 verified; Goal remains active for Phase 8
 
 - Current branch: `fix/production-closure`.
-- Completed phase commits: `8984cd3`, `0b49d9a`, `b1174c3`, `8ff424b`, `b0a50e5` (plus baseline/lint checkpoints `c3bbab3` and `4585b1c`).
+- Completed phase commits: `8984cd3`, `0b49d9a`, `b1174c3`, `8ff424b`, `b0a50e5`, `7f3f837` (plus baseline/lint checkpoints `c3bbab3` and `4585b1c`).
 - The nested `qiushi-skill` repository remains pre-existing dirty state and was not changed.
-- Phase 6 is verified below and is ready for its independent commit; Phase 7 and Phase 8 remain untouched.
+- Phase 7 is verified below and is ready for its independent commit; Phase 8 remains untouched.
 
 ## Baseline
 
@@ -25,7 +25,7 @@ Last updated: 2026-09-02
 - [x] Phase 4: Canvas recovery
 - [x] Phase 5: chunked retrieval RAG
 - [x] Phase 6: unified execution semantics
-- [ ] Phase 7: transparent source/degradation status
+- [x] Phase 7: transparent source/degradation status
 - [ ] Phase 8: documentation and release gates
 
 ## Test evidence
@@ -97,9 +97,20 @@ Last updated: 2026-09-02
 - Checkpoint ordering is covered for both `/api/agent/stream` and legacy `/api/agent/jobs`; queued writes are awaited before complete/fail/cancel, and cancellation preserves the latest node checkpoint while setting `phase: cancelled`.
 - Browser audit: the default chat and node-retry paths send only the allowlisted SSE payload; all Agent API routes reject `runtimeKeys`; settings responses expose booleans only; persisted Zustand state drops key material; search tools no longer read `NEXT_PUBLIC_*` keys. Models/Setup and `ai-gateway` still contain legacy provider-probe code paths, but current store hydration/setters keep runtime key material null; a server-side probe replacement remains a follow-up security hardening item.
 
+### Phase 7
+
+- Added a shared evidence-status model for Library documents, academic search, and file reads with explicit `loaded`, `missing`, `failed`, and `degraded` states.
+- Server Agent execution emits Library resolution/indexing outcomes and search/file outcomes through a new SSE `evidence` event. Error details are length-bounded and secret-pattern-redacted at the server stream boundary.
+- Chat send and node retry merge evidence events into the active assistant message; message metadata persists and restores the statuses across conversation reloads.
+- Assistant responses render a visible evidence-status panel. Any non-loaded source is highlighted as degraded, so incomplete evidence is disclosed in the final response area instead of only in node logs or the console.
+- Focused Phase 7 verification: 6 test files / 16 tests passed, covering protocol parsing, event dispatch, metadata round trips, Library outcomes, status merging, and stream redaction.
+- Full suite after implementation: 65 test files / 319 tests passed.
+- `npm run lint`: passed with 0 errors and the same 9 pre-existing warnings.
+- `npx tsc --noEmit`: no Phase 7 errors; the 8 pre-existing test diagnostics remain.
+
 ## Known failures and unresolved risks
 
-- `npx tsc --noEmit` still fails with 7 pre-existing test typing errors in billing, crypto, node-retry, peer-review-checkpoint, and proxy-gateway tests. These are not caused by Phase 6 and must be fixed before the final release gate.
+- `npx tsc --noEmit` still fails with 8 pre-existing test typing errors in billing, crypto, node-retry, peer-review-checkpoint, and proxy-gateway tests. These are not caused by Phase 6 or Phase 7 and must be fixed before the final release gate.
 - PostgreSQL migration application remains unverified until a real PostgreSQL `DATABASE_URL`/`DIRECT_URL` is supplied; the local `file:./dev.db` URL cannot be used with this schema.
 - Lint is green by exit code but still reports 9 warnings (unused variables and hook dependency warnings).
 - The “no provider API key in browser” invariant is improved but not fully structural: Models/Setup/legacy gateway still contain browser-side provider-probe functions. They currently receive no runtime key from the store, but a future server-side probe endpoint should replace them.
@@ -107,11 +118,10 @@ Last updated: 2026-09-02
 - Existing `file://` Library records are kept for a non-destructive compatibility window; a monitored migration/cleanup policy is still needed.
 - Library indexing currently runs inline after upload. Large PDFs or parser outages can increase upload latency; background indexing/retry policy is not implemented.
 
-## Unfinished tasks after Phase 6
+## Unfinished tasks after Phase 7
 
-- Implement Phase 7: explicit user-visible source success/failure/degraded-status events and UI, including Library index failures and search-provider degradation.
 - Implement Phase 8: synchronize README, AGENTS.md, `.env.example`, deployment/migration/rollback documentation, and release checklist.
-- Resolve the 7 baseline TypeScript failures, reduce or consciously document remaining lint warnings, then rerun all release gates.
+- Resolve the 8 baseline TypeScript diagnostics, reduce or consciously document remaining lint warnings, then rerun all release gates.
 - Verify additive Prisma migrations and Blob configuration in a staging-like environment before any production deployment.
 
 ## External blockers
