@@ -35,6 +35,38 @@ export type ReasoningNodeContext = {
   nodeStartedAt: number
 }
 
+export function shouldBlockReasoningForNoEvidence(input: {
+  nodes: WorkflowNode[]
+  results: SubtaskResult[]
+  sources: AcademicSearchHit[]
+  libraryContext?: string
+}): boolean {
+  const hasCollectionNodes = input.nodes.some((x) => x.type === "research" || x.type === "read_file")
+  if (!hasCollectionNodes) return false
+
+  const anyCollectionOk = input.results.some(
+    (r) => r.ok && (r.summary.includes("学术检索") || r.summary.startsWith("读取 "))
+  )
+  const anySources = input.sources.length > 0
+  const anyReadText = input.results.some((r) => {
+    const rec = asRecord(r.output)
+    const text = typeof rec["text"] === "string" ? String(rec["text"]) : undefined
+    return r.ok && typeof text === "string" && text.trim().length > 0
+  })
+  const anySearchEmptyFeedback = input.results.some((r) => {
+    const rec = asRecord(r.output)
+    return (
+      rec["status"] === "empty" ||
+      rec["status"] === "failed" ||
+      r.summary.includes("status=empty") ||
+      r.summary.includes("status=failed")
+    )
+  })
+  const hasLibraryContext = Boolean(input.libraryContext?.trim())
+
+  return !anyCollectionOk && !anySources && !anyReadText && !anySearchEmptyFeedback && !hasLibraryContext
+}
+
 export async function executeReasoningNode(ctx: ReasoningNodeContext): Promise<SubtaskResult> {
   const {
     node: n,
@@ -55,55 +87,40 @@ export async function executeReasoningNode(ctx: ReasoningNodeContext): Promise<S
   const active = deps.activeProvider
   const normalizedModel = normalizeModelId(active.providerId, active.model)
 
-  const hasCollectionNodes = nodes.some((x) => x.type === "research" || x.type === "read_file")
-  if (hasCollectionNodes) {
-    const anyCollectionOk = results.some(
-      (r) => r.ok && (r.summary.includes("学术检索") || r.summary.startsWith("读取 "))
-    )
-    const anySources = Array.isArray(sources) && sources.length > 0
-    const anyReadText = results.some((r) => {
-      const rec = asRecord(r.output)
-      const t = typeof rec["text"] === "string" ? String(rec["text"]) : undefined
-      return r.ok && typeof t === "string" && t.trim().length > 0
+  if (
+    shouldBlockReasoningForNoEvidence({
+      nodes,
+      results,
+      sources,
+      libraryContext: deps.libraryContext,
     })
-    const anySearchEmptyFeedback = results.some((r) => {
-      const rec = asRecord(r.output)
-      return (
-        rec["status"] === "empty" ||
-        rec["status"] === "failed" ||
-        r.summary.includes("status=empty") ||
-        r.summary.includes("status=failed")
-      )
+  ) {
+    const text = [
+      "【DiagnosticReasoning】",
+      "",
+      "未能获取到有效参考资料，无法生成带实时引用的综述。",
+      "",
+      "可能原因：",
+      "- 检索 Key 缺失/无权限",
+      "- 网络/代理/CORS 拦截导致检索失败",
+      "- read_file 参数缺失、路径不存在或 Source API 不可用",
+      "",
+      "建议操作：",
+      "- 配置并解锁检索 Key（Tavily/Serper）后重试",
+      '- 或明确给出需要读取的文件路径（例如 "src/xxx.ts"）',
+      "- 或允许我仅基于内部知识给出不带实时引用的概览（会在开头明确无法获取实时/本地数据）",
+    ].join("\n")
+
+    hooks.onNodePatch?.(n.id, {
+      status: "done",
+      output: { text },
+      metadata: {
+        durationMs: Math.round(performance.now() - nodeStartedAt),
+        guardrail: "no-evidence",
+        diagnosticReasoning: true,
+      },
     })
-
-    if (!anyCollectionOk && !anySources && !anyReadText && !anySearchEmptyFeedback) {
-      const text = [
-        "【DiagnosticReasoning】",
-        "",
-        "未能获取到有效参考资料，无法生成带实时引用的综述。",
-        "",
-        "可能原因：",
-        "- 检索 Key 缺失/无权限",
-        "- 网络/代理/CORS 拦截导致检索失败",
-        "- read_file 参数缺失、路径不存在或 Source API 不可用",
-        "",
-        "建议操作：",
-        "- 配置并解锁检索 Key（Tavily/Serper）后重试",
-        '- 或明确给出需要读取的文件路径（例如 "src/xxx.ts"）',
-        "- 或允许我仅基于内部知识给出不带实时引用的概览（会在开头明确无法获取实时/本地数据）",
-      ].join("\n")
-
-      hooks.onNodePatch?.(n.id, {
-        status: "done",
-        output: { text },
-        metadata: {
-          durationMs: Math.round(performance.now() - nodeStartedAt),
-          guardrail: "no-evidence",
-          diagnosticReasoning: true,
-        },
-      })
-      return { id: n.id, ok: false, summary: "无有效采集结果，拒绝空综述", output: { text } }
-    }
+    return { id: n.id, ok: false, summary: "无有效采集结果，拒绝空综述", output: { text } }
   }
 
   const inferNode: WorkflowNode =
