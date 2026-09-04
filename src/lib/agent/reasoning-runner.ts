@@ -165,7 +165,8 @@ export async function executeReasoningNode(ctx: ReasoningNodeContext): Promise<S
     "",
     "学术严谨性（必须遵守）：",
     "- 当你引用本次检索到的文献时，必须在对应观点后用 [1] [2] 这样的编号标注引用（与 References 列表编号一致）。",
-    '- 最后必须输出一个 "## 参考文献 (References)" 小节，汇总本次对话中用到的文献（与 [n] 编号一致）。',
+    "- 只能引用 academicSearch 工具结果中真实存在的 source_id；禁止根据内部知识补写论文标题、年份或 URL。",
+    "- 不要自行输出参考文献小节；执行器会在回答末尾附加经过校验的工具引用。若检索无结果，则不得使用 [n] 文献编号。",
     "",
     ACADEMIC_OUTPUT_DISCIPLINE,
   ].join("\n")

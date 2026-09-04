@@ -23,6 +23,7 @@ import { isAbortError } from "@/lib/run-abort"
 import { streamDirectChat } from "@/lib/agent/direct-chat"
 import { executePeerReviewGroup, isPeerReviewGroupStart, collectPeerReviewGroup } from "@/lib/agent/peer-review-runner"
 import { executeReasoningNode } from "@/lib/agent/reasoning-runner"
+import { composeGroundedFinal } from "@/lib/agent/citation-grounding"
 import type { AgentExecutorDeps, AgentExecutorHooks, ChatHistoryEntry, LlmHistoryMessage } from "@/lib/agent/executor-types"
 export type { AgentExecutorDeps, AgentExecutorHooks, ChatHistoryEntry, LlmHistoryMessage } from "@/lib/agent/executor-types"
 import {
@@ -1170,7 +1171,7 @@ export class AgentExecutor {
 
     const final =
       typeof lastReasoning?.text === "string"
-        ? [lastReasoning.text, citationsMarkdown ? `\n\n${citationsMarkdown}` : ""].filter(Boolean).join("")
+        ? composeGroundedFinal(lastReasoning.text, citationsMarkdown)
         : [
             "我已执行完工作流，但未生成最终回答文本。",
             "",

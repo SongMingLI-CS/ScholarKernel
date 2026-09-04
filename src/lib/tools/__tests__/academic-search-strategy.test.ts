@@ -13,6 +13,7 @@ import {
   RETRIEVAL_RECALL_TOP_K,
   serializeResearchOutputForReasoning,
 } from "@/lib/tools/academic-search-strategy"
+import { filterAcademicContentResults } from "@/lib/tools/search-tool"
 import type { AcademicSearchHit, AcademicSearchResponse } from "@/lib/tools/search-tool"
 
 describe("academic-search-strategy", () => {
@@ -117,5 +118,21 @@ describe("academic-search-strategy", () => {
     const merged = mergeAcademicSearchResponses([r1, r2], "q1 | q2")
     expect(merged.total).toBe(2)
     expect(merged.results.map((x) => x.url)).toEqual(["https://a", "https://b"])
+  })
+
+  it("drops academic navigation pages while keeping actual papers", () => {
+    const hits: AcademicSearchHit[] = [
+      { source_id: "", title: "arXiv", url: "https://arxiv.org/" },
+      { source_id: "", title: "Artificial Intelligence Sep 2026", url: "https://arxiv.org/list/cs.AI/2026-09" },
+      { source_id: "", title: "Computer Science", url: "https://arxiv.org/archive/cs" },
+      { source_id: "", title: "A real paper", url: "https://arxiv.org/abs/2304.05366" },
+      { source_id: "", title: "A real paper PDF", url: "https://arxiv.org/pdf/2304.05366" },
+      { source_id: "", title: "No Free Lunch - an overview", url: "https://www.sciencedirect.com/topics/computer-science/no-free-lunch" },
+    ]
+
+    expect(filterAcademicContentResults(hits).map((hit) => hit.title)).toEqual([
+      "A real paper",
+      "A real paper PDF",
+    ])
   })
 })

@@ -478,12 +478,25 @@ export function buildLlmMessages(history: LlmHistoryMessage[], currentUserConten
   return [...history, { role: "user", content: currentUserContent }]
 }
 
-function needsQueryRewrite(userInput: string, draftQuery: string): boolean {
+export function needsQueryRewrite(userInput: string, draftQuery: string): boolean {
   const u = userInput.trim()
   const q = draftQuery.trim()
   if (/[\u4e00-\u9fff]/.test(q)) return true
   if (/^(再|还|帮).{0,10}(找|搜|查)|^(找|搜|查).{0,8}(一篇|一下|文献|论文)/i.test(u)) return true
   if (q.length < 8) return true
+
+  const contextualLiteratureRequest = /对比|其他文献|相关文献|这篇|该文|本章|这一章|讲解|展开|详解/i.test(u)
+  if (contextualLiteratureRequest) {
+    const boilerplate = new Set([
+      "latest", "recent", "research", "paper", "papers", "arxiv", "academic",
+      "literature", "study", "studies", "survey", "review",
+    ])
+    const meaningfulTokens = q
+      .toLowerCase()
+      .split(/[^a-z0-9-]+/)
+      .filter((token) => token && !boilerplate.has(token) && !/^20\d{2}$/.test(token))
+    if (meaningfulTokens.length === 0) return true
+  }
   return false
 }
 
@@ -516,6 +529,7 @@ export async function rewriteResearchSearchQuery(
         opts.userInput,
         deps.inference?.contextLimit
       ).slice(-8)
+      const libraryHint = deps.libraryContext?.trim().slice(0, 1200) ?? ""
 
       const { text } = await generateText({
         model,
@@ -536,8 +550,9 @@ export async function rewriteResearchSearchQuery(
             content: [
               `用户当前输入: ${opts.userInput}`,
               `规划阶段 draft query: ${draft || "(empty)"}`,
+              libraryHint ? `已载入本地文献上下文（用于识别主题，不作为在线来源）:\n${libraryHint}` : "",
               "请输出优化后的英文学术 search_query:",
-            ].join("\n"),
+            ].filter(Boolean).join("\n"),
           },
         ],
       })

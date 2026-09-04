@@ -4,6 +4,7 @@ import type { WorkflowNode } from "@/lib/agent/planner"
 import type { AcademicSearchHit } from "@/lib/tools/search-tool"
 import { asRecord } from "@/lib/agent/llm-utils"
 import { formatResearchResultsForSessionContext } from "@/lib/agent/llm-utils"
+import { composeGroundedFinal } from "@/lib/agent/citation-grounding"
 
 /** 单节点持久化快照（DB AgentNode 或内存 workflow 均可映射为此结构）。 */
 export type NodeSnapshotRecord = {
@@ -196,7 +197,7 @@ export function assembleFinalFromResults(
         : null
 
   if (text) {
-    return [text, citationsMarkdown ? `\n\n${citationsMarkdown}` : ""].filter(Boolean).join("")
+    return composeGroundedFinal(text, citationsMarkdown)
   }
 
   return [

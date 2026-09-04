@@ -174,10 +174,29 @@ function isAcademicHost(host: string): boolean {
   return ACADEMIC_DOMAINS.some((d) => host === d || host.endsWith(`.${d}`))
 }
 
-function filterAcademicOnly(results: AcademicSearchHit[]): AcademicSearchHit[] {
+function isKnownNavigationPage(url: string): boolean {
+  try {
+    const parsed = new URL(url)
+    const host = parsed.hostname.toLowerCase()
+    const path = parsed.pathname.replace(/\/+$/, "") || "/"
+
+    if (host === "arxiv.org" || host.endsWith(".arxiv.org")) {
+      return !/^\/(abs|pdf|html|format|src)\//i.test(path)
+    }
+    if (host === "sciencedirect.com" || host.endsWith(".sciencedirect.com")) {
+      return /^\/topics(?:\/|$)/i.test(path)
+    }
+    return false
+  } catch {
+    return true
+  }
+}
+
+/** 学术域名并不等于学术文献；排除已知站点的首页、目录、搜索和主题导航页。 */
+export function filterAcademicContentResults(results: AcademicSearchHit[]): AcademicSearchHit[] {
   return results.filter((r) => {
     const h = normalizeHost(r.url)
-    return h ? isAcademicHost(h) : false
+    return h ? isAcademicHost(h) && !isKnownNavigationPage(r.url) : false
   })
 }
 
@@ -370,7 +389,7 @@ export function createAcademicSearchTool(input: {
       const batches = await Promise.all(queryList.map(runOne))
       const raw = mergeAcademicSearchHits([], batches.flat())
 
-      const filtered0 = wantAcademicOnly ? filterAcademicOnly(raw) : raw
+      const filtered0 = wantAcademicOnly ? filterAcademicContentResults(raw) : raw
 
       const rerankQuery = queryList[0] ?? query
       const wantRerank = (rerankTopK ?? RERANK_FINAL_TOP_K) > 0 && filtered0.length > 0
@@ -443,7 +462,7 @@ export function synthesizeCitationsMarkdown(results: AcademicSearchHit[], title 
     const sid = r.source_id?.trim() ? r.source_id.trim() : String(i + 1)
     const yearMatch = r.publishedAt?.match(/\b(19|20)\d{2}\b/)
     const year = yearMatch ? ` (${yearMatch[0]})` : r.publishedAt ? ` (${r.publishedAt})` : ""
-    return `[${sid}] ${r.title}${year}`
+    return `[${sid}] [${r.title}](${r.url})${year}`
   })
   return {
     count: results.length,
