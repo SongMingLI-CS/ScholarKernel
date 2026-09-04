@@ -4,10 +4,9 @@ import { memo, useCallback, useMemo, useState, type ReactNode } from "react"
 import { Cloud, Cpu, Terminal, Wrench } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
-import { validateProvider } from "@/lib/ai-gateway"
 import { useT } from "@/lib/locales"
+import { validateStoredProvider } from "@/lib/provider-api"
 import { cn } from "@/lib/utils"
-import { useAgentStore } from "@/store/useAgentStore"
 
 type GuideTab = "cloud" | "ollama"
 
@@ -155,16 +154,13 @@ export const SetupGuide = memo(function SetupGuide({ compact }: { compact?: bool
       const ctrl = new AbortController()
       const timeout = window.setTimeout(() => ctrl.abort(), 1800)
       try {
-        const rk = useAgentStore.getState().runtimeKeys
         const res =
           id === "deepseek"
-            ? await validateProvider("deepseek_openai_compat", "deepseek-chat", {
+            ? await validateStoredProvider("deepseek_openai_compat", "deepseek-chat", {
                 signal: ctrl.signal,
-                apiKey: rk?.deepseek,
               })
-            : await validateProvider("anthropic", "claude-3-5-haiku-20241022", {
+            : await validateStoredProvider("anthropic", "claude-3-5-haiku-20241022", {
                 signal: ctrl.signal,
-                apiKey: rk?.anthropic,
               })
         window.clearTimeout(timeout)
         const latencyMs = Math.round(performance.now() - startedAt)
@@ -391,4 +387,3 @@ export const SetupGuide = memo(function SetupGuide({ compact }: { compact?: bool
     </div>
   )
 })
-

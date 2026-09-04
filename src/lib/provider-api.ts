@@ -5,10 +5,11 @@ import type { ProviderId, ValidateProviderResult } from "@/lib/ai-gateway"
 export function validateStoredProvider(
   providerId: Exclude<ProviderId, "ollama">,
   model: string,
-  options?: { baseUrl?: string }
+  options?: { baseUrl?: string; signal?: AbortSignal }
 ): Promise<ValidateProviderResult> {
   return apiFetch<ValidateProviderResult>("/api/providers/validate", {
     method: "POST",
+    signal: options?.signal,
     body: JSON.stringify({ providerId, model, baseUrl: options?.baseUrl }),
   })
 }
