@@ -19,6 +19,7 @@ import {
   type ChatHistoryEntry,
 } from "@/lib/agent/planner"
 import type { AgentExecutorDeps, LlmHistoryMessage } from "@/lib/agent/executor-types"
+import { normalizeServerProviderBaseUrl } from "@/lib/provider-base-url"
 
 export type GenModel = Parameters<typeof generateText>[0]["model"]
 
@@ -360,7 +361,7 @@ export function normalizeOpenAICompatBaseUrlWithProxy(
     if (providerId === "deepseek_openai_compat") return "/api/proxy/deepseek/v1"
     return proxy.endsWith("/v1") ? proxy : `${proxy}/v1`
   }
-  return normalizeOpenAICompatBaseUrl(baseUrl, providerId)
+  return normalizeOpenAICompatBaseUrl(normalizeServerProviderBaseUrl(providerId, baseUrl), providerId)
 }
 
 export function providerSelfIntro(active: ActiveProviderConfig) {

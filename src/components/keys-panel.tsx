@@ -7,6 +7,7 @@ import { Eye, EyeOff, KeyRound, Lock, ShieldCheck, Trash2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { ActionTabBar } from "@/components/action-tab-bar"
 import { clearEncryptedKeysFromStorage, hasEncryptedKeysInStorage } from "@/lib/crypto"
+import { patchSettings } from "@/lib/conversation-api"
 import { cn } from "@/lib/utils"
 import { useT } from "@/lib/locales"
 import {
@@ -46,7 +47,7 @@ export const KeysPanel = memo(function KeysPanel() {
     [bundle]
   )
 
-  const onApplyKeys = useCallback(() => {
+  const onApplyKeys = useCallback(async () => {
     setError(null)
     setBusy(true)
     try {
@@ -59,8 +60,12 @@ export const KeysPanel = memo(function KeysPanel() {
         setError("NoKeys")
         return
       }
-      setRuntimeKeys(patch)
-      setKeyStatus((prev) => ({ ...prev, unlocked: true }))
+      const saved = await patchSettings({ runtimeKeys: patch })
+      setKeyStatus((prev) => ({
+        ...prev,
+        unlocked: Object.values(saved.runtimeKeyStatus).some(Boolean),
+        configured: saved.runtimeKeyStatus,
+      }))
       setBundle({ ...EMPTY_KEY_BUNDLE })
       pushToast({ messageKey: "keys.toast.saved", variant: "success", ttlMs: 2600 })
     } catch (e) {
@@ -68,7 +73,7 @@ export const KeysPanel = memo(function KeysPanel() {
     } finally {
       setBusy(false)
     }
-  }, [bundle, pushToast, setKeyStatus, setRuntimeKeys])
+  }, [bundle, pushToast, setKeyStatus])
 
   const onClearSessionKeys = useCallback(() => {
     setError(null)

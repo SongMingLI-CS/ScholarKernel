@@ -8,8 +8,9 @@ import { Button } from "@/components/ui/button"
 import { validateProvider } from "@/lib/ai-gateway"
 import { useT, type LocaleKey } from "@/lib/locales"
 import { isLikelyCorsBlocked } from "@/lib/network-errors"
+import { validateStoredProvider } from "@/lib/provider-api"
 import { cn } from "@/lib/utils"
-import { getRuntimeKeyForProvider, useAgentStore, type ProviderId } from "@/store/useAgentStore"
+import { useAgentStore, type ProviderId } from "@/store/useAgentStore"
 
 type ProviderOption = {
   id: ProviderId
@@ -65,11 +66,6 @@ function defaultConfigForProvider(id: ProviderId) {
   return { baseUrl: "", model: "" }
 }
 
-function runtimeKeyForProvider(runtimeKeys: ReturnType<typeof useAgentStore.getState>["runtimeKeys"], id: ProviderId) {
-  const key = getRuntimeKeyForProvider(runtimeKeys, id)
-  return key || undefined
-}
-
 function connKey(providerId: ProviderId, baseUrl: string, model: string) {
   return `${providerId}::${normalizeBaseUrl(baseUrl)}::${(model ?? "").trim()}`
 }
@@ -102,7 +98,6 @@ async function probeDraftProvider(input: {
   providerId: ProviderId
   model: string
   baseUrl: string
-  runtimeKeys: ReturnType<typeof useAgentStore.getState>["runtimeKeys"]
 }) {
   const base = normalizeBaseUrl(input.baseUrl)
   const model = (input.model ?? "").trim()
@@ -114,10 +109,7 @@ async function probeDraftProvider(input: {
     return
   }
 
-  const res = await validateProvider(input.providerId, model, {
-    baseUrl: base || undefined,
-    apiKey: runtimeKeyForProvider(input.runtimeKeys, input.providerId),
-  })
+  const res = await validateStoredProvider(input.providerId, model, { baseUrl: base || undefined })
   if (res.ok) return
 
   const detail = res.detail ?? res.kind ?? "ProbeFailed"
@@ -133,8 +125,7 @@ export const ModelsPanel = memo(function ModelsPanel() {
   const setActiveProvider = useAgentStore((s) => s.actions.setActiveProvider)
   const resetProviderDefaults = useAgentStore((s) => s.actions.resetProviderDefaults)
   const probes = useAgentStore((s) => s.probes)
-  const runtimeKeys = useAgentStore((s) => s.runtimeKeys)
-  const probeRuntimeKeys = runtimeKeys ?? undefined
+  const configuredKeys = useAgentStore((s) => s.keys.configured)
   const connectivity = useAgentStore((s) => s.connectivity)
   const setConnectivity = useAgentStore((s) => s.actions.setConnectivity)
   const metrics = useAgentStore((s) => s.inference.last)
@@ -183,7 +174,6 @@ export const ModelsPanel = memo(function ModelsPanel() {
         providerId: active.providerId,
         model: active.model,
         baseUrl: active.baseUrl ?? "",
-        runtimeKeys: probeRuntimeKeys ?? null,
       })
       setProbeFlashFor(active.providerId)
       window.setTimeout(() => setProbeFlashFor(null), 1400)
@@ -201,22 +191,22 @@ export const ModelsPanel = memo(function ModelsPanel() {
     } finally {
       setProbeBusy(false)
     }
-  }, [active.baseUrl, active.model, active.providerId, openCorsHelp, probeRuntimeKeys, t])
+  }, [active.baseUrl, active.model, active.providerId, openCorsHelp, t])
 
   const keyHint = useMemo(() => {
     const id = active.providerId
-    if (id === "openai") return probeRuntimeKeys?.openai ? t("models.keyHint.openai.ok") : t("models.keyHint.openai.missing")
+    if (id === "openai") return configuredKeys.openai ? t("models.keyHint.openai.ok") : t("models.keyHint.openai.missing")
     if (id === "deepseek_openai_compat")
-      return probeRuntimeKeys?.deepseek ? t("models.keyHint.deepseek.ok") : t("models.keyHint.deepseek.missing")
+      return configuredKeys.deepseek ? t("models.keyHint.deepseek.ok") : t("models.keyHint.deepseek.missing")
     if (id === "anthropic")
-      return probeRuntimeKeys?.anthropic ? t("models.keyHint.anthropic.ok") : t("models.keyHint.anthropic.missing")
+      return configuredKeys.anthropic ? t("models.keyHint.anthropic.ok") : t("models.keyHint.anthropic.missing")
     if (id === "google")
-      return probeRuntimeKeys?.google
+      return configuredKeys.google
         ? t("models.keyHint.google.ok")
         : t("models.keyHint.google.missing")
     if (id === "ollama") return t("models.keyHint.ollama")
     return t("models.keyHint.pick")
-  }, [active.providerId, probeRuntimeKeys?.anthropic, probeRuntimeKeys?.deepseek, probeRuntimeKeys?.google, probeRuntimeKeys?.openai, t])
+  }, [active.providerId, configuredKeys.anthropic, configuredKeys.deepseek, configuredKeys.google, configuredKeys.openai, t])
 
   const ollamaProbe = probes.ollama
 
@@ -324,10 +314,13 @@ export const ModelsPanel = memo(function ModelsPanel() {
                             e.stopPropagation()
                             setTestingKey(key)
                             try {
-                              const res = await validateProvider(opt.id, cfg.model, {
-                                baseUrl: cfg.baseUrl.trim() ? cfg.baseUrl : undefined,
-                                apiKey: runtimeKeyForProvider(probeRuntimeKeys ?? null, opt.id),
-                              })
+                              const res = opt.id === "ollama"
+                                ? await validateProvider(opt.id, cfg.model, {
+                                    baseUrl: cfg.baseUrl.trim() ? cfg.baseUrl : undefined,
+                                  })
+                                : await validateStoredProvider(opt.id, cfg.model, {
+                                    baseUrl: cfg.baseUrl.trim() ? cfg.baseUrl : undefined,
+                                  })
 
                               if (res.ok) {
                                 setConnectivity(key, { health: "online", latencyMs: res.latencyMs, errorCode: undefined })
