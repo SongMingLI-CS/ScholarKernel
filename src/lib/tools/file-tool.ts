@@ -5,6 +5,7 @@ import {
   isLayoutAwareBinaryPath,
   parseLayoutAwareDocument,
 } from "@/lib/document/layout-aware-parser"
+import { normalizeSafeProjectPath } from "@/lib/safe-project-path"
 
 function isServer() {
   return typeof window === "undefined"
@@ -44,8 +45,8 @@ export async function safeReadTextFile(
     }
   | { ok: false; path: string; error: string; hint?: string }
 > {
-  const p = normalizeRelPath(relPath)
-  if (!p || p.includes("\0")) {
+  const p = normalizeSafeProjectPath(normalizeRelPath(relPath))
+  if (!p) {
     return { ok: false, path: relPath, error: "InvalidPath" }
   }
   if (!isServer()) {
@@ -60,7 +61,7 @@ export async function safeReadTextFile(
   const pathMod = await import("node:path")
   const fs = await import("node:fs")
   const root = process.cwd()
-  const abs = pathMod.join(root, p)
+  const abs = pathMod.join(/* turbopackIgnore: true */ root, p)
 
   try {
     if (!fs.existsSync(abs)) {

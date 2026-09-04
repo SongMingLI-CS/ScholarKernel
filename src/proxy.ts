@@ -26,7 +26,7 @@ function readAuthSecret(): string | undefined {
   return trimmed.length > 0 ? trimmed : undefined
 }
 
-export async function middleware(req: NextRequest) {
+export async function proxy(req: NextRequest) {
   const { pathname } = req.nextUrl
 
   if (isCoreApiWriteRequest(pathname, req.method)) {
@@ -75,6 +75,7 @@ export const config = {
     "/api/conversations/:path*",
     "/api/agent/:path*",
     "/api/canvas/:path*",
+    "/api/source",
     "/api/public/:path*",
     "/dashboard",
     "/dashboard/:path*",

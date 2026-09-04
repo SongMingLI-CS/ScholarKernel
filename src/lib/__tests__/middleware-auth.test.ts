@@ -26,6 +26,7 @@ describe("middleware-auth", () => {
     expect(isProtectedApiPath("/api/agent/run")).toBe(true)
     expect(isProtectedApiPath("/api/agent/jobs/1")).toBe(true)
     expect(isProtectedApiPath("/api/canvas/export")).toBe(true)
+    expect(isProtectedApiPath("/api/source")).toBe(true)
     expect(isProtectedApiPath("/api/settings")).toBe(false)
     expect(isProtectedApiPath("/api/proxy/openai")).toBe(false)
   })
@@ -54,6 +55,7 @@ describe("middleware-auth", () => {
       "/api/conversations/:path*",
       "/api/agent/:path*",
       "/api/canvas/:path*",
+      "/api/source",
       "/api/public/:path*",
       "/dashboard",
       "/dashboard/:path*",
