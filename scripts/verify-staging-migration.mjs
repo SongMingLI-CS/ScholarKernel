@@ -49,13 +49,23 @@ function stagingEnvironment() {
   }
 }
 
-function runPrisma(args, env) {
+function runPrisma(args, env, { allowPending = false } = {}) {
   const result = spawnSync("npx", ["prisma", ...args], {
     cwd: process.cwd(),
     env,
-    stdio: "inherit",
+    encoding: "utf8",
   })
   if (result.error) throw result.error
+  if (result.stdout) process.stdout.write(result.stdout)
+  if (result.stderr) process.stderr.write(result.stderr)
+  const output = `${result.stdout ?? ""}\n${result.stderr ?? ""}`
+  if (
+    allowPending
+    && result.status === 1
+    && /Following migrations? have not yet been applied:/i.test(output)
+  ) {
+    return
+  }
   if (result.status !== 0) process.exit(result.status ?? 1)
 }
 
@@ -65,7 +75,7 @@ if (mode === "plan") {
   try {
     const env = stagingEnvironment()
     runPrisma(["validate"], env)
-    runPrisma(["migrate", "status"], env)
+    runPrisma(["migrate", "status"], env, { allowPending: mode === "apply" })
     if (mode === "apply") {
       runPrisma(["migrate", "deploy"], env)
       runPrisma(["migrate", "status"], env)
