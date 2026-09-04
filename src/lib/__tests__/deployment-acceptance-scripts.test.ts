@@ -129,6 +129,7 @@ describe("client bundle credential audit", () => {
   it("routes Settings cloud diagnostics through stored server credentials", () => {
     const setupGuide = readFileSync(path.join(repoRoot, "src/components/setup-guide.tsx"), "utf8")
     expect(setupGuide).toContain("validateStoredProvider")
+    expect(setupGuide).toContain("keys.configured")
     expect(setupGuide).not.toMatch(/getState\(\)\.runtimeKeys/)
   })
 

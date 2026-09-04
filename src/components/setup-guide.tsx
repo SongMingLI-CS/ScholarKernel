@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button"
 import { useT } from "@/lib/locales"
 import { validateStoredProvider } from "@/lib/provider-api"
 import { cn } from "@/lib/utils"
+import { useAgentStore } from "@/store/useAgentStore"
 
 type GuideTab = "cloud" | "ollama"
 
@@ -18,7 +19,7 @@ type DiagState =
 
 type CloudDiagItem = {
   id: "deepseek" | "anthropic"
-  status: "idle" | "running" | "ok" | "http_error" | "network_error"
+  status: "idle" | "running" | "ok" | "http_error" | "network_error" | "not_configured"
   latencyMs?: number
   httpStatus?: number
   detail?: string
@@ -83,6 +84,7 @@ function StepItem({
 
 export const SetupGuide = memo(function SetupGuide({ compact }: { compact?: boolean }) {
   const t = useT()
+  const configuredKeys = useAgentStore((state) => state.keys.configured)
   const [tab, setTab] = useState<GuideTab>("cloud")
   const [diag, setDiag] = useState<DiagState>({ status: "idle" })
   const [cloudDiag, setCloudDiag] = useState<CloudDiagItem[]>([
@@ -145,11 +147,13 @@ export const SetupGuide = memo(function SetupGuide({ compact }: { compact?: bool
   const runCloudDiag = useCallback(async () => {
     // reset -> running
     setCloudDiag([
-      { id: "deepseek", status: "running" },
-      { id: "anthropic", status: "running" },
+      { id: "deepseek", status: configuredKeys.deepseek ? "running" : "not_configured" },
+      { id: "anthropic", status: configuredKeys.anthropic ? "running" : "not_configured" },
     ])
 
     const probe = async (id: CloudDiagItem["id"]): Promise<CloudDiagItem> => {
+      const isConfigured = id === "deepseek" ? configuredKeys.deepseek : configuredKeys.anthropic
+      if (!isConfigured) return { id, status: "not_configured" }
       const startedAt = performance.now()
       const ctrl = new AbortController()
       const timeout = window.setTimeout(() => ctrl.abort(), 1800)
@@ -184,7 +188,7 @@ export const SetupGuide = memo(function SetupGuide({ compact }: { compact?: bool
 
     const [deepseek, anthropic] = await Promise.all([probe("deepseek"), probe("anthropic")])
     setCloudDiag([deepseek, anthropic])
-  }, [])
+  }, [configuredKeys.anthropic, configuredKeys.deepseek])
 
   const explainHttpStatus = useCallback(
     (s: number | undefined) => {
@@ -286,8 +290,10 @@ export const SetupGuide = memo(function SetupGuide({ compact }: { compact?: bool
               {cloudDiag.map((it) => {
                 const label = it.id === "deepseek" ? "DeepSeek" : "Anthropic"
                 const statusText =
-                  it.status === "idle"
-                    ? t("setup.net.state.idle")
+                   it.status === "idle"
+                     ? t("setup.net.state.idle")
+                    : it.status === "not_configured"
+                      ? t("setup.net.state.notConfigured")
                     : it.status === "running"
                       ? t("setup.net.state.running")
                       : it.status === "ok"
