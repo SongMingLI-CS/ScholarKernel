@@ -29,6 +29,7 @@ import {
 } from "@/lib/agent/peer-review-checkpoint"
 import type { AgentExecutorDeps } from "@/lib/agent/executor-types"
 import type { ActiveProviderConfig, ChatHistoryEntry, WorkflowNode } from "@/lib/agent/planner"
+import { registerActiveAgentRun, unregisterActiveAgentRun } from "@/lib/agent/run-control"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -46,6 +47,83 @@ type AgentStreamBody = {
   resumeNodes?: WorkflowNode[]
   documentIds?: string[]
   runtimeKeys?: unknown
+}
+
+type PersistedAgentJob = NonNullable<Awaited<ReturnType<typeof getAgentJobForUser>>>
+
+function persistedResult(job: PersistedAgentJob) {
+  if (job.status !== "done" || !job.result || typeof job.result !== "object" || Array.isArray(job.result)) return null
+  const result = job.result as Record<string, unknown>
+  if (typeof result.final !== "string" || !Array.isArray(result.nodes) || !Array.isArray(result.sources)) return null
+  return {
+    final: result.final,
+    nodes: result.nodes as WorkflowNode[],
+    sources: result.sources as import("@/lib/tools/search-tool").AcademicSearchHit[],
+  }
+}
+
+function reconnectJobStream(input: { initial: PersistedAgentJob; userId: string; runId: string }) {
+  const encoder = new TextEncoder()
+  let transportClosed = false
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      const emit = (event: AgentStreamEvent) => {
+        if (!transportClosed) controller.enqueue(encoder.encode(encodeAgentSseEvent(event)))
+      }
+      void (async () => {
+        let job: PersistedAgentJob | null = input.initial
+        let lastNodes = ""
+        emit({ type: "hello", version: AGENT_STREAM_PROTOCOL_VERSION, runId: input.runId, jobId: input.initial.id })
+        while (job && !transportClosed) {
+          const checkpoint = job.checkpoint && typeof job.checkpoint === "object" && !Array.isArray(job.checkpoint)
+            ? job.checkpoint as AgentJobCheckpoint
+            : null
+          const nodes = Array.isArray(checkpoint?.nodes) ? checkpoint.nodes as WorkflowNode[] : []
+          const serializedNodes = JSON.stringify(nodes)
+          if (nodes.length && serializedNodes !== lastNodes) {
+            lastNodes = serializedNodes
+            emit({ type: "plan", nodes })
+          }
+          const result = persistedResult(job)
+          if (result) {
+            if (JSON.stringify(result.nodes) !== lastNodes) emit({ type: "plan", nodes: result.nodes })
+            emit({ type: "done", ...result, jobId: job.id })
+            break
+          }
+          if (job.status === "done") {
+            emit({ type: "error", code: "PersistedResultInvalid", message: "Persisted Agent result is incomplete", retryable: false })
+            break
+          }
+          if (job.status === "error" || job.status === "cancelled") {
+            emit({
+              type: "error",
+              code: job.status === "cancelled" ? "Aborted" : "PersistedJobError",
+              message: job.status === "cancelled" ? "Agent run cancelled" : sanitizeAgentErrorText(job.errorMessage ?? job.error ?? "Agent run failed", 500),
+              retryable: job.status === "error",
+            })
+            break
+          }
+          await new Promise((resolve) => setTimeout(resolve, 500))
+          if (!transportClosed) job = await getAgentJobForUser(input.initial.id, input.userId)
+        }
+      })().catch((error) => {
+        if (!transportClosed) emit({ type: "error", code: "ReconnectFailed", message: sanitizeAgentErrorText(error, 500), retryable: true })
+      }).finally(() => {
+        if (!transportClosed) controller.close()
+      })
+    },
+    cancel() {
+      transportClosed = true
+    },
+  })
+  return new Response(stream, {
+    headers: {
+      "Content-Type": "text/event-stream; charset=utf-8",
+      "Cache-Control": "no-cache, no-transform",
+      Connection: "keep-alive",
+      "X-Accel-Buffering": "no",
+    },
+  })
 }
 
 function isValidProvider(value: unknown): value is ActiveProviderConfig {
@@ -78,10 +156,14 @@ export async function POST(req: Request) {
   }
 
   let jobId = body.jobId?.trim()
+  let existingJob: PersistedAgentJob | null = null
+  let completedJobResult: { final: string; nodes: WorkflowNode[]; sources: import("@/lib/tools/search-tool").AcademicSearchHit[] } | null = null
   let initialCheckpoint: AgentJobCheckpoint = { phase: "running" }
   if (jobId) {
     const owned = await getAgentJobForUser(jobId, userId)
     if (!owned) return jsonError("Job not found", 404)
+    existingJob = owned
+    completedJobResult = persistedResult(owned)
     if (owned.checkpoint && typeof owned.checkpoint === "object") {
       initialCheckpoint = { ...initialCheckpoint, ...(owned.checkpoint as AgentJobCheckpoint) }
     }
@@ -94,16 +176,29 @@ export async function POST(req: Request) {
   }
 
   let resumeNodes = body.resumeNodes
-  if (body.targetNodeId?.trim() && !resumeNodes?.length && Array.isArray(initialCheckpoint.nodes)) {
+  if (jobId && !resumeNodes?.length && Array.isArray(initialCheckpoint.nodes)) {
     resumeNodes = initialCheckpoint.nodes as WorkflowNode[]
   }
 
   const stableJobId = jobId
   const runId = body.runId?.trim() || crypto.randomUUID()
+  const encoder = new TextEncoder()
+  if (completedJobResult) {
+    const replay = [
+      encodeAgentSseEvent({ type: "hello", version: AGENT_STREAM_PROTOCOL_VERSION, runId, jobId: stableJobId }),
+      encodeAgentSseEvent({ type: "plan", nodes: completedJobResult.nodes }),
+      encodeAgentSseEvent({ type: "done", ...completedJobResult, jobId: stableJobId }),
+    ].join("")
+    return new Response(replay, { headers: { "Content-Type": "text/event-stream; charset=utf-8", "Cache-Control": "no-cache, no-transform" } })
+  }
+  if (existingJob && !body.targetNodeId?.trim()) {
+    return reconnectJobStream({ initial: existingJob, userId, runId })
+  }
   const runtimeKeys = await loadRuntimeKeysForUser(userId)
   const origin = new URL(req.url)
   const sourceApiBase = `${origin.protocol}//${origin.host}`
-  const encoder = new TextEncoder()
+  const executionSignal = registerActiveAgentRun(stableJobId)
+  let transportClosed = false
 
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
@@ -123,8 +218,12 @@ export async function POST(req: Request) {
       }
 
       const emit = (event: AgentStreamEvent) => {
-        if (closed) return
-        controller.enqueue(encoder.encode(encodeAgentSseEvent(event)))
+        if (closed || transportClosed) return
+        try {
+          controller.enqueue(encoder.encode(encodeAgentSseEvent(event)))
+        } catch {
+          transportClosed = true
+        }
       }
       const emitText = (text: string, nodeId?: string, thinkingText?: string) => {
         const delta = text.startsWith(lastTokenText) ? text.slice(lastTokenText.length) : text
@@ -169,7 +268,7 @@ export async function POST(req: Request) {
               planRetryMessage: body.planRetryMessage,
               runtimeKeys,
               sourceApiBase,
-              signal: req.signal,
+              signal: executionSignal,
               documentIds: Array.isArray(body.documentIds)
                 ? body.documentIds.filter((id): id is string => typeof id === "string" && id.trim().length > 0)
                 : undefined,
@@ -257,10 +356,16 @@ export async function POST(req: Request) {
             retryable: failure.retryable,
           })
         } finally {
+          unregisterActiveAgentRun(stableJobId)
           closed = true
-          controller.close()
+          if (!transportClosed) controller.close()
         }
       })()
+    },
+    cancel() {
+      // Transport disconnect is not job cancellation. The database-backed run
+      // continues; explicit DELETE /api/agent/jobs/:id performs cancellation.
+      transportClosed = true
     },
   })
 

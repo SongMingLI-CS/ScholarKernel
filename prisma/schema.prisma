@@ -93,35 +93,49 @@ model CanvasDocument {
 
 /// 用户全局文献资产库（跨会话持久化）
 model Document {
-  id          String          @id @default(cuid())
-  userId      String
-  user        User            @relation(fields: [userId], references: [id], onDelete: Cascade)
-  title       String
-  fileUrl     String
-  fileSize    Int
-  fileType    String
-  tags        String[]        @default([])
-  folders     String[]        @default([])
-  indexStatus String          @default("pending")
-  indexError  String?         @db.Text
-  indexedAt   DateTime?
-  createdAt   DateTime        @default(now())
-  chunks      DocumentChunk[]
+  id                    String          @id @default(cuid())
+  userId                String
+  user                  User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title                 String
+  fileUrl               String
+  fileSize              Int
+  fileType              String
+  tags                  String[]        @default([])
+  folders               String[]        @default([])
+  indexStatus           String          @default("pending")
+  indexError            String?         @db.Text
+  indexedAt             DateTime?
+  fileHash              String?
+  parserVersion         String          @default("layout-v1")
+  chunkVersion          String          @default("semantic-v1")
+  embeddingModelVersion String?
+  embeddingStatus       String          @default("pending")
+  embeddingUpdatedAt    DateTime?
+  indexJobId            String?
+  createdAt             DateTime        @default(now())
+  chunks                DocumentChunk[]
 
   @@index([userId])
 }
 
 /// Parsed, bounded evidence units for query-time Library retrieval.
 model DocumentChunk {
-  id         String   @id @default(cuid())
-  documentId String
-  document   Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
-  chunkIndex Int
-  section    String
-  page       Int?
-  content    String   @db.Text
-  charCount  Int
-  createdAt  DateTime @default(now())
+  id                    String                 @id @default(cuid())
+  documentId            String
+  document              Document               @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  chunkIndex            Int
+  section               String
+  headingPath           String[]               @default([])
+  page                  Int?
+  paragraphStart        Int?
+  paragraphEnd          Int?
+  content               String                 @db.Text
+  charCount             Int
+  contentHash           String                 @default("")
+  embedding             Unsupported("vector")?
+  embeddingModelVersion String?
+  embeddedAt            DateTime?
+  createdAt             DateTime               @default(now())
 
   @@unique([documentId, chunkIndex])
   @@index([documentId])
@@ -156,36 +170,47 @@ enum AgentJobStatus {
 }
 
 model AgentJob {
-  id           String         @id @default(cuid())
-  userId       String?
-  user         User?          @relation(fields: [userId], references: [id], onDelete: Cascade)
-  status       AgentJobStatus @default(pending)
-  input        String
-  provider     Json?
-  checkpoint   Json?
-  result       Json?
+  id             String         @id @default(cuid())
+  userId         String?
+  user           User?          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  status         AgentJobStatus @default(pending)
+  input          String
+  provider       Json?
+  checkpoint     Json?
+  result         Json?
   /// @deprecated 与 errorMessage 同步；新写入请用 errorMessage
-  error        String?
-  errorMessage String?        @db.Text
-  errorStack   String?        @db.Text
-  createdAt    DateTime       @default(now())
-  updatedAt    DateTime       @updatedAt
-  nodes        AgentNode[]
+  error          String?
+  errorMessage   String?        @db.Text
+  errorStack     String?        @db.Text
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+  heartbeatAt    DateTime?
+  leaseExpiresAt DateTime?
+  nodes          AgentNode[]
 
   @@index([userId, status, updatedAt])
 }
 
 /// 智能体工作流单节点快照：支持断点续跑与就地重试。
 model AgentNode {
-  id           String         @id @default(cuid())
-  jobId        String
-  job          AgentJob       @relation(fields: [jobId], references: [id], onDelete: Cascade)
-  nodeId       String
-  status       AgentJobStatus @default(pending)
-  outputs      Json?
-  nodeSnapshot Json?
-  createdAt    DateTime       @default(now())
-  updatedAt    DateTime       @updatedAt
+  id                 String         @id @default(cuid())
+  jobId              String
+  job                AgentJob       @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  nodeId             String
+  status             AgentJobStatus @default(pending)
+  outputs            Json?
+  nodeSnapshot       Json?
+  inputHash          String?
+  upstreamResultHash String?
+  attemptCount       Int            @default(0)
+  startedAt          DateTime?
+  completedAt        DateTime?
+  idempotencyKey     String?
+  errorCategory      String?
+  outputSnapshot     Json?
+  leaseExpiresAt     DateTime?
+  createdAt          DateTime       @default(now())
+  updatedAt          DateTime       @updatedAt
 
   @@unique([jobId, nodeId])
   @@index([jobId, status])

@@ -13,9 +13,10 @@ import {
   storeLibraryObject,
 } from "@/lib/library-storage"
 import { prisma } from "@/lib/prisma"
-import { indexLibraryDocumentBuffer } from "@/lib/library-index"
+import { scheduleLibraryIndexJob } from "@/lib/library-index-job"
 
 const MAX_UPLOAD_BYTES = 12 * 1024 * 1024
+export const maxDuration = 300
 
 function parseTags(raw: FormDataEntryValue | null): string[] {
   if (typeof raw !== "string" || !raw.trim()) return []
@@ -119,18 +120,14 @@ export async function POST(req: Request) {
       data: { fileUrl },
     })
 
-    await indexLibraryDocumentBuffer({
-      documentId: document.id,
-      documentTitle: document.title,
-      filename: file.name,
-      fileType,
-      buffer,
-    })
+    const indexJobId = await scheduleLibraryIndexJob(userId, document.id)
 
     return jsonOk(
       {
         ...serializeLibraryDocument(document),
         downloadUrl: libraryFileApiUrl(document.id),
+        indexJobId,
+        indexStatus: "pending",
       },
       { status: 201 }
     )
@@ -177,6 +174,7 @@ export async function PATCH(req: Request) {
       tags?: { add?: string[]; remove?: string[] }
       folders?: string[]
       title?: string
+      reindex?: boolean
     } | null
 
     const id = body?.id?.trim()
@@ -197,6 +195,10 @@ export async function PATCH(req: Request) {
     }
 
     const document = await prisma.document.update({ where: { id }, data })
+    if (body?.reindex === true) {
+      const indexJobId = await scheduleLibraryIndexJob(userId, document.id)
+      return jsonOk({ ...serializeLibraryDocument(document), indexJobId, indexStatus: "pending" })
+    }
     return jsonOk(serializeLibraryDocument(document))
   } catch (e) {
     console.error("[PATCH /api/documents]", e)

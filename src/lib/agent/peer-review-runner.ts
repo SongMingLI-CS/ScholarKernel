@@ -197,7 +197,7 @@ async function persistStageCheckpoint(
   await input.onCheckpoint?.(patch)
 }
 
-async function runSingleReviewer(
+export async function runSingleReviewer(
   node: WorkflowNode,
   personaId: PeerReviewPersonaId,
   subject: string,
@@ -288,6 +288,30 @@ async function runSingleReviewer(
     hooks.onNodePatch?.(node.id, { status: "error", error: msg })
     throw e
   }
+}
+
+export async function executePeerReviewerDagNode(input: {
+  node: WorkflowNode
+  userInput: string
+  deps: AgentExecutorDeps
+  hooks: ExecutePeerReviewGroupInput["hooks"]
+}): Promise<SubtaskResult> {
+  const personaId = personaIdFromNode(
+    input.node,
+    input.node.metadata?.peerReviewRole === "reviewer" && input.node.id.includes("r2") ? "innovation_scout" : "methodology_critic"
+  )
+  if (personaId === "area_chair") throw new Error("AreaChairRequiresReviewerDependencies")
+  const subject = enrichPeerReviewSubject(resolveSubjectText(input.userInput, [input.node]))
+  const generated = await runSingleReviewer(
+    input.node,
+    personaId,
+    subject,
+    input.deps,
+    input.hooks,
+    (args) => defaultGenerateReviewStream(input.deps, input.node, args.personaId, args.systemPrompt, args.userPrompt, args.onProgress),
+    performance.now()
+  )
+  return { id: input.node.id, ok: true, summary: `${personaId} review complete`, output: { text: generated.text, personaId } }
 }
 
 export async function executePeerReviewGroup(input: ExecutePeerReviewGroupInput): Promise<SubtaskResult[]> {

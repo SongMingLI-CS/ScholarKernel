@@ -5,13 +5,18 @@ import { buildDualSearchQueries, isSurveyOrProgressTopic } from "@/lib/tools/aca
 
 export type WorkflowTaskType = "read_file" | "reasoning" | "audit" | "research" | "peer_review"
 export type WorkflowProvider = "local" | "cloud"
-export type WorkflowStatus = "pending" | "running" | "done" | "error" | "pending_approval"
+export type WorkflowStatus = "pending" | "running" | "done" | "error" | "cancelled" | "pending_approval"
+export type WorkflowFailurePolicy = "fail-fast" | "continue" | "fallback"
 
 export type WorkflowNode = {
   id: string
   type: WorkflowTaskType
   provider: WorkflowProvider
   status: WorkflowStatus
+  dependsOn?: string[]
+  retryPolicy?: { maxAttempts: number; backoffMs: number }
+  timeoutMs?: number
+  failurePolicy?: WorkflowFailurePolicy
   title?: string
   input?: unknown
   output?: unknown
@@ -52,10 +57,14 @@ const TaskSchema = z.object({
     .refine((s) => s.trim().length > 0, "id must be non-empty"),
   type: z.enum(["read_file", "reasoning", "audit", "research", "peer_review"]),
   provider: z.enum(["local", "cloud"]),
-  status: z.enum(["pending", "running", "done", "error", "pending_approval"]).optional().default("pending"),
+  status: z.enum(["pending", "running", "done", "error", "cancelled", "pending_approval"]).optional().default("pending"),
   title: z.string().optional(),
   input: z.unknown().optional(),
   metadata: z.record(z.unknown()).optional(),
+  dependsOn: z.array(z.string()).optional(),
+  retryPolicy: z.object({ maxAttempts: z.number().int().min(1), backoffMs: z.number().int().min(0) }).optional(),
+  timeoutMs: z.number().int().positive().optional(),
+  failurePolicy: z.enum(["fail-fast", "continue", "fallback"]).optional(),
 })
 
 const TaskListSchema = z.array(TaskSchema).min(1)
@@ -407,6 +416,7 @@ export function buildPeerReviewWorkflowNodes(): WorkflowNode[] {
       type: "peer_review",
       provider: "cloud",
       status: "pending",
+      dependsOn: [],
       title: "Reviewer #1 · Methodology Critic",
       input: { phase: "parallel_review" },
       logs: [],
@@ -417,6 +427,7 @@ export function buildPeerReviewWorkflowNodes(): WorkflowNode[] {
       type: "peer_review",
       provider: "cloud",
       status: "pending",
+      dependsOn: [],
       title: "Reviewer #2 · Innovation Scout",
       input: { phase: "parallel_review" },
       logs: [],
@@ -427,6 +438,7 @@ export function buildPeerReviewWorkflowNodes(): WorkflowNode[] {
       type: "peer_review",
       provider: "cloud",
       status: "pending",
+      dependsOn: ["peer-r1", "peer-r2"],
       title: "Reviewer #3 · Area Chair",
       input: { phase: "meta_review" },
       logs: [],
@@ -631,12 +643,14 @@ export function ensureMultiSourceResearchPlan(nodes: WorkflowNode[], userInput: 
         : buildFallbackSearchQuery(userInput, undefined)
 
   const [surveyQ, methodQ] = buildDualSearchQueries(userInput, draftQ)
+  const sharedDependencies = firstResearch?.dependsOn ?? (firstIdx != null && firstIdx > 0 ? [nodes[firstIdx - 1]!.id] : [])
 
   const surveyNode: WorkflowNode = {
     id: firstResearch?.id ?? "research-survey-1",
     type: "research",
     provider: "cloud",
     status: "pending",
+    dependsOn: sharedDependencies,
     title: "综述/Survey 检索",
     input: { search_query: surveyQ.trim(), academicOnly: true },
     logs: firstResearch?.logs ?? [],
@@ -647,6 +661,7 @@ export function ensureMultiSourceResearchPlan(nodes: WorkflowNode[], userInput: 
     type: "research",
     provider: "cloud",
     status: "pending",
+    dependsOn: sharedDependencies,
     title: "核心模型/方法论检索",
     input: { search_query: methodQ.trim(), academicOnly: true },
     logs: [],
@@ -654,12 +669,26 @@ export function ensureMultiSourceResearchPlan(nodes: WorkflowNode[], userInput: 
   }
 
   if (firstIdx == null) {
-    return [surveyNode, methodNode, ...nodes]
+    const downstream = nodes.map((node, index) => index === 0
+      ? { ...node, dependsOn: [...new Set([...(node.dependsOn ?? []), surveyNode.id, methodNode.id])] }
+      : node)
+    return [surveyNode, methodNode, ...downstream]
   }
 
   const updated = [...nodes]
   updated[firstIdx] = surveyNode
   updated.splice(firstIdx + 1, 0, methodNode)
+  for (let index = firstIdx + 2; index < updated.length; index++) {
+    const current = updated[index]!
+    if (current.dependsOn?.includes(surveyNode.id)) {
+      updated[index] = { ...current, dependsOn: [...new Set([...current.dependsOn, methodNode.id])] }
+      break
+    }
+    if (!current.dependsOn) {
+      updated[index] = { ...current, dependsOn: [surveyNode.id, methodNode.id] }
+      break
+    }
+  }
   return updated
 }
 
@@ -832,6 +861,10 @@ export function interceptWorkflowPlanInAssistantBubble(
     status: t.status ?? "pending",
     title: t.title,
     input: t.input,
+    dependsOn: t.dependsOn,
+    retryPolicy: t.retryPolicy,
+    timeoutMs: t.timeoutMs,
+    failurePolicy: t.failurePolicy,
     logs: [],
     metadata: t.metadata,
   }))
@@ -905,6 +938,13 @@ function recordToTaskItem(rec: Record<string, unknown>, index: number): z.infer<
     rec.metadata && typeof rec.metadata === "object" && !Array.isArray(rec.metadata)
       ? (rec.metadata as Record<string, unknown>)
       : undefined
+  const dependsOn = Array.isArray(rec.dependsOn) ? rec.dependsOn.filter((value): value is string => typeof value === "string") : undefined
+  const retryRaw = rec.retryPolicy && typeof rec.retryPolicy === "object" && !Array.isArray(rec.retryPolicy) ? rec.retryPolicy as Record<string, unknown> : null
+  const retryPolicy = retryRaw && typeof retryRaw.maxAttempts === "number" && typeof retryRaw.backoffMs === "number"
+    ? { maxAttempts: Math.max(1, Math.floor(retryRaw.maxAttempts)), backoffMs: Math.max(0, Math.floor(retryRaw.backoffMs)) }
+    : undefined
+  const timeoutMs = typeof rec.timeoutMs === "number" && rec.timeoutMs > 0 ? Math.floor(rec.timeoutMs) : undefined
+  const failurePolicy = rec.failurePolicy === "fail-fast" || rec.failurePolicy === "continue" || rec.failurePolicy === "fallback" ? rec.failurePolicy : undefined
 
   return {
     id,
@@ -913,6 +953,10 @@ function recordToTaskItem(rec: Record<string, unknown>, index: number): z.infer<
     status: "pending",
     title,
     input,
+    ...(dependsOn ? { dependsOn } : {}),
+    ...(retryPolicy ? { retryPolicy } : {}),
+    ...(timeoutMs ? { timeoutMs } : {}),
+    ...(failurePolicy ? { failurePolicy } : {}),
     ...(metadata ? { metadata } : {}),
   }
 }

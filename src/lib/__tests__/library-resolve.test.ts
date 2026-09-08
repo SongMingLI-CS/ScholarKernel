@@ -20,6 +20,7 @@ import {
   buildLibraryContextForAgent,
   loadLibraryChunksForUser,
   resolveLibraryContextForAgent,
+  resolveLibraryEvidenceForAgent,
 } from "@/lib/library-resolve"
 
 describe("Library retrieval resolution", () => {
@@ -109,5 +110,34 @@ describe("Library retrieval resolution", () => {
       expect.objectContaining({ id: "library:failed", state: "failed", detail: "Parser failed" }),
       expect.objectContaining({ id: "library:missing", state: "missing" }),
     ]))
+  })
+
+  it("runs lexical and vector retrieval and returns fused structured evidence", async () => {
+    mocks.findDocuments.mockResolvedValue([{ id: "doc-1", title: "Paper", fileType: "text/plain", fileUrl: "object://doc-1" }])
+    mocks.findChunks.mockResolvedValue([{ id: "chunk-1", documentId: "doc-1", chunkIndex: 0, section: "Methods", headingPath: ["Methods"], page: 2, paragraphStart: 1, paragraphEnd: 2, content: "hybrid retrieval evidence" }])
+    const embeddingProvider = { modelVersion: "fake-v1", dimensions: 2, embed: vi.fn(async () => [[0.1, 0.2]]) }
+    const vectorRetriever = vi.fn(async () => [{
+      documentId: "doc-1", chunkId: "chunk-1", documentTitle: "Paper", chunkIndex: 0,
+      section: "Methods", headingPath: ["Methods"], page: 2, paragraphStart: 1, paragraphEnd: 2,
+      content: "hybrid retrieval evidence", vectorRank: 1, vectorScore: 0.9,
+    }])
+
+    const result = await resolveLibraryEvidenceForAgent("user-1", ["doc-1"], "hybrid evidence", { embeddingProvider, vectorRetriever })
+    expect(result.retrievalMode).toBe("hybrid")
+    expect(result.evidence[0]).toMatchObject({ chunkId: "chunk-1", lexicalRank: 1, vectorRank: 1, pageNumber: 2 })
+    expect(vectorRetriever).toHaveBeenCalledWith(expect.objectContaining({ userId: "user-1", queryEmbedding: [0.1, 0.2] }))
+  })
+
+  it("degrades explicitly when vector retrieval fails", async () => {
+    mocks.findDocuments.mockResolvedValue([{ id: "doc-1", title: "Paper", fileType: "text/plain", fileUrl: "object://doc-1" }])
+    mocks.findChunks.mockResolvedValue([{ id: "chunk-1", documentId: "doc-1", chunkIndex: 0, section: "Intro", headingPath: ["Intro"], page: 1, content: "lexical fallback evidence" }])
+    const embeddingProvider = { modelVersion: "fake-v1", dimensions: 2, embed: vi.fn(async () => [[0.1, 0.2]]) }
+    const result = await resolveLibraryEvidenceForAgent("user-1", ["doc-1"], "fallback evidence", {
+      embeddingProvider,
+      vectorRetriever: vi.fn(async () => { throw new Error("pgvector unavailable") }),
+    })
+    expect(result.retrievalMode).toBe("lexical-degraded")
+    expect(result.evidence[0]?.scoreExplanation.degraded).toBe("vector-unavailable")
+    expect(result.statuses).toEqual(expect.arrayContaining([expect.objectContaining({ id: "library:vector", state: "degraded" })]))
   })
 })

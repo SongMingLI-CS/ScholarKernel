@@ -5,6 +5,7 @@ import type { AcademicSearchHit } from "@/lib/tools/search-tool"
 import { asRecord } from "@/lib/agent/llm-utils"
 import { formatResearchResultsForSessionContext } from "@/lib/agent/llm-utils"
 import { composeGroundedFinal } from "@/lib/agent/citation-grounding"
+import { dagNodeFingerprints } from "@/lib/agent/dag-fingerprint"
 
 /** 单节点持久化快照（DB AgentNode 或内存 workflow 均可映射为此结构）。 */
 export type NodeSnapshotRecord = {
@@ -12,10 +13,18 @@ export type NodeSnapshotRecord = {
   status: "pending" | "running" | "done" | "error"
   outputs?: unknown
   nodeSnapshot?: NodeExecutionSnapshot
+  inputHash?: string
+  upstreamResultHash?: string
+  idempotencyKey?: string
+  attemptCount?: number
+  startedAt?: Date
+  completedAt?: Date
+  errorCategory?: string
 }
 
 /** 节点执行时的完整上下文环境变量与依赖关系。 */
 export type NodeExecutionSnapshot = {
+  protocolVersion?: string
   nodeType: WorkflowNode["type"]
   nodeIndex: number
   priorNodeIds: string[]
@@ -64,10 +73,18 @@ export function buildNodeSnapshotRecord(input: {
   sessionContextDelta?: ChatHistoryEntry[]
 }): NodeSnapshotRecord {
   const { node, nodeIndex, nodes, subtaskResult, sources, citationsMarkdown, sessionContextDelta } = input
+  const dependencyIds = node.dependsOn ?? nodes.slice(0, nodeIndex).map((item) => item.id)
+  const upstreamResults = Object.fromEntries(dependencyIds.map((id) => {
+    const dependency = nodes.find((item) => item.id === id)
+    return [id, dependency?.output]
+  }))
+  const fingerprints = dagNodeFingerprints(node.input, upstreamResults)
   return {
     nodeId: node.id,
     status: "done",
     outputs: subtaskResult.output ?? node.output,
+    ...fingerprints,
+    attemptCount: 1,
     nodeSnapshot: {
       nodeType: node.type,
       nodeIndex,
@@ -87,10 +104,14 @@ export function snapshotsFromWorkflowNodes(nodes: WorkflowNode[]): NodeSnapshotR
     .map((n) => {
       const nodeIndex = nodes.findIndex((x) => x.id === n.id)
       const priorNodeIds = nodes.slice(0, nodeIndex).map((x) => x.id)
+      const dependencyIds = n.dependsOn ?? priorNodeIds
+      const upstreamResults = Object.fromEntries(dependencyIds.map((id) => [id, nodes.find((item) => item.id === id)?.output]))
       return {
         nodeId: n.id,
         status: "done" as const,
         outputs: n.output,
+        ...dagNodeFingerprints(n.input, upstreamResults),
+        attemptCount: 1,
         nodeSnapshot: {
           nodeType: n.type,
           nodeIndex,

@@ -44,11 +44,12 @@ export async function cancelAgentJob(id: string, checkpoint?: AgentJobCheckpoint
       error: null,
       errorMessage: null,
       errorStack: null,
+      leaseExpiresAt: null,
     },
   })
 }
 
-export type AgentJobProvider = ActiveProviderConfig
+export type AgentJobProvider = ActiveProviderConfig | { kind: "library-index"; documentId: string }
 
 export type AgentJobCreateInput = {
   userInput: string
@@ -73,9 +74,10 @@ export async function createAgentJob(userId: string, input: AgentJobCreateInput)
 }
 
 export async function markAgentJobRunning(id: string) {
+  const now = new Date()
   return prisma.agentJob.update({
     where: { id },
-    data: { status: "running" },
+    data: { status: "running", heartbeatAt: now, leaseExpiresAt: new Date(now.getTime() + 60_000) },
   })
 }
 
@@ -112,6 +114,7 @@ export async function completeAgentJob(
       status: "done",
       result: result as Prisma.InputJsonValue,
       checkpoint: { phase: "done", nodes: result.nodes, sources: result.sources } as Prisma.InputJsonValue,
+      leaseExpiresAt: null,
     },
   })
 }
@@ -129,6 +132,7 @@ export async function failAgentJob(
       error: errorMessage,
       errorMessage,
       errorStack: errorStack || null,
+      leaseExpiresAt: null,
       ...(checkpoint ? { checkpoint: checkpoint as Prisma.InputJsonValue } : {}),
     },
   })
@@ -216,6 +220,10 @@ export async function getAgentJobForUser(id: string, userId: string) {
   return prisma.agentJob.findFirst({ where: { id, userId } })
 }
 
+export async function getAgentJobStateForUser(id: string, userId: string) {
+  return prisma.agentJob.findFirst({ where: { id, userId }, include: { nodes: { orderBy: { updatedAt: "asc" } } } })
+}
+
 /** 增量对账写入：节点 done 时 upsert 快照（outputs + nodeSnapshot）。 */
 export async function upsertAgentNodeSnapshot(
   jobId: string,
@@ -256,5 +264,12 @@ export async function loadAgentNodeSnapshots(jobId: string): Promise<NodeSnapsho
     status: row.status as NodeSnapshotRecord["status"],
     outputs: row.outputs ?? undefined,
     nodeSnapshot: (row.nodeSnapshot as NodeSnapshotRecord["nodeSnapshot"]) ?? undefined,
+    inputHash: row.inputHash ?? undefined,
+    upstreamResultHash: row.upstreamResultHash ?? undefined,
+    idempotencyKey: row.idempotencyKey ?? undefined,
+    attemptCount: row.attemptCount,
+    startedAt: row.startedAt ?? undefined,
+    completedAt: row.completedAt ?? undefined,
+    errorCategory: row.errorCategory ?? undefined,
   }))
 }

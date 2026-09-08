@@ -5,6 +5,7 @@ import type { NodeSnapshotRecord } from "@/lib/agent/node-resume"
 import type { AcademicSearchHit } from "@/lib/tools/search-tool"
 import type { EvidenceStatus } from "@/lib/evidence-status"
 import type { ChatHistoryEntry, ActiveProviderConfig, WorkflowNode } from "@/lib/agent/planner"
+import type { StructuredLibraryEvidence } from "@/lib/library-rag"
 
 export type { HumanInterventionDecision, InterventionPendingEvent }
 
@@ -71,6 +72,8 @@ export type AgentExecutorDeps = {
   documentIds?: string[]
   /** 服务端解析文献库正文；浏览器端由 deps 预注入 libraryContext */
   libraryContext?: string
+  /** Library keeps evidence structured until the executor applies its token budget. */
+  libraryEvidence?: StructuredLibraryEvidence[]
 }
 
 export type AgentExecutorHooks = {

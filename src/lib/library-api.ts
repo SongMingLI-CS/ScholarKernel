@@ -17,7 +17,7 @@ export async function uploadLibraryDocument(file: File, opts?: {
   title?: string
   tags?: string[]
   folders?: string[]
-}): Promise<LibraryDocumentRecord & { downloadUrl?: string }> {
+}): Promise<LibraryDocumentRecord & { downloadUrl?: string; indexJobId?: string }> {
   const form = new FormData()
   form.append("file", file, file.name)
   if (opts?.title) form.append("title", opts.title)
@@ -30,7 +30,7 @@ export async function uploadLibraryDocument(file: File, opts?: {
     const msg = typeof err?.error === "string" ? err.error : `HTTP ${res.status}`
     throw new Error(msg)
   }
-  return (await res.json()) as LibraryDocumentRecord & { downloadUrl?: string }
+  return (await res.json()) as LibraryDocumentRecord & { downloadUrl?: string; indexJobId?: string }
 }
 
 export async function deleteLibraryDocument(id: string): Promise<void> {
@@ -53,6 +53,7 @@ export async function patchLibraryDocument(
     tags?: { add?: string[]; remove?: string[] }
     tagsReplace?: string[]
     folders?: string[]
+    reindex?: boolean
   }
 ): Promise<LibraryDocumentRecord> {
   return apiFetch<LibraryDocumentRecord>("/api/documents", {

@@ -4,7 +4,10 @@ import type { LayoutTextBlock, PageGeometry } from "@/lib/document/column-reorde
 
 export const AcademicChunkMetadataSchema = z.object({
   section: z.string().min(1),
+  headingPath: z.array(z.string().min(1)).optional(),
   page: z.number().int().positive().optional(),
+  paragraphStart: z.number().int().nonnegative().optional(),
+  paragraphEnd: z.number().int().nonnegative().optional(),
   index: z.number().int().nonnegative(),
 })
 
@@ -166,13 +169,18 @@ export function semanticChunkAcademicText(input: SemanticChunkInput): AcademicCh
     const page =
       inferPageForText(body, linePageMap) ??
       estimatePageFromOffset(sec.startOffset, normalized.length, input.pageGeometries ?? [])
+    const paragraphStart = normalized.slice(0, sec.startOffset).split(/\n{2,}/).filter((part) => part.trim()).length
+    const paragraphCount = Math.max(1, body.split(/\n{2,}/).filter((part) => part.trim()).length)
 
     chunks.push(
       AcademicChunkSchema.parse({
         text: body,
         metadata: {
           section: sec.title,
+          headingPath: [sec.title],
           ...(page ? { page } : {}),
+          paragraphStart,
+          paragraphEnd: paragraphStart + paragraphCount - 1,
           index,
         },
       })

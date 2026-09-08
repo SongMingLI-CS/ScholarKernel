@@ -24,6 +24,8 @@ import { streamDirectChat } from "@/lib/agent/direct-chat"
 import { executePeerReviewGroup, isPeerReviewGroupStart, collectPeerReviewGroup } from "@/lib/agent/peer-review-runner"
 import { executeReasoningNode } from "@/lib/agent/reasoning-runner"
 import { composeGroundedFinal } from "@/lib/agent/citation-grounding"
+import { formatStructuredLibraryEvidence } from "@/lib/library-rag"
+import { normalizeLegacyWorkflowDag, validateWorkflowDag } from "@/lib/agent/dag-validator"
 import type { AgentExecutorDeps, AgentExecutorHooks, ChatHistoryEntry, LlmHistoryMessage } from "@/lib/agent/executor-types"
 export type { AgentExecutorDeps, AgentExecutorHooks, ChatHistoryEntry, LlmHistoryMessage } from "@/lib/agent/executor-types"
 import {
@@ -195,7 +197,7 @@ export class AgentExecutor {
     const planMessages = this.buildConversationMessages(userInput, planPrompt)
     const strictJsonLine = "Output ONLY raw JSON. No markdown blocks. No explanations."
     const rules = [
-      "每个子任务必须符合协议：{ id, type: read_file|reasoning|audit|research|peer_review, provider: cloud, status }。",
+      "每个子任务必须符合协议：{ id, type: read_file|reasoning|audit|research|peer_review, provider: cloud, status, dependsOn, retryPolicy?, timeoutMs?, failurePolicy? }。",
       'All tasks in the "tasks" array MUST use "provider": "cloud". Do not use "local" under any circumstances.',
       "OUTPUT ONLY RAW JSON. NO CONVERSATIONAL TEXT.",
       PLAN_TOOL_ENFORCEMENT,
@@ -212,6 +214,7 @@ export class AgentExecutor {
       "- 用户提交论文摘要/实验设计或要求模拟审稿时，用 peer_review（系统将并行派生 Reviewer #1/#2 激辩并由 Area Chair 汇总）",
       "- 所有子任务的 provider 必须为 cloud（不得输出 local）",
       "- status 初始必须是 pending",
+      "- dependsOn 必须显式列出直接前置节点 ID；无依赖节点使用 []；所有分支必须最终汇聚到唯一输出节点",
       '- id 必须为字符串（例如 "1"、"read-1"）；若你使用数字 id，系统会自动转为字符串。',
     ].join("\n")
 
@@ -224,7 +227,7 @@ export class AgentExecutor {
       rules,
       "",
       "One-shot example (copy the style; output JSON only):",
-      `[{"id":"research-1","type":"research","provider":"cloud","status":"pending","title":"学术检索","input":{"search_query":"SELF: Simple Efficient Language Model full paper arxiv","academicOnly":true}},{"id":"reason-1","type":"reasoning","provider":"cloud","status":"pending","title":"整合并给出结论"}]`,
+      `[{"id":"research-1","type":"research","provider":"cloud","status":"pending","dependsOn":[],"title":"学术检索","input":{"search_query":"SELF: Simple Efficient Language Model full paper arxiv","academicOnly":true}},{"id":"reason-1","type":"reasoning","provider":"cloud","status":"pending","dependsOn":["research-1"],"title":"整合并给出结论"}]`,
     ].join("\n")
 
     const sysJsonObject = [
@@ -237,7 +240,7 @@ export class AgentExecutor {
       rules,
       "",
       "One-shot example (copy the shape; output JSON only):",
-      `{"tasks":[{"id":"research-1","type":"research","provider":"cloud","status":"pending","title":"学术检索","input":{"search_query":"SELF: Simple Efficient Language Model full paper arxiv","academicOnly":true}},{"id":"reason-1","type":"reasoning","provider":"cloud","status":"pending","title":"整合并给出结论"}]}`,
+      `{"tasks":[{"id":"research-1","type":"research","provider":"cloud","status":"pending","dependsOn":[],"title":"学术检索","input":{"search_query":"SELF: Simple Efficient Language Model full paper arxiv","academicOnly":true}},{"id":"reason-1","type":"reasoning","provider":"cloud","status":"pending","dependsOn":["research-1"],"title":"整合并给出结论"}]}`,
     ].join("\n")
 
     const rk = this.effectiveRuntimeKeys()
@@ -357,6 +360,10 @@ export class AgentExecutor {
       status: t.status ?? "pending",
       title: t.title,
       input: t.input,
+      dependsOn: t.dependsOn,
+      retryPolicy: t.retryPolicy,
+      timeoutMs: t.timeoutMs,
+      failurePolicy: t.failurePolicy,
       logs: [],
       metadata: t.metadata,
     }))
@@ -413,7 +420,8 @@ export class AgentExecutor {
       ]
     }
 
-    nodes = applyCloudOnlyWorkflowNormalization(nodes, active)
+    nodes = normalizeLegacyWorkflowDag(applyCloudOnlyWorkflowNormalization(nodes, active))
+    validateWorkflowDag(nodes)
 
     this.hooks.onWorkflowPlanned?.(nodes)
     return nodes
@@ -458,7 +466,7 @@ export class AgentExecutor {
               metadata: { fallback: true, fallbackReason: "plan_crash" },
             },
           ]
-      const forceNodes = applyCloudOnlyWorkflowNormalization(crashNodes, this.deps.activeProvider)
+      const forceNodes = normalizeLegacyWorkflowDag(applyCloudOnlyWorkflowNormalization(crashNodes, this.deps.activeProvider))
       this.hooks.onWorkflowPlanned?.(forceNodes)
       return forceNodes
     }
@@ -582,7 +590,10 @@ export class AgentExecutor {
   }
 
   private injectLibraryContext(userInput: string): string {
-    const block = this.deps.libraryContext?.trim()
+    const tokenBudget = Math.max(500, Math.floor((this.inferenceCfg().contextLimit ?? 12_000) * 0.3))
+    const block = this.deps.libraryEvidence?.length
+      ? formatStructuredLibraryEvidence(this.deps.libraryEvidence, tokenBudget).trim()
+      : this.deps.libraryContext?.trim()
     if (!block) return userInput
     return `${block}${userInput}`
   }
@@ -620,6 +631,9 @@ export class AgentExecutor {
         options?.planRetryMessage ? { retryMessage: options.planRetryMessage } : undefined
       )
     }
+
+    nodes = normalizeLegacyWorkflowDag(nodes)
+    validateWorkflowDag(nodes)
 
     const targetIndex = targetNodeId ? findTargetNodeIndex(nodes, targetNodeId) : -1
 

@@ -55,6 +55,7 @@ export function useChatSend({
   const streamAssistantTextLenRef = useRef(0)
   const planRetryMessageRef = useRef<string | undefined>(undefined)
   const activeRunIdRef = useRef<string | null>(null)
+  const activeJobIdRef = useRef<string | null>(null)
   const userStoppedRef = useRef(false)
   const sendModeRef = useRef<"normal" | "regenerate">("normal")
   const lastAssistantIdRef = useRef<string | null>(null)
@@ -68,6 +69,8 @@ export function useChatSend({
   const stopGeneration = useCallback(() => {
     if (!streaming) return
     userStoppedRef.current = true
+    const jobId = activeJobIdRef.current
+    if (jobId) void fetch(`/api/agent/jobs/${encodeURIComponent(jobId)}`, { method: "DELETE", credentials: "include" })
     abortRef.current?.abort()
     abortRef.current = null
 
@@ -92,6 +95,7 @@ export function useChatSend({
     }
 
     activeRunIdRef.current = null
+    activeJobIdRef.current = null
     setStreaming(false)
     pushToast({ messageKey: "chat.stop.done", variant: "success", ttlMs: 2400 })
   }, [pushToast, streaming, t])
@@ -243,8 +247,10 @@ export function useChatSend({
             onEvent: (event) => {
               const store = useAgentStore.getState()
               applyAgentStreamEvent(event, {
-                onHello: () =>
-                  store.actions.patchTopologyNodes({ edge: "done", route: "done", cloud: "running", sink: "idle" }),
+                onHello: (hello) => {
+                  activeJobIdRef.current = hello.jobId
+                  store.actions.patchTopologyNodes({ edge: "done", route: "done", cloud: "running", sink: "idle" })
+                },
                 onPlan: (nodes) => {
                   setTopologyOpen(true)
                   store.actions.setWorkflowNodes(

@@ -1,5 +1,5 @@
-import { AgentExecutor } from "@/lib/agent-executor"
-import { resolveLibraryContextForAgent } from "@/lib/library-resolve"
+import { AgentExecutor, isDirectChatInput } from "@/lib/agent-executor"
+import { resolveLibraryEvidenceForAgent } from "@/lib/library-resolve"
 import { runtimeKeysFromEnv } from "@/lib/agent/llm-utils"
 import type { AgentExecutorDeps, AgentExecutorHooks } from "@/lib/agent/executor-types"
 import type { PeerReviewCheckpointData } from "@/lib/agent/peer-review-checkpoint"
@@ -7,6 +7,7 @@ import { snapshotsFromWorkflowNodes, type NodeSnapshotRecord } from "@/lib/agent
 import type { ActiveProviderConfig, ChatHistoryEntry, WorkflowNode } from "@/lib/agent/planner"
 import { createTokenUsageRecorder } from "@/lib/billing/token-audit"
 import { loadAgentNodeSnapshots, persistAgentNodeSnapshotAsync } from "@/lib/agent-jobs"
+import { runAgentWorkflowDag } from "@/lib/agent/agent-dag-runtime"
 
 export type AgentRunInput = {
   userId?: string
@@ -51,11 +52,17 @@ export async function runAgentOnServer(
   const envKeys = runtimeKeysFromEnv()
   const runtimeKeys = mergeRuntimeKeysForServer(input.runtimeKeys, envKeys)
   const billingRecorder = input.userId ? createTokenUsageRecorder(input.userId, input.jobId) : null
-  const libraryResolution = await resolveLibraryContextForAgent(input.userId, input.documentIds, input.userInput)
+  const recordTokenUsage: AgentExecutorDeps["recordTokenUsage"] = billingRecorder
+    ? (payload) => {
+        billingRecorder.record(payload)
+        hooks?.onUsage?.({ model: payload.modelUsed, inputTokens: payload.inputTokens, outputTokens: payload.outputTokens, ttftMs: payload.ttftMs })
+      }
+    : undefined
+  const libraryResolution = await resolveLibraryEvidenceForAgent(input.userId, input.documentIds, input.userInput)
   if (libraryResolution.statuses.length) hooks?.onEvidenceStatus?.(libraryResolution.statuses)
 
   let resumeSnapshots = input.resumeSnapshots
-  if (input.targetNodeId && input.jobId && !resumeSnapshots?.length) {
+  if (input.jobId && input.resumeNodes?.length && !resumeSnapshots?.length) {
     resumeSnapshots = await loadAgentNodeSnapshots(input.jobId)
   }
   if (input.targetNodeId && !resumeSnapshots?.length && input.resumeNodes?.length) {
@@ -75,17 +82,7 @@ export async function runAgentOnServer(
             void persistAgentNodeSnapshotAsync(input.jobId!, record)
           }
         : undefined,
-      recordTokenUsage: billingRecorder
-        ? (payload) => {
-            billingRecorder.record(payload)
-            hooks?.onUsage?.({
-              model: payload.modelUsed,
-              inputTokens: payload.inputTokens,
-              outputTokens: payload.outputTokens,
-              ttftMs: payload.ttftMs,
-            })
-          }
-        : undefined,
+      recordTokenUsage,
       interventionSessionId: input.interventionSessionId ?? input.jobId,
       peerReviewCheckpoint: input.peerReviewCheckpoint,
       onPeerReviewCheckpoint: input.onPeerReviewCheckpoint,
@@ -98,14 +95,43 @@ export async function runAgentOnServer(
       signal: input.signal,
       localOnly: input.localOnly,
       documentIds: input.documentIds,
-      libraryContext: libraryResolution.context,
+      libraryEvidence: libraryResolution.evidence,
     },
     hooks
   )
 
-  return executor.run(input.userInput, {
+  if (!input.documentIds?.length && isDirectChatInput(input.userInput)) return executor.run(input.userInput, {
     ...(input.planRetryMessage ? { planRetryMessage: input.planRetryMessage } : {}),
     ...(input.targetNodeId ? { targetNodeId: input.targetNodeId } : {}),
     ...(input.resumeNodes?.length ? { resumeNodes: input.resumeNodes } : {}),
+  })
+
+  return runAgentWorkflowDag({
+    executor,
+    userInput: input.userInput,
+    deps: {
+      userId: input.userId,
+      activeProvider: input.activeProvider,
+      jobId: input.jobId,
+      targetNodeId: input.targetNodeId,
+      resumeSnapshots,
+      interventionSessionId: input.interventionSessionId ?? input.jobId,
+      peerReviewCheckpoint: input.peerReviewCheckpoint,
+      onPeerReviewCheckpoint: input.onPeerReviewCheckpoint,
+      inference: input.inference,
+      runtimeKeys,
+      getRuntimeKeys: () => runtimeKeys,
+      search: { tavilyApiKey: runtimeKeys.tavily, serperApiKey: runtimeKeys.serper },
+      getChatHistory: () => input.chatHistory ?? [],
+      sourceApiBase: input.sourceApiBase,
+      signal: input.signal,
+      localOnly: input.localOnly,
+      documentIds: input.documentIds,
+      libraryEvidence: libraryResolution.evidence,
+      recordTokenUsage,
+    },
+    hooks,
+    resumeNodes: input.resumeNodes,
+    planRetryMessage: input.planRetryMessage,
   })
 }

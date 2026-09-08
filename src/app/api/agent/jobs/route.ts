@@ -33,6 +33,11 @@ type AgentJobBody = {
   runtimeKeys?: unknown
 }
 
+function mergeNodePatch(nodes: unknown[] | undefined, id: string, patch: Partial<import("@/lib/agent/planner").WorkflowNode>) {
+  const current = Array.isArray(nodes) ? nodes : []
+  return current.map((node) => node && typeof node === "object" && (node as { id?: unknown }).id === id ? { ...(node as object), ...patch } : node)
+}
+
 function isValidProvider(p: unknown): p is ActiveProviderConfig {
   if (!p || typeof p !== "object") return false
   const rec = p as Record<string, unknown>
@@ -113,7 +118,7 @@ export async function POST(req: Request) {
           jobCheckpoint = {
             ...jobCheckpoint,
             phase: "running",
-            nodes: [{ id, patch }],
+            nodes: mergeNodePatch(jobCheckpoint.nodes, id, patch),
           }
           queueCheckpoint(() => updateAgentJobCheckpoint(job.id, jobCheckpoint))
         },

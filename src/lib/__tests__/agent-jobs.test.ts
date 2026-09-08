@@ -93,13 +93,14 @@ describe("agent-jobs", () => {
     expect(job.status).toBe("cancelled")
     expect(update).toHaveBeenCalledWith({
       where: { id: "j1" },
-      data: {
+      data: expect.objectContaining({
         status: "cancelled",
         checkpoint: { phase: "cancelled", nodes: [{ id: "n1" }] },
         error: null,
         errorMessage: null,
         errorStack: null,
-      },
+        leaseExpiresAt: null,
+      }),
     })
   })
 })

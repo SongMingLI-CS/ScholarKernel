@@ -54,6 +54,8 @@ function statusClass(status: FlowStatus) {
         "shadow-[0_0_0_1px_oklch(0.58_0.22_25/0.45),0_0_22px_oklch(0.55_0.2_25/0.32)]",
         "sk-node-error"
       )
+    case "cancelled":
+      return "border-zinc-600/45 bg-zinc-700/10 text-zinc-400"
     case "pending":
       return cn(
         "border-zinc-500/40 bg-zinc-500/8 text-zinc-300/85",
@@ -269,6 +271,18 @@ function workflowToFlow(
   const startX = 40
   const yMain = 140
   const yBranch = 40
+  const hasExplicitDag = nodes.every((node) => Array.isArray(node.dependsOn))
+  const byId = new Map(nodes.map((node) => [node.id, node]))
+  const levelMemo = new Map<string, number>()
+  const levelOf = (id: string): number => {
+    const cached = levelMemo.get(id)
+    if (cached !== undefined) return cached
+    const dependencies = byId.get(id)?.dependsOn ?? []
+    const level = dependencies.length ? 1 + Math.max(...dependencies.map(levelOf)) : 0
+    levelMemo.set(id, level)
+    return level
+  }
+  const rowsByLevel = new Map<number, number>()
 
   const peerGroups = findPeerReviewGroups(nodes)
   const peerGroupByStart = new Map(peerGroups.map((g) => [g.start, g]))
@@ -282,6 +296,12 @@ function workflowToFlow(
     const peerGroup = peerGroupByStart.get(idx)
     const inPeerGroup = peerNodeIds.has(n.id)
     let position = { x: startX + idx * gapX, y: n.type === "research" ? yBranch : yMain }
+    if (hasExplicitDag) {
+      const level = levelOf(n.id)
+      const row = rowsByLevel.get(level) ?? 0
+      rowsByLevel.set(level, row + 1)
+      position = { x: startX + level * gapX, y: 40 + row * 180 }
+    }
 
     if (peerGroup) {
       const layout = peerLayouts.get(peerGroup.start)
@@ -322,6 +342,20 @@ function workflowToFlow(
   })
 
   const flowEdges: Edge[] = []
+  if (hasExplicitDag) {
+    for (const node of nodes) {
+      for (const dependency of node.dependsOn ?? []) {
+        flowEdges.push({
+          id: `wf-dag-${dependency}-${node.id}`,
+          source: dependency,
+          target: node.id,
+          markerEnd: { type: MarkerType.ArrowClosed, width: 18, height: 18 },
+          style: { stroke: "oklch(0.556 0 0 / 0.55)", strokeWidth: 1.25 },
+        })
+      }
+    }
+    return { nodes: flowNodes, edges: flowEdges }
+  }
   const peerEdgeKeys = new Set<string>()
 
   for (const g of peerGroups) {

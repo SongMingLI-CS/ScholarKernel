@@ -24,6 +24,14 @@ describe("agent/planner", () => {
     expect(list.length).toBeGreaterThan(0)
   })
 
+  it("preserves explicit DAG dependencies and execution policy", () => {
+    const list = parseAndValidateTaskList(JSON.stringify({ tasks: [
+      { id: "a", type: "research", provider: "cloud", status: "pending", dependsOn: [] },
+      { id: "b", type: "reasoning", provider: "cloud", status: "pending", dependsOn: ["a"], retryPolicy: { maxAttempts: 2, backoffMs: 10 }, timeoutMs: 5000, failurePolicy: "fail-fast" },
+    ] }))
+    expect(list[1]).toMatchObject({ dependsOn: ["a"], retryPolicy: { maxAttempts: 2, backoffMs: 10 }, timeoutMs: 5000, failurePolicy: "fail-fast" })
+  })
+
   it("interceptWorkflowPlanInAssistantBubble strips plan json", () => {
     const hit = interceptWorkflowPlanInAssistantBubble(
       '{"tasks":[{"id":"1","type":"reasoning","provider":"cloud","title":"Plan"}]}',

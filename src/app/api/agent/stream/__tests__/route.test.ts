@@ -148,4 +148,52 @@ describe("POST /api/agent/stream", () => {
     expect(mocks.cancelAgentJob).toHaveBeenCalledWith("job-1", expect.objectContaining({ phase: "running" }))
     expect(mocks.failAgentJob).not.toHaveBeenCalled()
   })
+
+  it("keeps the database job running when only the SSE transport disconnects", async () => {
+    let release!: (value: { final: string; nodes: []; sources: [] }) => void
+    mocks.runAgentOnServer.mockImplementationOnce(() => new Promise((resolve) => { release = resolve }))
+    const res = await POST(request({
+      userInput: "long task",
+      provider: { providerId: "openai", model: "gpt-5" },
+    }))
+    const reader = res.body!.getReader()
+    await reader.read()
+    await reader.cancel()
+    release({ final: "completed after disconnect", nodes: [], sources: [] })
+    await vi.waitFor(() => expect(mocks.completeAgentJob).toHaveBeenCalledWith("job-1", expect.objectContaining({ final: "completed after disconnect" })))
+    expect(mocks.cancelAgentJob).not.toHaveBeenCalled()
+  })
+
+  it("replays a completed database result without re-executing the job", async () => {
+    mocks.getAgentJobForUser.mockResolvedValueOnce({
+      id: "job-done", status: "done", checkpoint: { phase: "done" },
+      result: { final: "persisted final", nodes: [{ id: "n1", type: "reasoning", provider: "cloud", status: "done", dependsOn: [] }], sources: [] },
+    })
+    const res = await POST(request({
+      jobId: "job-done", userInput: "resume", provider: { providerId: "openai", model: "gpt-5" },
+    }))
+    const events = createAgentSseParser().push(await res.text())
+    expect(events.map((event) => event.type)).toEqual(["hello", "plan", "done"])
+    expect(events.at(-1)).toMatchObject({ type: "done", final: "persisted final" })
+    expect(mocks.runAgentOnServer).not.toHaveBeenCalled()
+  })
+
+  it("reconnects to a running database job without starting duplicate execution", async () => {
+    const running = {
+      id: "job-running", status: "running", result: null,
+      checkpoint: { phase: "running", nodes: [{ id: "n1", type: "reasoning", provider: "cloud", status: "running", dependsOn: [] }] },
+    }
+    const done = {
+      ...running, status: "done",
+      result: { final: "persisted after reconnect", nodes: [{ id: "n1", type: "reasoning", provider: "cloud", status: "done", dependsOn: [] }], sources: [] },
+    }
+    mocks.getAgentJobForUser.mockResolvedValueOnce(running).mockResolvedValueOnce(done)
+    const res = await POST(request({
+      jobId: "job-running", userInput: "resume", provider: { providerId: "openai", model: "gpt-5" },
+    }))
+    const events = createAgentSseParser().push(await res.text())
+    expect(events.map((event) => event.type)).toEqual(["hello", "plan", "plan", "done"])
+    expect(events.at(-1)).toMatchObject({ type: "done", final: "persisted after reconnect" })
+    expect(mocks.runAgentOnServer).not.toHaveBeenCalled()
+  })
 })

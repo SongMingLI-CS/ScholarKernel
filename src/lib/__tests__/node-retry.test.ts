@@ -192,6 +192,15 @@ describe("AgentNode snapshot persistence", () => {
       status: "done",
       outputs: { total: 3 },
       nodeSnapshot: { nodeType: "research" },
+      inputHash: null,
+      upstreamResultHash: null,
+      attemptCount: 0,
+      startedAt: null,
+      completedAt: null,
+      idempotencyKey: null,
+      errorCategory: null,
+      outputSnapshot: null,
+      leaseExpiresAt: null,
       createdAt: new Date(),
       updatedAt: new Date(),
     })
@@ -220,6 +229,8 @@ describe("AgentNode snapshot persistence", () => {
         status: "done",
         outputs: { total: 2 },
         nodeSnapshot: { nodeIndex: 0 },
+        inputHash: null, upstreamResultHash: null, attemptCount: 0, startedAt: null, completedAt: null,
+        idempotencyKey: null, errorCategory: null, outputSnapshot: null, leaseExpiresAt: null,
         createdAt: new Date(),
         updatedAt: new Date(),
       },
@@ -230,6 +241,8 @@ describe("AgentNode snapshot persistence", () => {
         status: "done",
         outputs: { text: "step2" },
         nodeSnapshot: { nodeIndex: 1 },
+        inputHash: null, upstreamResultHash: null, attemptCount: 0, startedAt: null, completedAt: null,
+        idempotencyKey: null, errorCategory: null, outputSnapshot: null, leaseExpiresAt: null,
         createdAt: new Date(),
         updatedAt: new Date(),
       },
@@ -268,6 +281,8 @@ describe("POST /api/agent/run partial resume", () => {
       errorStack: null,
       createdAt: new Date(),
       updatedAt: new Date(),
+      heartbeatAt: null,
+      leaseExpiresAt: null,
     })
     runAgentOnServer.mockResolvedValueOnce({ final: "ok", nodes: [], sources: [] })
 

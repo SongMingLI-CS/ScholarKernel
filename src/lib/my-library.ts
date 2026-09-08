@@ -8,6 +8,10 @@ export type LibraryDocumentRecord = {
   tags: string[]
   folders: string[]
   createdAt: string
+  indexStatus?: string
+  indexError?: string | null
+  indexJobId?: string | null
+  embeddingStatus?: string
 }
 
 export type LibraryFolderFilter = "all" | "uncategorized" | string
@@ -36,6 +40,10 @@ export function serializeLibraryDocument(doc: {
   tags: string[]
   folders: string[]
   createdAt: Date
+  indexStatus?: string
+  indexError?: string | null
+  indexJobId?: string | null
+  embeddingStatus?: string
 }): LibraryDocumentRecord {
   return {
     id: doc.id,
@@ -47,6 +55,10 @@ export function serializeLibraryDocument(doc: {
     tags: doc.tags ?? [],
     folders: doc.folders ?? [],
     createdAt: doc.createdAt.toISOString(),
+    ...(doc.indexStatus ? { indexStatus: doc.indexStatus } : {}),
+    ...(doc.indexError !== undefined ? { indexError: doc.indexError } : {}),
+    ...(doc.indexJobId !== undefined ? { indexJobId: doc.indexJobId } : {}),
+    ...(doc.embeddingStatus ? { embeddingStatus: doc.embeddingStatus } : {}),
   }
 }
 

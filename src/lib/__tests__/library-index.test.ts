@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   createMany: vi.fn(),
   update: vi.fn(),
   transaction: vi.fn(),
+  persistEmbeddings: vi.fn(),
 }))
 
 vi.mock("@/lib/document/layout-aware-parser", () => ({
@@ -22,8 +23,9 @@ vi.mock("@/lib/prisma", () => ({
     $transaction: mocks.transaction,
   },
 }))
+vi.mock("@/lib/library-vector-store", () => ({ persistChunkEmbeddings: mocks.persistEmbeddings }))
 
-import { indexLibraryDocumentBuffer } from "@/lib/library-index"
+import { indexLibraryDocumentBuffer, libraryIndexFingerprint, libraryIndexNeedsRebuild } from "@/lib/library-index"
 
 describe("Library document indexing", () => {
   beforeEach(() => {
@@ -32,6 +34,7 @@ describe("Library document indexing", () => {
     mocks.createMany.mockReturnValue({ operation: "create" })
     mocks.update.mockReturnValue({ operation: "update" })
     mocks.transaction.mockResolvedValue([])
+    mocks.persistEmbeddings.mockResolvedValue(undefined)
   })
 
   it("persists bounded section chunks and marks the document ready", async () => {
@@ -67,9 +70,25 @@ describe("Library document indexing", () => {
     })
     expect(mocks.update).toHaveBeenCalledWith({
       where: { id: "doc-1" },
-      data: { indexStatus: "ready", indexError: null, indexedAt: expect.any(Date) },
+      data: expect.objectContaining({
+        indexStatus: "ready", indexError: null, indexedAt: expect.any(Date),
+        parserVersion: "layout-v2", chunkVersion: "semantic-v2", embeddingStatus: "unavailable",
+      }),
     })
     expect(mocks.transaction).toHaveBeenCalledTimes(1)
+  })
+
+  it("does not require rebuilding the same file and versions", () => {
+    const desired = libraryIndexFingerprint(Buffer.from("same"), "fake-v1")
+    expect(libraryIndexNeedsRebuild(desired, desired)).toBe(false)
+  })
+
+  it("requires incremental rebuild when file, parser, chunker, or model changes", () => {
+    const desired = libraryIndexFingerprint(Buffer.from("same"), "fake-v1")
+    expect(libraryIndexNeedsRebuild({ ...desired, fileHash: "changed" }, desired)).toBe(true)
+    expect(libraryIndexNeedsRebuild({ ...desired, parserVersion: "old" }, desired)).toBe(true)
+    expect(libraryIndexNeedsRebuild({ ...desired, chunkVersion: "old" }, desired)).toBe(true)
+    expect(libraryIndexNeedsRebuild({ ...desired, embeddingModelVersion: "fake-v0" }, desired)).toBe(true)
   })
 
   it("records an index failure without throwing away the uploaded document", async () => {
@@ -89,5 +108,24 @@ describe("Library document indexing", () => {
       where: { id: "doc-2" },
       data: { indexStatus: "failed", indexError: "parser unavailable", indexedAt: null },
     })
+  })
+
+  it("embeds indexed chunks through a configurable provider", async () => {
+    mocks.parse.mockResolvedValue({ chunks: [{ text: "embedding source", metadata: { section: "Methods", headingPath: ["Methods"], page: 2, paragraphStart: 1, paragraphEnd: 1, index: 0 } }] })
+    const provider = {
+      modelVersion: "fake-1536-v1",
+      dimensions: 1536,
+      embed: vi.fn(async (texts: string[]) => texts.map(() => Array(1536).fill(0.01))),
+    }
+    const result = await indexLibraryDocumentBuffer({
+      documentId: "doc-vector", documentTitle: "Paper", filename: "paper.txt", fileType: "text/plain",
+      buffer: Buffer.from("embedding source"), embeddingProvider: provider,
+    })
+    expect(result.embeddingStatus).toBe("ready")
+    expect(provider.embed).toHaveBeenCalledTimes(1)
+    expect(mocks.persistEmbeddings).toHaveBeenCalledWith([
+      expect.objectContaining({ modelVersion: "fake-1536-v1", embedding: expect.any(Array) }),
+    ])
+    expect(mocks.update).toHaveBeenLastCalledWith(expect.objectContaining({ data: expect.objectContaining({ embeddingStatus: "ready" }) }))
   })
 })

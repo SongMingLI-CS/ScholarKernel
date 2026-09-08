@@ -8,7 +8,6 @@ export async function register() {
   // Next sets NEXT_RUNTIME to "nodejs" or "edge".
   if (process.env.NEXT_RUNTIME === "nodejs") {
     const mod = await import("./instrumentation.node")
-    mod.register()
+    await mod.register()
   }
 }
-
