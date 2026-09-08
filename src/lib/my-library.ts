@@ -12,6 +12,10 @@ export type LibraryDocumentRecord = {
   indexError?: string | null
   indexJobId?: string | null
   embeddingStatus?: string
+  embeddingModelVersion?: string | null
+  indexedAt?: string | null
+  embeddingUpdatedAt?: string | null
+  chunkCount?: number
 }
 
 export type LibraryFolderFilter = "all" | "uncategorized" | string
@@ -44,6 +48,10 @@ export function serializeLibraryDocument(doc: {
   indexError?: string | null
   indexJobId?: string | null
   embeddingStatus?: string
+  embeddingModelVersion?: string | null
+  indexedAt?: Date | null
+  embeddingUpdatedAt?: Date | null
+  _count?: { chunks: number }
 }): LibraryDocumentRecord {
   return {
     id: doc.id,
@@ -59,7 +67,25 @@ export function serializeLibraryDocument(doc: {
     ...(doc.indexError !== undefined ? { indexError: doc.indexError } : {}),
     ...(doc.indexJobId !== undefined ? { indexJobId: doc.indexJobId } : {}),
     ...(doc.embeddingStatus ? { embeddingStatus: doc.embeddingStatus } : {}),
+    ...(doc.embeddingModelVersion !== undefined ? { embeddingModelVersion: doc.embeddingModelVersion } : {}),
+    ...(doc.indexedAt !== undefined ? { indexedAt: doc.indexedAt?.toISOString() ?? null } : {}),
+    ...(doc.embeddingUpdatedAt !== undefined ? { embeddingUpdatedAt: doc.embeddingUpdatedAt?.toISOString() ?? null } : {}),
+    ...(doc._count ? { chunkCount: doc._count.chunks } : {}),
   }
+}
+
+export function libraryIndexPresentation(doc: LibraryDocumentRecord): {
+  state: "pending" | "ready" | "degraded" | "failed"
+  detail?: string
+} {
+  if (doc.indexStatus === "failed" || doc.embeddingStatus === "failed") {
+    return { state: "failed", ...(doc.indexError ? { detail: doc.indexError } : {}) }
+  }
+  if (!doc.indexStatus || doc.indexStatus === "pending") return { state: "pending" }
+  if (doc.embeddingStatus !== "ready") {
+    return { state: "degraded", detail: doc.indexError || "Vector embedding unavailable; BM25 remains active." }
+  }
+  return { state: "ready" }
 }
 
 export function filterLibraryByFolder(

@@ -1,14 +1,15 @@
 "use client"
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { BookOpen, FolderOpen, Loader2, Plus, Tag, Trash2, Upload } from "lucide-react"
+import { AlertTriangle, BookOpen, FolderOpen, Loader2, Plus, RefreshCw, Tag, Trash2, Upload } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
-import { deleteLibraryDocument, fetchLibraryDocuments, patchLibraryDocument, uploadLibraryDocument } from "@/lib/library-api"
+import { deleteLibraryDocument, fetchLibraryDocuments, patchLibraryDocument, reindexLibraryDocument, reindexStaleLibraryDocuments, uploadLibraryDocument } from "@/lib/library-api"
 import {
   collectLibraryFolders,
   filterLibraryByFolder,
   formatFileSize,
+  libraryIndexPresentation,
   type LibraryDocumentRecord,
   type LibraryFolderFilter,
 } from "@/lib/my-library"
@@ -25,13 +26,25 @@ function LibraryCard({
   doc,
   onDelete,
   onEditTags,
+  onReindex,
+  reindexing,
 }: {
   doc: LibraryDocumentRecord
   onDelete: (id: string) => void
   onEditTags: (id: string, tags: string[]) => void
+  onReindex: (id: string) => void
+  reindexing: boolean
 }) {
   const t = useT()
   const created = new Date(doc.createdAt).toLocaleDateString()
+  const index = libraryIndexPresentation(doc)
+  const statusClass = index.state === "ready"
+    ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-200"
+    : index.state === "degraded"
+      ? "border-amber-500/30 bg-amber-500/10 text-amber-200"
+      : index.state === "failed"
+        ? "border-rose-500/30 bg-rose-500/10 text-rose-200"
+        : "border-sky-500/30 bg-sky-500/10 text-sky-200"
 
   return (
     <div className="bg-zinc-900/60 border border-zinc-800 rounded-xl p-4 hover:border-emerald-500/30 transition-all">
@@ -45,6 +58,17 @@ function LibraryCard({
             <span aria-hidden>·</span>
             <span className="uppercase">{doc.fileType.split("/").pop() || doc.fileType}</span>
           </div>
+          <div className="mt-2 flex flex-wrap items-center gap-1.5 font-mono text-[9px]">
+            <span className={cn("rounded-full border px-2 py-0.5", statusClass)}>{t(`library.index.${index.state}`)}</span>
+            <span className="text-muted-foreground">{t("library.index.chunks").replace("{count}", String(doc.chunkCount ?? 0))}</span>
+            {doc.embeddingModelVersion ? <span className="max-w-[170px] truncate text-muted-foreground">{doc.embeddingModelVersion}</span> : null}
+          </div>
+          {index.detail ? (
+            <div className="mt-1.5 flex items-start gap-1 text-[10px] text-amber-200/80" title={index.detail}>
+              <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" />
+              <span className="line-clamp-2 break-all">{index.detail}</span>
+            </div>
+          ) : null}
           {doc.tags.length ? (
             <div className="mt-2 flex flex-wrap gap-1">
               {doc.tags.map((tag) => (
@@ -59,6 +83,17 @@ function LibraryCard({
           ) : null}
         </div>
         <div className="flex shrink-0 gap-1">
+          <Button
+            type="button"
+            variant="outline"
+            size="icon-sm"
+            disabled={reindexing || index.state === "pending"}
+            className="h-8 w-8 border-zinc-700/80 bg-zinc-900/50"
+            title={t(index.state === "failed" ? "library.index.retry" : "library.index.reindex")}
+            onClick={() => onReindex(doc.id)}
+          >
+            {reindexing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+          </Button>
           <Button
             type="button"
             variant="outline"
@@ -96,11 +131,13 @@ export const MyLibraryPanel = memo(function MyLibraryPanel() {
   const [docs, setDocs] = useState<LibraryDocumentRecord[]>([])
   const [loading, setLoading] = useState(true)
   const [uploading, setUploading] = useState(false)
+  const [reindexingIds, setReindexingIds] = useState<Set<string>>(new Set())
+  const [batchReindexing, setBatchReindexing] = useState(false)
   const [activeFolder, setActiveFolder] = useState<LibraryFolderFilter>("all")
   const fileRef = useRef<HTMLInputElement | null>(null)
 
-  const reload = useCallback(async () => {
-    setLoading(true)
+  const reload = useCallback(async (showLoading = true) => {
+    if (showLoading) setLoading(true)
     try {
       const res = await fetchLibraryDocuments("all")
       setDocs(res.items)
@@ -108,7 +145,7 @@ export const MyLibraryPanel = memo(function MyLibraryPanel() {
       const msg = e instanceof Error ? e.message : String(e)
       pushToast({ messageKey: "library.load.failed", detail: msg, variant: "error", ttlMs: 4200 })
     } finally {
-      setLoading(false)
+      if (showLoading) setLoading(false)
     }
   }, [pushToast])
 
@@ -116,6 +153,12 @@ export const MyLibraryPanel = memo(function MyLibraryPanel() {
     const frame = window.requestAnimationFrame(() => void reload())
     return () => window.cancelAnimationFrame(frame)
   }, [reload])
+
+  useEffect(() => {
+    if (!docs.some((doc) => doc.indexStatus === "pending")) return
+    const timer = window.setInterval(() => void reload(false), 3_000)
+    return () => window.clearInterval(timer)
+  }, [docs, reload])
 
   const customFolders = useMemo(() => collectLibraryFolders(docs), [docs])
   const visible = useMemo(() => filterLibraryByFolder(docs, activeFolder), [docs, activeFolder])
@@ -167,6 +210,33 @@ export const MyLibraryPanel = memo(function MyLibraryPanel() {
     [pushToast]
   )
 
+  const onReindex = useCallback(async (id: string) => {
+    setReindexingIds((current) => new Set(current).add(id))
+    try {
+      const updated = await reindexLibraryDocument(id)
+      setDocs((current) => current.map((doc) => doc.id === id ? { ...doc, ...updated, indexStatus: "pending" } : doc))
+      pushToast({ messageKey: "library.index.scheduled", variant: "success", ttlMs: 2800 })
+    } catch (error) {
+      pushToast({ messageKey: "library.index.failed", detail: error instanceof Error ? error.message : String(error), variant: "error", ttlMs: 4200 })
+    } finally {
+      setReindexingIds((current) => { const next = new Set(current); next.delete(id); return next })
+    }
+  }, [pushToast])
+
+  const onBatchReindex = useCallback(async () => {
+    setBatchReindexing(true)
+    try {
+      const result = await reindexStaleLibraryDocuments(10)
+      const ids = new Set(result.scheduled.map((item) => item.documentId))
+      setDocs((current) => current.map((doc) => ids.has(doc.id) ? { ...doc, indexStatus: "pending" } : doc))
+      pushToast({ messageKey: "library.index.batchScheduled", detail: String(result.scheduled.length), variant: "success", ttlMs: 3200 })
+    } catch (error) {
+      pushToast({ messageKey: "library.index.failed", detail: error instanceof Error ? error.message : String(error), variant: "error", ttlMs: 4200 })
+    } finally {
+      setBatchReindexing(false)
+    }
+  }, [pushToast])
+
   return (
     <div className="flex h-full min-h-0 flex-col">
       <header className="shrink-0 border-b border-border/60 px-5 py-4">
@@ -179,6 +249,10 @@ export const MyLibraryPanel = memo(function MyLibraryPanel() {
             <p className="mt-1 max-w-2xl font-mono text-[11px] text-muted-foreground">{t("library.subtitle")}</p>
           </div>
           <div className="flex items-center gap-2">
+            <Button type="button" variant="outline" className="gap-2 font-mono text-[11px]" disabled={batchReindexing} onClick={() => void onBatchReindex()}>
+              {batchReindexing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+              {t("library.index.maintenance")}
+            </Button>
             <input
               ref={fileRef}
               type="file"
@@ -257,7 +331,7 @@ export const MyLibraryPanel = memo(function MyLibraryPanel() {
           ) : (
             <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
               {visible.map((doc) => (
-                <LibraryCard key={doc.id} doc={doc} onDelete={(id) => void onDelete(id)} onEditTags={(id, tags) => void onEditTags(id, tags)} />
+                <LibraryCard key={doc.id} doc={doc} onDelete={(id) => void onDelete(id)} onEditTags={(id, tags) => void onEditTags(id, tags)} onReindex={(id) => void onReindex(id)} reindexing={reindexingIds.has(doc.id)} />
               ))}
             </div>
           )}

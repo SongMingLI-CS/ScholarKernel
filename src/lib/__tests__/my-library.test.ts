@@ -4,6 +4,7 @@ import {
   buildAgentRunPayload,
   filterLibraryByFolder,
   formatLibraryContextBlock,
+  libraryIndexPresentation,
   serializeLibraryDocument,
   validateLibrarySelection,
   type LibraryDocumentRecord,
@@ -43,6 +44,28 @@ describe("my-library", () => {
     expect(found).toBeDefined()
     expect(found?.title).toBe("BERT Pretraining")
     expect(found?.userId).toBe("user-1")
+  })
+
+  it("serializes index operations metadata without exposing document content", () => {
+    const serialized = serializeLibraryDocument({
+      id: "doc-ops", userId: "user-1", title: "Ops", fileUrl: "object://ops", fileSize: 42,
+      fileType: "application/pdf", tags: [], folders: [], createdAt: new Date("2026-09-08T00:00:00Z"),
+      indexStatus: "ready", embeddingStatus: "ready", embeddingModelVersion: "text-embedding-3-small",
+      indexedAt: new Date("2026-09-08T00:01:00Z"), embeddingUpdatedAt: new Date("2026-09-08T00:02:00Z"),
+      _count: { chunks: 17 },
+    })
+    expect(serialized).toMatchObject({
+      indexStatus: "ready", embeddingStatus: "ready", embeddingModelVersion: "text-embedding-3-small",
+      indexedAt: "2026-09-08T00:01:00.000Z", embeddingUpdatedAt: "2026-09-08T00:02:00.000Z", chunkCount: 17,
+    })
+    expect(serialized).not.toHaveProperty("content")
+  })
+
+  it("maps index and embedding states to an operator-facing status", () => {
+    expect(libraryIndexPresentation(mockDoc({ indexStatus: "pending" })).state).toBe("pending")
+    expect(libraryIndexPresentation(mockDoc({ indexStatus: "ready", embeddingStatus: "unavailable" })).state).toBe("degraded")
+    expect(libraryIndexPresentation(mockDoc({ indexStatus: "ready", embeddingStatus: "ready" })).state).toBe("ready")
+    expect(libraryIndexPresentation(mockDoc({ indexStatus: "failed", indexError: "parse failed" }))).toMatchObject({ state: "failed", detail: "parse failed" })
   })
 
   it("session B multi-select captures documentIds in agent payload", () => {

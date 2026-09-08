@@ -46,6 +46,7 @@ export async function GET(req: Request) {
     const rows = await prisma.document.findMany({
       where: { userId },
       orderBy: { createdAt: "desc" },
+      include: { _count: { select: { chunks: true } } },
     })
 
     let items: LibraryDocumentRecord[] = rows.map(serializeLibraryDocument)

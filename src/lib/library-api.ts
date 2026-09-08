@@ -61,3 +61,21 @@ export async function patchLibraryDocument(
     body: JSON.stringify({ id, ...patch }),
   })
 }
+
+export async function reindexLibraryDocument(id: string): Promise<LibraryDocumentRecord> {
+  return patchLibraryDocument(id, { reindex: true })
+}
+
+export async function previewLibraryReindex(limit = 10): Promise<{ staleDocumentIds: string[]; totalScanned: number }> {
+  return apiFetch(`/api/documents/reindex?limit=${Math.max(1, Math.min(50, Math.floor(limit)))}`)
+}
+
+export async function reindexStaleLibraryDocuments(limit = 10): Promise<{
+  scheduled: Array<{ documentId: string; indexJobId: string }>
+  remainingStale: number
+}> {
+  return apiFetch("/api/documents/reindex", {
+    method: "POST",
+    body: JSON.stringify({ limit: Math.max(1, Math.min(50, Math.floor(limit))) }),
+  })
+}
