@@ -8,6 +8,7 @@ export const AcademicChunkMetadataSchema = z.object({
   page: z.number().int().positive().optional(),
   paragraphStart: z.number().int().nonnegative().optional(),
   paragraphEnd: z.number().int().nonnegative().optional(),
+  contentKind: z.enum(["text", "table", "formula", "references"]).default("text"),
   index: z.number().int().nonnegative(),
 })
 
@@ -104,6 +105,14 @@ type RawSection = {
   startOffset: number
 }
 
+function classifyContentKind(section: string, body: string): AcademicChunkMetadata["contentKind"] {
+  if (/^(references|bibliography)$/i.test(section)) return "references"
+  const tableLines = body.split("\n").filter((line) => /^\s*\|.+\|\s*$/.test(line) || line.split("\t").length >= 3)
+  if (tableLines.length >= 2) return "table"
+  if (/\$\$[\s\S]+?\$\$|\\begin\{(?:equation|align|gather)\}/.test(body)) return "formula"
+  return "text"
+}
+
 function splitIntoSections(text: string): RawSection[] {
   const lines = text.split(/\r?\n/)
   const sections: RawSection[] = []
@@ -181,6 +190,7 @@ export function semanticChunkAcademicText(input: SemanticChunkInput): AcademicCh
           ...(page ? { page } : {}),
           paragraphStart,
           paragraphEnd: paragraphStart + paragraphCount - 1,
+          contentKind: classifyContentKind(sec.title, body),
           index,
         },
       })

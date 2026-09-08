@@ -2,6 +2,7 @@ import type { Prisma } from "../../../generated/prisma/client"
 
 import type { DagNodeState } from "@/lib/agent/dag-scheduler"
 import { prisma } from "@/lib/prisma"
+import { recordOperationalMetric } from "@/lib/operational-metrics"
 
 export async function persistDagNodeStateAtomically(jobId: string, state: DagNodeState, allStates: DagNodeState[]): Promise<void> {
   await prisma.$transaction(async (tx) => {
@@ -71,5 +72,6 @@ export async function recoverExpiredDagLeases(now = new Date()): Promise<number>
       data: { status: "error", error: "LeaseExpired", errorMessage: "LeaseExpired", heartbeatAt: now },
     })
   })
+  recordOperationalMetric({ name: "agent.lease_recovery", recoveredJobs: result.count, status: result.count ? "recovered" : "none" })
   return result.count
 }

@@ -5,7 +5,7 @@ import { prisma } from "@/lib/prisma"
 import type { LibraryChunkCandidate } from "@/lib/library-rag"
 import { splitLibraryChunkText } from "@/lib/library-rag"
 import type { EmbeddingProvider } from "@/lib/embedding-provider"
-import { EMBEDDING_DIMENSIONS } from "@/lib/embedding-provider"
+import { EMBEDDING_DIMENSIONS, embeddingRuntimeConfig } from "@/lib/embedding-provider"
 import { persistChunkEmbeddings } from "@/lib/library-vector-store"
 
 export const LIBRARY_PARSER_VERSION = "layout-v2"
@@ -59,8 +59,10 @@ export async function indexLibraryDocumentBuffer(input: {
     })
     if (!parsed.chunks.length) throw new Error("DocumentParseEmpty")
 
-    const rows = parsed.chunks.flatMap((chunk) =>
-      splitLibraryChunkText(chunk.text).map((content) => ({
+    const rows = parsed.chunks.flatMap((chunk) => {
+      const contentKind = chunk.metadata.contentKind ?? "text"
+      const maxChars = contentKind === "text" ? 2_400 : contentKind === "references" ? 1_600 : 3_200
+      return splitLibraryChunkText(chunk.text, maxChars).map((content) => ({
         id: randomUUID(),
         documentId: input.documentId,
         section: chunk.metadata.section,
@@ -69,9 +71,10 @@ export async function indexLibraryDocumentBuffer(input: {
         paragraphStart: chunk.metadata.paragraphStart,
         paragraphEnd: chunk.metadata.paragraphEnd,
         content,
+        contentKind,
         contentHash: createHash("sha256").update(content).digest("hex"),
       }))
-    ).map((chunk, chunkIndex) => ({
+    }).map((chunk, chunkIndex) => ({
       ...chunk,
       chunkIndex,
       charCount: chunk.content.length,
@@ -103,13 +106,14 @@ export async function indexLibraryDocumentBuffer(input: {
       paragraphStart: row.paragraphStart,
       paragraphEnd: row.paragraphEnd,
       content: row.content,
+      contentKind: row.contentKind,
     }))
 
     if (!input.embeddingProvider) return { status: "ready", chunks, embeddingStatus: "unavailable" }
     try {
       const provider = input.embeddingProvider
       if (provider.dimensions !== EMBEDDING_DIMENSIONS) throw new Error(`EmbeddingDimensionsMismatch:${provider.dimensions}:${EMBEDDING_DIMENSIONS}`)
-      const batchSize = 32
+      const batchSize = embeddingRuntimeConfig().batchSize
       for (let offset = 0; offset < rows.length; offset += batchSize) {
         const batch = rows.slice(offset, offset + batchSize)
         const vectors = await provider.embed(batch.map((row) => row.content))

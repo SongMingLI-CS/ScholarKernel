@@ -9,6 +9,7 @@ export type LibraryChunkCandidate = {
   paragraphStart?: number | null
   paragraphEnd?: number | null
   content: string
+  contentKind?: "text" | "table" | "formula" | "references"
 }
 
 export type RankedLibraryChunk = LibraryChunkCandidate & {
@@ -31,6 +32,7 @@ export type StructuredLibraryEvidence = {
   paragraphStart: number | null
   paragraphEnd: number | null
   text: string
+  contentKind: "text" | "table" | "formula" | "references"
   lexicalRank: number | null
   vectorRank: number | null
   fusedRank: number
@@ -72,32 +74,68 @@ export function splitLibraryChunkText(text: string, maxChars = 2_400): string[] 
 export function tokenizeLibraryText(text: string): string[] {
   const normalized = text.toLowerCase()
   const terms: string[] = normalized.match(/[a-z0-9][a-z0-9_-]{1,}|[\u3400-\u9fff]/g) ?? []
-  const cjk = [...normalized].filter((char) => /[\u3400-\u9fff]/.test(char))
-  for (let index = 0; index + 1 < cjk.length; index++) terms.push(`${cjk[index]}${cjk[index + 1]}`)
+  for (const sequence of normalized.match(/[\u3400-\u9fff]+/g) ?? []) {
+    const chars = [...sequence]
+    for (let index = 0; index + 1 < chars.length; index++) terms.push(`${chars[index]}${chars[index + 1]}`)
+  }
+  const bilingualTerms: Array<[string, string]> = [
+    ["自注意力", "self attention"], ["序列复杂度", "sequential complexity"], ["掩码语言模型", "masked language model"],
+    ["双向预训练", "bidirectional pretraining"], ["图像块", "image patch"], ["残差连接", "residual connection"],
+    ["消息传递", "message passing"], ["过平滑", "oversmoothing"], ["对比学习", "contrastive learning"],
+    ["零样本", "zero shot"], ["蛋白质结构", "protein structure"], ["扩散模型", "diffusion model"],
+    ["低秩适配", "low rank adaptation"], ["检索增强", "retrieval augmented"], ["非参数记忆", "non parametric memory"],
+    ["因果推断", "causal inference"], ["强化学习", "reinforcement learning"], ["联邦学习", "federated learning"],
+    ["可复现实验", "reproducible experiment"], ["随机种子", "random seeds"], ["数据划分", "dataset splits"],
+    ["置信区间", "confidence intervals"], ["方差", "variance"], ["模型扩展", "model scaling"],
+    ["有限训练数据", "limited training data"], ["过拟合", "overfitting"], ["矛盾证据", "conflicting evidence"],
+  ]
+  for (const [phrase, expansion] of bilingualTerms) {
+    if (normalized.includes(phrase)) terms.push(...(expansion.match(/[a-z0-9][a-z0-9_-]{1,}/g) ?? []))
+  }
+  const aliases: Array<[RegExp, string[]]> = [
+    [/\breproducibility\b/, ["reproducible"]], [/\buncertainty\b/, ["variance", "confidence"]],
+    [/\bevaluation\b/, ["experimental", "results"]], [/\bscales?\b/, ["scaling"]],
+  ]
+  for (const [pattern, expansion] of aliases) if (pattern.test(normalized)) terms.push(...expansion)
   return terms
+}
+
+export function libraryRetrievalPolicy(query: string): {
+  candidateLimit: number
+  rrfK: number
+  maxChunks: number
+  maxChunksPerDocument: number
+} {
+  const length = new Set(tokenizeLibraryText(query)).size
+  if (length <= 3) return { candidateLimit: 30, rrfK: 50, maxChunks: 8, maxChunksPerDocument: 3 }
+  if (length >= 9) return { candidateLimit: 60, rrfK: 75, maxChunks: 12, maxChunksPerDocument: 5 }
+  return { candidateLimit: 40, rrfK: 60, maxChunks: 10, maxChunksPerDocument: 4 }
 }
 
 /** Deterministic in-memory BM25, retained as the lexical retrieval path. */
 export function rankLibraryChunksBm25(query: string, chunks: LibraryChunkCandidate[]): RankedLibraryChunk[] {
   const queryTerms = [...new Set(tokenizeLibraryText(query))]
   if (!chunks.length) return []
-  const tokenized = chunks.map((chunk) => tokenizeLibraryText(`${chunk.documentTitle} ${chunk.section} ${chunk.content}`))
-  const avgLength = tokenized.reduce((sum, row) => sum + row.length, 0) / Math.max(1, tokenized.length)
+  const tokenized = chunks.map((chunk) => ({
+    title: tokenizeLibraryText(chunk.documentTitle),
+    heading: tokenizeLibraryText((chunk.headingPath?.length ? chunk.headingPath : [chunk.section]).join(" ")),
+    content: tokenizeLibraryText(chunk.content),
+  }))
+  const avgLength = tokenized.reduce((sum, row) => sum + row.content.length, 0) / Math.max(1, tokenized.length)
   const documentFrequency = new Map<string, number>()
-  for (const row of tokenized) for (const term of new Set(row)) documentFrequency.set(term, (documentFrequency.get(term) ?? 0) + 1)
+  for (const row of tokenized) for (const term of new Set([...row.title, ...row.heading, ...row.content])) documentFrequency.set(term, (documentFrequency.get(term) ?? 0) + 1)
   const k1 = 1.2
   const b = 0.75
   const ranked = chunks.map((chunk, index) => {
-    const row = tokenized[index] ?? []
-    const frequencies = new Map<string, number>()
-    for (const term of row) frequencies.set(term, (frequencies.get(term) ?? 0) + 1)
+    const row = tokenized[index] ?? { title: [], heading: [], content: [] }
+    const frequency = (values: string[], term: string) => values.reduce((sum, value) => sum + Number(value === term), 0)
     let lexicalScore = 0
     for (const term of queryTerms) {
-      const tf = frequencies.get(term) ?? 0
+      const tf = frequency(row.content, term) + frequency(row.heading, term) * 2 + frequency(row.title, term) * 3
       if (!tf) continue
       const df = documentFrequency.get(term) ?? 0
       const idf = Math.log(1 + (chunks.length - df + 0.5) / (df + 0.5))
-      const denominator = tf + k1 * (1 - b + b * (row.length / Math.max(1, avgLength)))
+      const denominator = tf + k1 * (1 - b + b * (row.content.length / Math.max(1, avgLength)))
       lexicalScore += idf * ((tf * (k1 + 1)) / denominator)
     }
     return { ...chunk, lexicalScore }
@@ -141,6 +179,7 @@ function evidenceFromRanked(chunk: RankedLibraryChunk, degraded?: "vector-unavai
     paragraphStart: chunk.paragraphStart ?? null,
     paragraphEnd: chunk.paragraphEnd ?? null,
     text: chunk.content,
+    contentKind: chunk.contentKind ?? "text",
     lexicalRank: chunk.lexicalRank ?? null,
     vectorRank: chunk.vectorRank ?? null,
     fusedRank: chunk.fusedRank ?? chunk.lexicalRank ?? chunk.vectorRank ?? 1,
@@ -201,14 +240,14 @@ export function retrieveStructuredLibraryEvidence(
   chunks: LibraryChunkCandidate[],
   options: { maxChunks?: number; maxChars?: number; maxChunksPerDocument?: number; vectorResults?: RankedLibraryChunk[]; vectorUnavailable?: boolean } = {}
 ): StructuredLibraryEvidence[] {
+  const policy = libraryRetrievalPolicy(query)
   const lexical = rankLibraryChunksBm25(query, chunks)
-  const hasPositiveLexical = lexical.some((chunk) => (chunk.lexicalScore ?? 0) > 0)
-  const lexicalCandidates = hasPositiveLexical ? lexical.filter((chunk) => (chunk.lexicalScore ?? 0) > 0) : lexical.slice(0, Math.min(options.maxChunks ?? 10, 4))
-  const fused = options.vectorResults?.length ? reciprocalRankFusion(lexicalCandidates, options.vectorResults) : lexicalCandidates.map((chunk, index) => ({ ...chunk, fusedRank: index + 1, fusedScore: 1 / (61 + index) }))
+  const lexicalCandidates = lexical.filter((chunk) => (chunk.lexicalScore ?? 0) > 0).slice(0, policy.candidateLimit)
+  const fused = options.vectorResults?.length ? reciprocalRankFusion(lexicalCandidates, options.vectorResults.slice(0, policy.candidateLimit), policy.rrfK) : lexicalCandidates.map((chunk, index) => ({ ...chunk, fusedRank: index + 1, fusedScore: 1 / (policy.rrfK + 1 + index) }))
   return selectStructuredEvidence(fused, {
-    maxChunks: options.maxChunks,
+    maxChunks: options.maxChunks ?? policy.maxChunks,
     maxChars: options.maxChars,
-    maxChunksPerDocument: options.maxChunksPerDocument,
+    maxChunksPerDocument: options.maxChunksPerDocument ?? policy.maxChunksPerDocument,
     degraded: options.vectorUnavailable ? "vector-unavailable" : undefined,
   })
 }
@@ -226,6 +265,7 @@ export function retrieveRelevantLibraryChunks(query: string, chunks: LibraryChun
     paragraphStart: evidence.paragraphStart,
     paragraphEnd: evidence.paragraphEnd,
     content: evidence.text,
+    contentKind: evidence.contentKind,
     score: evidence.score,
   }))
 }

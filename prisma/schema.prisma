@@ -130,6 +130,7 @@ model DocumentChunk {
   paragraphStart        Int?
   paragraphEnd          Int?
   content               String                 @db.Text
+  contentKind           String                 @default("text")
   charCount             Int
   contentHash           String                 @default("")
   embedding             Unsupported("vector")?

@@ -3,6 +3,7 @@ import { dagNodeFingerprints } from "@/lib/agent/dag-fingerprint"
 import { validateWorkflowDag } from "@/lib/agent/dag-validator"
 import type { DagEventPublisher } from "@/lib/agent/event-publisher"
 import type { DagNodeRunner, DagNodeRunResult } from "@/lib/agent/node-runner"
+import { recordOperationalMetric } from "@/lib/operational-metrics"
 
 export type DagNodeState = {
   node: WorkflowNode
@@ -75,6 +76,9 @@ export async function scheduleWorkflowDag(input: {
   const states = new Map<string, DagNodeState>()
   const outputs: Record<string, unknown> = {}
   let failFast = false
+  const scheduleStartedAt = performance.now()
+  let activeNodes = 0
+  let maxConcurrent = 0
 
   const persist = async (state: DagNodeState) => { states.set(state.node.id, state); await input.persist?.(state) }
   const publish = async (nodeId: string, patch: Partial<WorkflowNode>) => input.publish?.({ type: "node", nodeId, patch })
@@ -101,6 +105,7 @@ export async function scheduleWorkflowDag(input: {
   }
 
   const runNode = async (node: WorkflowNode) => {
+    const nodeStartedAt = performance.now()
     const dependencies = node.dependsOn ?? []
     const upstreamResults = Object.fromEntries(dependencies.map((id) => [id, outputs[id]]))
     const fingerprints = dagNodeFingerprints(node.input, upstreamResults)
@@ -114,11 +119,16 @@ export async function scheduleWorkflowDag(input: {
       await persist(running)
       await publish(node.id, { status: "running" })
       try {
-        const result = await withTimeout((signal) => input.runner(node, { attempt, upstreamResults, signal }), node.timeoutMs ?? 120_000, input.signal)
+        activeNodes += 1
+        maxConcurrent = Math.max(maxConcurrent, activeNodes)
+        const result = await withTimeout((signal) => input.runner(node, { attempt, upstreamResults, signal }), node.timeoutMs ?? 120_000, input.signal).finally(() => {
+          activeNodes -= 1
+        })
         const done: DagNodeState = { ...running, status: "done", output: result.output, completedAt: new Date() }
         outputs[node.id] = result.output
         await persist(done)
         await publish(node.id, { status: "done", output: result.output })
+        recordOperationalMetric({ name: "agent.node", nodeType: node.type, status: "done", durationMs: performance.now() - nodeStartedAt, attemptCount: attempt, retryCount: attempt - 1 })
         return
       } catch (error) {
         lastError = error
@@ -140,6 +150,7 @@ export async function scheduleWorkflowDag(input: {
     const failed: DagNodeState = { node, status: aborted ? "cancelled" : "error", error: message, errorCategory: category(lastError), attemptCount: attemptsMade, completedAt: new Date(), ...fingerprints }
     await persist(failed)
     await publish(node.id, { status: failed.status, error: message })
+    recordOperationalMetric({ name: "agent.node", nodeType: node.type, status: failed.status, durationMs: performance.now() - nodeStartedAt, attemptCount: attemptsMade, retryCount: Math.max(0, attemptsMade - 1), errorCategory: failed.errorCategory })
     if (node.failurePolicy === "fail-fast") failFast = true
   }
 
@@ -173,5 +184,10 @@ export async function scheduleWorkflowDag(input: {
     }
   }
 
+  recordOperationalMetric({
+    name: "agent.dag", durationMs: performance.now() - scheduleStartedAt,
+    maxConcurrent, completedNodes: [...states.values()].filter((state) => state.status === "done").length,
+    status: input.signal?.aborted ? "cancelled" : failFast ? "failed" : "done",
+  })
   return { states, outputs, cancelled: Boolean(input.signal?.aborted || failFast) }
 }

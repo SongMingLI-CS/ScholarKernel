@@ -128,4 +128,21 @@ describe("Library document indexing", () => {
     ])
     expect(mocks.update).toHaveBeenLastCalledWith(expect.objectContaining({ data: expect.objectContaining({ embeddingStatus: "ready" }) }))
   })
+
+  it("uses the configured embedding batch size", async () => {
+    const previous = process.env.EMBEDDING_BATCH_SIZE
+    process.env.EMBEDDING_BATCH_SIZE = "1"
+    mocks.parse.mockResolvedValue({ chunks: [
+      { text: "one", metadata: { section: "Methods", headingPath: ["Methods"], page: 2, paragraphStart: 1, paragraphEnd: 1, index: 0 } },
+      { text: "two", metadata: { section: "Results", headingPath: ["Results"], page: 3, paragraphStart: 2, paragraphEnd: 2, index: 1 } },
+    ] })
+    const provider = { modelVersion: "fake-1536-v1", dimensions: 1536, embed: vi.fn(async () => [Array.from({ length: 1536 }, () => 0)]) }
+    await indexLibraryDocumentBuffer({
+      documentId: "doc-batches", documentTitle: "Paper", filename: "paper.txt", fileType: "text/plain",
+      buffer: Buffer.from("one two"), embeddingProvider: provider,
+    })
+    expect(provider.embed).toHaveBeenCalledTimes(2)
+    if (previous === undefined) delete process.env.EMBEDDING_BATCH_SIZE
+    else process.env.EMBEDDING_BATCH_SIZE = previous
+  })
 })

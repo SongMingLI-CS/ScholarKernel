@@ -7,6 +7,7 @@ import {
   reciprocalRankFusion,
   retrieveRelevantLibraryChunks,
   retrieveStructuredLibraryEvidence,
+  libraryRetrievalPolicy,
   selectStructuredEvidence,
   splitLibraryChunkText,
 } from "@/lib/library-rag"
@@ -44,6 +45,29 @@ describe("Library chunk retrieval", () => {
     const second = rankLibraryChunksBm25("sparse attention latency", chunks)
     expect(first.map((chunk) => chunk.lexicalRank)).toEqual(second.map((chunk) => chunk.lexicalRank))
     expect(first[0]).toMatchObject({ documentId: "d1", section: "Experiments", lexicalRank: 1 })
+  })
+
+  it("weights title and heading matches above incidental body matches", () => {
+    const ranked = rankLibraryChunksBm25("causal inference", [
+      { ...chunks[0]!, documentId: "body", documentTitle: "General Survey", section: "Overview", content: "causal inference is mentioned once in a broad appendix" },
+      { ...chunks[1]!, documentId: "title", documentTitle: "Causal Inference", section: "Methods", content: "estimators and assumptions" },
+    ])
+    expect(ranked[0]?.documentId).toBe("title")
+  })
+
+  it("expands common Chinese academic terms for English evidence", () => {
+    const ranked = rankLibraryChunksBm25("自注意力的序列复杂度", chunks)
+    expect(ranked[0]).toMatchObject({ documentId: "d1", section: "Introduction" })
+    expect(ranked[0]?.lexicalScore).toBeGreaterThan(0)
+  })
+
+  it("uses a deterministic query-length retrieval policy", () => {
+    expect(libraryRetrievalPolicy("attention")).toMatchObject({ candidateLimit: 30, rrfK: 50 })
+    expect(libraryRetrievalPolicy("compare the methodological assumptions and empirical findings across all selected papers")).toMatchObject({ candidateLimit: 60, rrfK: 75 })
+  })
+
+  it("returns no lexical evidence for a no-answer query instead of fabricating citations", () => {
+    expect(retrieveStructuredLibraryEvidence("quantum volcanic seismology", chunks, { vectorUnavailable: true })).toEqual([])
   })
 
   it("uses reciprocal-rank fusion instead of adding incomparable scores", () => {

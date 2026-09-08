@@ -14,6 +14,7 @@ type VectorRow = {
   paragraphStart: number | null
   paragraphEnd: number | null
   content: string
+  contentKind: "text" | "table" | "formula" | "references"
   vectorScore: number
 }
 
@@ -44,7 +45,7 @@ export async function retrieveVectorLibraryChunks(input: {
   const limit = Math.max(1, Math.min(100, Math.floor(input.limit ?? 40)))
   const rows = await prisma.$queryRaw<VectorRow[]>(Prisma.sql`
     SELECT c."id", c."documentId", d."title" AS "documentTitle", c."chunkIndex",
-      c."section", c."headingPath", c."page", c."paragraphStart", c."paragraphEnd", c."content",
+      c."section", c."headingPath", c."page", c."paragraphStart", c."paragraphEnd", c."content", c."contentKind",
       1 - (c."embedding" <=> ${embedding}::vector) AS "vectorScore"
     FROM "DocumentChunk" c
     INNER JOIN "Document" d ON d."id" = c."documentId"
@@ -65,6 +66,7 @@ export async function retrieveVectorLibraryChunks(input: {
     paragraphStart: row.paragraphStart,
     paragraphEnd: row.paragraphEnd,
     content: row.content,
+    contentKind: row.contentKind,
     vectorScore: Number(row.vectorScore),
     vectorRank: index + 1,
   }))

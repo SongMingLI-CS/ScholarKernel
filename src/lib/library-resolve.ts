@@ -1,6 +1,7 @@
 import { indexLibraryDocumentBuffer } from "@/lib/library-index"
 import {
   formatStructuredLibraryEvidence,
+  libraryRetrievalPolicy,
   rankLibraryChunksBm25,
   reciprocalRankFusion,
   selectStructuredEvidence,
@@ -13,6 +14,7 @@ import { retrieveVectorLibraryChunks } from "@/lib/library-vector-store"
 import { readStoredLibraryObject } from "@/lib/library-storage"
 import { prisma } from "@/lib/prisma"
 import type { EvidenceStatus } from "@/lib/evidence-status"
+import { recordOperationalMetric } from "@/lib/operational-metrics"
 
 export type LibraryResolution = {
   chunks: LibraryChunkCandidate[]
@@ -57,6 +59,7 @@ export async function loadLibraryChunksWithStatus(
     paragraphStart: chunk.paragraphStart,
     paragraphEnd: chunk.paragraphEnd,
     content: chunk.content,
+    contentKind: chunk.contentKind as LibraryChunkCandidate["contentKind"],
   }))
   const chunkCountByDocument = new Map<string, number>()
   for (const chunk of storedChunks) {
@@ -133,16 +136,29 @@ export async function resolveLibraryEvidenceForAgent(
   } = {}
 ): Promise<LibraryEvidenceResolution> {
   if (!userId || !documentIds?.length) return { evidence: [], statuses: [], retrievalMode: "lexical-degraded" }
+  const retrievalStartedAt = performance.now()
   const { chunks, statuses } = await loadLibraryChunksWithStatus(userId, documentIds)
-  const lexicalPromise = Promise.resolve(rankLibraryChunksBm25(query, chunks))
+  const policy = libraryRetrievalPolicy(query)
+  let lexicalMs = 0
+  let vectorMs = 0
+  const lexicalPromise = Promise.resolve().then(() => {
+    const startedAt = performance.now()
+    const result = rankLibraryChunksBm25(query, chunks)
+    lexicalMs = performance.now() - startedAt
+    return result
+  })
   const provider = deps.embeddingProvider === undefined ? configuredEmbeddingProvider() : deps.embeddingProvider
   let vectorUnavailable = !provider
   let vectorPromise: Promise<RankedLibraryChunk[]> = Promise.resolve([])
   if (provider) {
     const retriever = deps.vectorRetriever ?? retrieveVectorLibraryChunks
-    vectorPromise = provider.embed([query]).then(([queryEmbedding]) => {
+    vectorPromise = Promise.resolve().then(async () => {
+      const startedAt = performance.now()
+      const [queryEmbedding] = await provider.embed([query])
       if (!queryEmbedding) throw new Error("QueryEmbeddingMissing")
-      return retriever({ userId, documentIds, queryEmbedding, limit: 40 })
+      const result = await retriever({ userId, documentIds, queryEmbedding, limit: policy.candidateLimit })
+      vectorMs = performance.now() - startedAt
+      return result
     }).catch((error) => {
       vectorUnavailable = true
       statuses.push({
@@ -164,14 +180,24 @@ export async function resolveLibraryEvidenceForAgent(
     })
   }
   const [lexical, vector] = await Promise.all([lexicalPromise, vectorPromise])
-  const positiveLexical = lexical.some((chunk) => (chunk.lexicalScore ?? 0) > 0)
-    ? lexical.filter((chunk) => (chunk.lexicalScore ?? 0) > 0)
-    : lexical.slice(0, 4)
+  const positiveLexical = lexical.filter((chunk) => (chunk.lexicalScore ?? 0) > 0).slice(0, policy.candidateLimit)
   const ranked = vector.length
-    ? reciprocalRankFusion(positiveLexical.slice(0, 40), vector.slice(0, 40))
-    : positiveLexical.map((chunk, index) => ({ ...chunk, fusedRank: index + 1, fusedScore: 1 / (61 + index) }))
+    ? reciprocalRankFusion(positiveLexical, vector.slice(0, policy.candidateLimit), policy.rrfK)
+    : positiveLexical.map((chunk, index) => ({ ...chunk, fusedRank: index + 1, fusedScore: 1 / (policy.rrfK + 1 + index) }))
+  const evidence = selectStructuredEvidence(ranked, { maxChunks: policy.maxChunks, maxChars: 12_000, maxChunksPerDocument: policy.maxChunksPerDocument, degraded: vectorUnavailable ? "vector-unavailable" : undefined })
+  recordOperationalMetric({
+    name: "library.retrieval",
+    durationMs: performance.now() - retrievalStartedAt,
+    lexicalMs,
+    vectorMs,
+    lexicalCandidates: positiveLexical.length,
+    vectorCandidates: vector.length,
+    selectedEvidence: evidence.length,
+    documentCount: new Set(evidence.map((item) => item.documentId)).size,
+    ...(vectorUnavailable ? { degradedReason: "vector-unavailable" } : {}),
+  })
   return {
-    evidence: selectStructuredEvidence(ranked, { maxChunks: 10, maxChars: 12_000, maxChunksPerDocument: 4, degraded: vectorUnavailable ? "vector-unavailable" : undefined }),
+    evidence,
     statuses,
     retrievalMode: vectorUnavailable ? "lexical-degraded" : "hybrid",
   }

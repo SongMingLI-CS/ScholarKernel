@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest"
 import { applyColumnReorder } from "@/lib/document/column-reorder"
 import { normalizeAcademicFormulas } from "@/lib/document/formula-normalizer"
 import { lexicalRerankScores } from "@/lib/document/rerank-gateway"
+import { semanticChunkAcademicText } from "@/lib/document/academic-semantic-chunker"
 
 describe("column-reorder", () => {
   it("reorders double-column blocks left then right", () => {
@@ -36,6 +37,17 @@ describe("formula-normalizer", () => {
     expect(out).toContain("$$E = mc^2$$")
     expect(out).toContain("\\alpha")
     expect(out).toContain("\\beta")
+  })
+})
+
+describe("academic content-aware chunking", () => {
+  it("labels tables, formulas, and references for independent indexing budgets", () => {
+    const chunks = semanticChunkAcademicText({ text: [
+      "# Results", "| Model | Accuracy |", "| --- | --- |", "| Baseline | 91.2 |",
+      "# Objective", "$$L = -\\sum_i y_i \\log p_i$$",
+      "# References", "[1] Vaswani et al. Attention Is All You Need.",
+    ].join("\n") })
+    expect(chunks.map((item) => item.metadata.contentKind)).toEqual(["table", "formula", "references"])
   })
 })
 
