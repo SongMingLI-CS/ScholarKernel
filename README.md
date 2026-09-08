@@ -2,9 +2,9 @@
 
 # ScholarKernel
 
-**下一代基于分布式智能体图编排与云原生 Serverless 架构的高并发学术 RAG 与协同评审平台**
+**基于单进程智能体 DAG 与云原生 Serverless 架构的学术 RAG 与协同评审平台**
 
-*Next-Gen Academic RAG & Collaborative Review Platform — Distributed Agent Graph Orchestration on Serverless Edge*
+*Academic RAG & Collaborative Review Platform — Single-Process Agent DAG Orchestration on Serverless*
 
 [![Next.js](https://img.shields.io/badge/Next.js-16-black?style=for-the-badge&logo=next.js)](https://nextjs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5-3178C6?style=for-the-badge&logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
@@ -14,7 +14,7 @@
 [![Neon PostgreSQL](https://img.shields.io/badge/Neon-PostgreSQL-00E599?style=for-the-badge&logo=postgresql&logoColor=white)](https://neon.tech/)
 [![Upstash Redis](https://img.shields.io/badge/Upstash-Redis-00E9A3?style=for-the-badge&logo=redis&logoColor=white)](https://upstash.com/)
 [![DeepSeek-R1](https://img.shields.io/badge/DeepSeek--R1-Reasoning-0052FF?style=for-the-badge)](https://www.deepseek.com/)
-[![Tests](https://img.shields.io/badge/Tests-326%20Passed-22C55E?style=for-the-badge&logo=vitest&logoColor=white)](https://vitest.dev/)
+[![Tests](https://img.shields.io/badge/Tests-388%20Passed-22C55E?style=for-the-badge&logo=vitest&logoColor=white)](https://vitest.dev/)
 [![License](https://img.shields.io/badge/License-Private-lightgrey?style=for-the-badge)](https://github.com/SongMingLI-CS/ScholarKernel)
 
 [English](#english-quick-reference) · [快速启动](#-快速启动) · [架构拓扑](#-架构拓扑) · [功能矩阵](#-核心技术护城河-features-matrix) · [Issues](https://github.com/SongMingLI-CS/ScholarKernel/issues)
@@ -44,11 +44,11 @@
 
 ## 概述 · Overview
 
-**ScholarKernel** 是一套面向学术场景的全栈多智能体平台：从 DeepSeek-R1 思考流渲染、React Flow Agent 拓扑编排，到 Canvas / PDF 双模态协同阅读、跨会话文献库与公网只读分享。当前代码门禁覆盖 **326 项 Vitest 测试**；生产发布仍须按[部署清单](docs/deployment.md)完成 PostgreSQL migration 与私有对象存储实测。
+**ScholarKernel** 是一套面向学术场景的全栈多智能体平台：从 DeepSeek-R1 思考流渲染、单进程 Agent DAG 编排，到 Canvas / PDF 双模态协同阅读、混合检索文献库与公网只读分享。生产发布仍须按[部署清单](docs/deployment.md)完成 PostgreSQL migration、pgvector 与私有对象存储实测。
 
 | 维度 | 能力 |
 |------|------|
-| **Agent 编排** | 多节点工作流 · 断点续跑 · 节点级局部重试 |
+| **Agent 编排** | 显式 dependsOn DAG · 通用并发 · 指纹断点续跑 |
 | **推理引擎** | DeepSeek-R1 思考流双轨解析 · 多 Provider 网关 |
 | **交互体验** | 乐观 UI 零延迟 · 429 限流自愈回滚 |
 | **学术产出** | Scholar Canvas · PDF Co-Reader · 页码引用锚定 |
@@ -162,7 +162,7 @@ model Document {
 }
 ```
 
-[`my-library`](src/lib/my-library.ts) + [`MyLibraryPanel`](src/components/my-library-panel.tsx) 提供文件夹分类树与卡片网格。新上传文件进入私有对象存储，解析后按页码/章节写入有界 `DocumentChunk`；Agent 只注入与当前问题最相关的片段。旧 `file://` 记录在迁移窗口内保持只读兼容。
+[`my-library`](src/lib/my-library.ts) + [`MyLibraryPanel`](src/components/my-library-panel.tsx) 提供文件夹分类树与卡片网格。新上传文件进入私有对象存储后由既有 Job 体系异步解析，按标题层级、页码和段落位置写入 `DocumentChunk`；BM25 与可选 pgvector 召回通过 RRF 融合，Agent 只在自身 token 边界格式化结构化证据。旧 `file://` 记录在迁移窗口内保持只读兼容。
 
 ---
 
@@ -186,7 +186,7 @@ model Document {
 | **ORM / DB** | Prisma 7 · Neon PostgreSQL | 关系持久化 · Serverless Pool |
 | **缓存 / 限流** | Upstash Redis · @upstash/ratelimit | Edge 滑动窗口限流 |
 | **认证** | NextAuth.js 5 (JWT · GitHub · Credentials) | 影子用户 · 路由守卫 |
-| **测试** | Vitest 3 · Playwright | 326 单元测试 · E2E |
+| **测试** | Vitest 3 · Playwright | 388 单元测试 · E2E |
 
 ---
 
@@ -235,7 +235,7 @@ model Document {
                     └──────────────────────────────┘
 ```
 
-**数据流向：** 浏览器只提交模型标识与任务数据 → 限流/JWT 鉴权 → Node.js Agent SSE Route → 服务端解密 Provider/Search Key → AgentExecutor → PostgreSQL checkpoint/usage 持久化与私有 Blob/RAG 检索 → SSE 回显拓扑、文本、Canvas、引用和证据状态。浏览器提交 `runtimeKeys` 会被 Agent API 拒绝。
+**数据流向：** 浏览器只提交模型标识与任务数据 → 限流/JWT 鉴权 → Node.js Agent SSE Route → 服务端解密 Provider/Search Key → Planner/Validator/单进程 DAG Scheduler/NodeRunner → PostgreSQL 事实状态与私有 Blob/混合 RAG → EventPublisher 将已持久化状态回显为 SSE 拓扑、文本、Canvas、引用和证据状态。浏览器提交 `runtimeKeys` 会被 Agent API 拒绝，SSE 断开也不会改变数据库任务状态。
 
 ---
 
@@ -279,6 +279,8 @@ cp .env.example .env.local
 | `ANTHROPIC_API_KEY` | 可选 | Claude 系列 |
 | `GOOGLE_API_KEY` | 可选 | Gemini 系列 |
 | `TAVILY_API_KEY` / `SERPER_API_KEY` | 可选 | 学术检索增强 |
+| `EMBEDDING_API_KEY` | 可选 | Library pgvector embedding；未配置时明确降级为 BM25 |
+| `AGENT_DAG_CONCURRENCY` | 可选 | 单进程 ready 节点并发上限，默认 3 |
 | `GITHUB_ID` / `GITHUB_SECRET` | 可选 | GitHub OAuth 登录 |
 | `AUTH_PASSWORD` | 可选 | 启用应用级登录门禁 |
 | `PROXY_ACCESS_TOKEN` | 可选 | 旧 Proxy Route 的附加鉴权；主 Agent SSE 不依赖浏览器代理 |
@@ -320,7 +322,7 @@ docker compose up --build -d
 本项目以 **测试驱动** 保障核心链路可靠性：
 
 ```bash
-npm test             # Vitest — 66 文件 · 326 项单测
+npm test             # Vitest — 81 文件 · 388 项单测
 npm run lint         # ESLint 静态分析
 npm run typecheck    # TypeScript noEmit
 npm run build        # prisma generate + next build
@@ -328,7 +330,7 @@ npm run build        # prisma generate + next build
 
 | 指标 | 状态 |
 |------|------|
-| **单元测试** | **326 / 326 Passed** ✅ |
+| **单元测试** | **388 / 388 Passed** ✅ |
 | **测试框架** | Vitest 3 |
 | **类型检查** | TypeScript strict · `npm run build` 零错误 |
 | **E2E** | Playwright（`npm run test:e2e`） |
@@ -394,7 +396,7 @@ scholarkernel-web/
 
 ```bash
 npm install && npm run db:push && npm run dev
-npm test    # 326 tests passed
+npm test    # 388 tests passed
 ```
 
 ---

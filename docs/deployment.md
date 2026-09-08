@@ -6,6 +6,7 @@ ScholarKernel runs as a Next.js Node.js application backed by PostgreSQL. Librar
 
 - Node.js 20 or a compatible Vercel runtime.
 - PostgreSQL, with a pooled `DATABASE_URL` for the application and a direct `DIRECT_URL` for Prisma CLI migrations.
+- PostgreSQL must allow the `vector` extension for hybrid Library retrieval. The migration creates it with `CREATE EXTENSION IF NOT EXISTS vector`.
 - Vercel Blob private storage through `BLOB_READ_WRITE_TOKEN`, or both `VERCEL_OIDC_TOKEN` and `BLOB_STORE_ID`.
 - A high-entropy `ENCRYPTION_SECRET` and `AUTH_SECRET`.
 - At least one server-side model credential, or provider keys saved through the authenticated Settings API.
@@ -51,6 +52,18 @@ The build performs `prisma generate`. It does not prove that a target database a
 Do not use `prisma db push` for production. Do not use `prisma migrate resolve` unless the actual database history has been independently reconciled. This repository may encounter databases previously synchronized with `db push`; validate their tables and migration history on a clone before deployment.
 
 The `20260902203000_agent_job_cancelled` migration adds the PostgreSQL enum value `cancelled`. It is additive. See `production-closure-progress.md` for the latest staging evidence; every release must still run `prisma migrate status` and `prisma migrate deploy` against its confirmed target before application smoke tests.
+
+The `20260908173000_hybrid_rag_dag` migration is also additive. It enables pgvector, adds 1536-dimensional chunk embeddings plus parser/chunker/hash metadata, creates a partial HNSW cosine index, and adds DAG fingerprint, attempt, output-snapshot, heartbeat, and lease fields. Confirm on the staging clone that the database role can create the extension before deployment. If the provider manages extensions separately, enable `vector` through its control plane first, then rerun `prisma migrate deploy`; do not edit the recorded migration after partial application.
+
+### Library embedding and incremental backfill
+
+Vector retrieval is opt-in and never borrows a chat-model key. Configure `EMBEDDING_API_KEY`, and optionally `EMBEDDING_BASE_URL` and `EMBEDDING_MODEL`. Without it, indexing and search remain operational in explicit BM25-only degraded mode.
+
+New uploads return after private object storage and database persistence, then use the existing `AgentJob` lifecycle through Next.js `after()`. The route declares a 300-second maximum duration. On a hosting platform that does not support post-response work, run the Node.js deployment target or verify the platform's equivalent lifecycle before enabling uploads; no external queue or worker is assumed.
+
+For an existing document, call authenticated `PATCH /api/documents` with `{ "id": "<document-id>", "reindex": true }`. The response contains `indexJobId`; poll `GET /api/agent/jobs/<indexJobId>`. The job compares file hash, parser version, chunk version, and embedding model version, so unchanged documents are skipped while changed files or models rebuild. Backfill in bounded batches and wait for each batch to finish before starting the next one to stay within database and embedding-provider limits.
+
+Set `AGENT_DAG_CONCURRENCY` to the maximum number of ready nodes executed inside one application process (default 3, minimum 1). This is not a distributed queue. A startup recovery pass marks expired running leases as an explicit error so they can be resumed instead of remaining RUNNING forever.
 
 ### Repeatable staging verification
 
@@ -130,5 +143,7 @@ After start, check `/api/health`, authenticate, and perform the staging smoke te
 2. Revert the application to the previous phase/release commit and redeploy it.
 3. Restore the pre-migration database snapshot only when the reverted application is incompatible with the additive schema. Do not hand-edit Prisma migration history.
 4. Leave additive columns/tables in place when the previous application tolerates them.
+
+For the hybrid RAG/DAG phase, first deploy the previous application revision and leave the new nullable/defaulted columns, indexes, and `vector` extension in place. They are ignored by the previous code. Dropping the HNSW index or extension is not required for application rollback and should be handled only by a separate reviewed migration after confirming that no embeddings remain in use. Existing chunk text and document objects are not deleted by this migration.
 
 PostgreSQL enum values cannot be removed safely with a simple reverse migration. For `cancelled`, revert the application first and leave the unused enum value in place; removing it requires a separately reviewed enum-rebuild migration. Object deletion is never part of database rollback.
