@@ -1,14 +1,15 @@
 import { resolveUserIdFromRequest } from "@/lib/auth-user"
 import {
   cancelAgentJob,
+  claimAgentJobRun,
   completeAgentJob,
   createAgentJob,
   failAgentJob,
   getAgentJobForUser,
-  markAgentJobRunning,
   updateAgentJobCheckpoint,
   updateAgentJobPeerReviewCheckpoint,
   updateAgentJobWorkflowTopology,
+  withAgentJobHeartbeat,
   type AgentJobCheckpoint,
 } from "@/lib/agent-jobs"
 import { runAgentOnServer } from "@/lib/agent-server-run"
@@ -197,6 +198,12 @@ export async function POST(req: Request) {
   const runtimeKeys = await loadRuntimeKeysForUser(userId)
   const origin = new URL(req.url)
   const sourceApiBase = `${origin.protocol}//${origin.host}`
+  const claimed = await claimAgentJobRun(stableJobId)
+  if (!claimed) {
+    const current = await getAgentJobForUser(stableJobId, userId)
+    if (current) return reconnectJobStream({ initial: current, userId, runId })
+    return jsonError("Job not found", 404)
+  }
   const executionSignal = registerActiveAgentRun(stableJobId)
   let transportClosed = false
 
@@ -244,8 +251,7 @@ export async function POST(req: Request) {
 
       void (async () => {
         try {
-          await markAgentJobRunning(stableJobId)
-          const result = await runAgentOnServer(
+          const result = await withAgentJobHeartbeat(stableJobId, () => runAgentOnServer(
             {
               userId,
               userInput: body.userInput!.trim(),
@@ -336,7 +342,7 @@ export async function POST(req: Request) {
               onPlanHttpError: (message) =>
                 emit({ type: "error", code: "PlanHttpError", message, retryable: true }),
             }
-          )
+          ))
           await checkpointWrite
           await completeAgentJob(stableJobId, result)
           if (result.sources.length) emit({ type: "source", sources: result.sources })

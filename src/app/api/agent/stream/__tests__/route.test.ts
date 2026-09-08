@@ -7,6 +7,8 @@ const mocks = vi.hoisted(() => ({
   createAgentJob: vi.fn(),
   getAgentJobForUser: vi.fn(),
   markAgentJobRunning: vi.fn(),
+  claimAgentJobRun: vi.fn(),
+  withAgentJobHeartbeat: vi.fn(async (_id: string, operation: () => Promise<unknown>) => operation()),
   completeAgentJob: vi.fn(),
   failAgentJob: vi.fn(),
   cancelAgentJob: vi.fn(),
@@ -22,6 +24,8 @@ vi.mock("@/lib/agent-jobs", () => ({
   createAgentJob: mocks.createAgentJob,
   getAgentJobForUser: mocks.getAgentJobForUser,
   markAgentJobRunning: mocks.markAgentJobRunning,
+  claimAgentJobRun: mocks.claimAgentJobRun,
+  withAgentJobHeartbeat: mocks.withAgentJobHeartbeat,
   completeAgentJob: mocks.completeAgentJob,
   failAgentJob: mocks.failAgentJob,
   cancelAgentJob: mocks.cancelAgentJob,
@@ -53,6 +57,7 @@ describe("POST /api/agent/stream", () => {
     mocks.loadRuntimeKeysForUser.mockResolvedValue({ deepseek: "server-secret" })
     mocks.createAgentJob.mockResolvedValue({ id: "job-1" })
     mocks.markAgentJobRunning.mockResolvedValue({})
+    mocks.claimAgentJobRun.mockResolvedValue(true)
     mocks.completeAgentJob.mockResolvedValue({})
     mocks.failAgentJob.mockResolvedValue({})
     mocks.cancelAgentJob.mockResolvedValue({})
@@ -114,6 +119,7 @@ describe("POST /api/agent/stream", () => {
     expect(raw).toContain("[redacted]")
     expect(mocks.updateAgentJobCheckpoint).toHaveBeenCalled()
     expect(mocks.completeAgentJob).toHaveBeenCalledAfter(mocks.updateAgentJobCheckpoint)
+    expect(mocks.withAgentJobHeartbeat).toHaveBeenCalled()
   })
 
   it("rejects runtime keys sent by the browser", async () => {

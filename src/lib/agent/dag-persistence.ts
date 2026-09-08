@@ -51,6 +51,17 @@ export async function persistDagNodeStateAtomically(jobId: string, state: DagNod
 /** Marks abandoned in-process work as recoverable error instead of leaving RUNNING forever. */
 export async function recoverExpiredDagLeases(now = new Date()): Promise<number> {
   const result = await prisma.$transaction(async (tx) => {
+    const expiredJobs = await tx.agentJob.findMany({
+      where: { status: "running", leaseExpiresAt: { lt: now } },
+      select: { id: true },
+    })
+    const expiredJobIds = expiredJobs.map((job) => job.id)
+    if (expiredJobIds.length) {
+      await tx.document.updateMany({
+        where: { indexJobId: { in: expiredJobIds }, indexStatus: "pending" },
+        data: { indexStatus: "failed", indexError: "PostResponseIndexLeaseExpired" },
+      })
+    }
     await tx.agentNode.updateMany({
       where: { status: "running", leaseExpiresAt: { lt: now } },
       data: { status: "error", errorCategory: "lease-expired", completedAt: now },

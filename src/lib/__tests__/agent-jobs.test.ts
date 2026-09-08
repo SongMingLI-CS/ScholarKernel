@@ -1,24 +1,29 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
-const { create, findFirst, update } = vi.hoisted(() => ({
+const { create, findFirst, findUnique, update, updateMany } = vi.hoisted(() => ({
   create: vi.fn(),
   findFirst: vi.fn(),
+  findUnique: vi.fn(),
   update: vi.fn(),
+  updateMany: vi.fn(),
 }))
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
-    agentJob: { create, findFirst, update },
+    agentJob: { create, findFirst, findUnique, update, updateMany },
   },
 }))
 
 import {
   cancelAgentJob,
+  claimAgentJobRun,
   completeAgentJob,
   createAgentJob,
   failAgentJob,
   getAgentJobForUser,
   markAgentJobRunning,
+  refreshAgentJobHeartbeat,
+  withAgentJobHeartbeat,
   updateAgentJobCheckpoint,
 } from "@/lib/agent-jobs"
 
@@ -88,11 +93,12 @@ describe("agent-jobs", () => {
   })
 
   it("cancelAgentJob records a distinct cancelled terminal state", async () => {
-    update.mockResolvedValueOnce({ id: "j1", status: "cancelled" })
+    updateMany.mockResolvedValueOnce({ count: 1 })
+    findUnique.mockResolvedValueOnce({ id: "j1", status: "cancelled" })
     const job = await cancelAgentJob("j1", { phase: "running", nodes: [{ id: "n1" }] })
-    expect(job.status).toBe("cancelled")
-    expect(update).toHaveBeenCalledWith({
-      where: { id: "j1" },
+    expect(job?.status).toBe("cancelled")
+    expect(updateMany).toHaveBeenCalledWith({
+      where: { id: "j1", status: { in: ["pending", "running"] } },
       data: expect.objectContaining({
         status: "cancelled",
         checkpoint: { phase: "cancelled", nodes: [{ id: "n1" }] },
@@ -102,5 +108,48 @@ describe("agent-jobs", () => {
         leaseExpiresAt: null,
       }),
     })
+  })
+
+  it("does not overwrite a completed terminal state with a late cancellation", async () => {
+    updateMany.mockResolvedValueOnce({ count: 0 })
+    findUnique.mockResolvedValueOnce({ id: "j1", status: "done" })
+    const job = await cancelAgentJob("j1", { phase: "running" })
+    expect(job?.status).toBe("done")
+    expect(update).not.toHaveBeenCalled()
+  })
+
+  it("claims a pending job exactly once with a conditional database update", async () => {
+    updateMany.mockResolvedValueOnce({ count: 1 }).mockResolvedValueOnce({ count: 0 })
+    await expect(claimAgentJobRun("j1")).resolves.toBe(true)
+    await expect(claimAgentJobRun("j1")).resolves.toBe(false)
+    expect(updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: "j1", status: { in: ["pending", "error"] } },
+      data: expect.objectContaining({ status: "running", heartbeatAt: expect.any(Date), leaseExpiresAt: expect.any(Date) }),
+    }))
+  })
+
+  it("renews a running job lease while long work is in progress", async () => {
+    vi.useFakeTimers()
+    updateMany.mockResolvedValue({ count: 1 })
+    let finish!: () => void
+    const operation = new Promise<void>((resolve) => { finish = resolve })
+    const run = withAgentJobHeartbeat("j1", () => operation, { intervalMs: 1_000, leaseMs: 5_000 })
+    await vi.advanceTimersByTimeAsync(2_100)
+    expect(updateMany).toHaveBeenCalledTimes(2)
+    expect(updateMany).toHaveBeenLastCalledWith(expect.objectContaining({
+      where: { id: "j1", status: "running" },
+    }))
+    finish()
+    await run
+    vi.useRealTimers()
+  })
+
+  it("refreshes only a running job", async () => {
+    updateMany.mockResolvedValueOnce({ count: 1 })
+    await expect(refreshAgentJobHeartbeat("j1", 12_000)).resolves.toBe(true)
+    expect(updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: "j1", status: "running" },
+      data: expect.objectContaining({ heartbeatAt: expect.any(Date), leaseExpiresAt: expect.any(Date) }),
+    }))
   })
 })

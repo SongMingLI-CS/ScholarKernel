@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
 const mocks = vi.hoisted(() => ({
-  findUnique: vi.fn(), upsert: vi.fn(), update: vi.fn(), nodeUpdateMany: vi.fn(), jobUpdateMany: vi.fn(), transaction: vi.fn(),
+  findUnique: vi.fn(), findMany: vi.fn(), upsert: vi.fn(), update: vi.fn(), nodeUpdateMany: vi.fn(), jobUpdateMany: vi.fn(), documentUpdateMany: vi.fn(), transaction: vi.fn(),
 }))
 
 vi.mock("@/lib/prisma", () => ({
@@ -16,8 +16,9 @@ describe("DAG transactional persistence", () => {
   beforeEach(() => {
     vi.clearAllMocks()
     const tx = {
-      agentJob: { findUnique: mocks.findUnique, update: mocks.update, updateMany: mocks.jobUpdateMany },
+      agentJob: { findUnique: mocks.findUnique, findMany: mocks.findMany, update: mocks.update, updateMany: mocks.jobUpdateMany },
       agentNode: { upsert: mocks.upsert, updateMany: mocks.nodeUpdateMany },
+      document: { updateMany: mocks.documentUpdateMany },
     }
     mocks.transaction.mockImplementation(async (fn) => fn(tx))
     mocks.findUnique.mockResolvedValue({ checkpoint: { phase: "running" } })
@@ -25,6 +26,8 @@ describe("DAG transactional persistence", () => {
     mocks.update.mockResolvedValue({})
     mocks.nodeUpdateMany.mockResolvedValue({ count: 1 })
     mocks.jobUpdateMany.mockResolvedValue({ count: 1 })
+    mocks.documentUpdateMany.mockResolvedValue({ count: 1 })
+    mocks.findMany.mockResolvedValue([{ id: "expired-index-job" }])
   })
 
   it("writes node status/output and job checkpoint inside one transaction", async () => {
@@ -47,5 +50,9 @@ describe("DAG transactional persistence", () => {
     expect(await recoverExpiredDagLeases(new Date("2026-09-08T00:00:00Z"))).toBe(1)
     expect(mocks.nodeUpdateMany).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ errorCategory: "lease-expired" }) }))
     expect(mocks.jobUpdateMany).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: "error", errorMessage: "LeaseExpired" }) }))
+    expect(mocks.documentUpdateMany).toHaveBeenCalledWith({
+      where: { indexJobId: { in: ["expired-index-job"] }, indexStatus: "pending" },
+      data: { indexStatus: "failed", indexError: "PostResponseIndexLeaseExpired" },
+    })
   })
 })

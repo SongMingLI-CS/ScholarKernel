@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 
 const mocks = vi.hoisted(() => ({
   after: vi.fn(), createJob: vi.fn(), markRunning: vi.fn(), completeJob: vi.fn(), failJob: vi.fn(),
+  withHeartbeat: vi.fn(async (_id: string, operation: () => Promise<unknown>) => operation()),
   findDocument: vi.fn(), countChunks: vi.fn(), updateDocument: vi.fn(), readObject: vi.fn(), index: vi.fn(),
 }))
 
@@ -9,6 +10,7 @@ vi.mock("next/server", () => ({ after: mocks.after }))
 vi.mock("@/lib/agent-jobs", () => ({
   createAgentJob: mocks.createJob, markAgentJobRunning: mocks.markRunning,
   completeAgentJob: mocks.completeJob, failAgentJob: mocks.failJob,
+  withAgentJobHeartbeat: mocks.withHeartbeat,
 }))
 vi.mock("@/lib/prisma", () => ({ prisma: {
   document: { findFirst: mocks.findDocument, update: mocks.updateDocument },
@@ -49,6 +51,7 @@ describe("Library indexing on the existing Job lifecycle", () => {
       indexStatus: "ready", ...fingerprint,
     })
     await runLibraryIndexJob("job-1", "user-1", "doc-1")
+    expect(mocks.withHeartbeat).toHaveBeenCalledWith("job-1", expect.any(Function), expect.objectContaining({ leaseMs: expect.any(Number) }))
     expect(mocks.index).not.toHaveBeenCalled()
     expect(mocks.completeJob).toHaveBeenCalledWith("job-1", expect.objectContaining({ final: "Library index already current" }))
   })

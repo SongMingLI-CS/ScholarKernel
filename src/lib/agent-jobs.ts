@@ -33,8 +33,8 @@ export type AgentJobCheckpoint = {
 }
 
 export async function cancelAgentJob(id: string, checkpoint?: AgentJobCheckpoint) {
-  return prisma.agentJob.update({
-    where: { id },
+  await prisma.agentJob.updateMany({
+    where: { id, status: { in: ["pending", "running"] } },
     data: {
       status: "cancelled",
       checkpoint: {
@@ -47,6 +47,7 @@ export async function cancelAgentJob(id: string, checkpoint?: AgentJobCheckpoint
       leaseExpiresAt: null,
     },
   })
+  return prisma.agentJob.findUnique({ where: { id } })
 }
 
 export type AgentJobProvider = ActiveProviderConfig | { kind: "library-index"; documentId: string }
@@ -79,6 +80,51 @@ export async function markAgentJobRunning(id: string) {
     where: { id },
     data: { status: "running", heartbeatAt: now, leaseExpiresAt: new Date(now.getTime() + 60_000) },
   })
+}
+
+export async function claimAgentJobRun(id: string, leaseMs = 90_000): Promise<boolean> {
+  const now = new Date()
+  const claimed = await prisma.agentJob.updateMany({
+    where: { id, status: { in: ["pending", "error"] } },
+    data: {
+      status: "running",
+      heartbeatAt: now,
+      leaseExpiresAt: new Date(now.getTime() + Math.max(leaseMs, 10_000)),
+      error: null,
+      errorMessage: null,
+      errorStack: null,
+    },
+  })
+  return claimed.count === 1
+}
+
+export async function refreshAgentJobHeartbeat(id: string, leaseMs = 90_000): Promise<boolean> {
+  const now = new Date()
+  const refreshed = await prisma.agentJob.updateMany({
+    where: { id, status: "running" },
+    data: { heartbeatAt: now, leaseExpiresAt: new Date(now.getTime() + Math.max(leaseMs, 10_000)) },
+  })
+  return refreshed.count === 1
+}
+
+export async function withAgentJobHeartbeat<T>(
+  id: string,
+  operation: () => Promise<T>,
+  options: { intervalMs?: number; leaseMs?: number } = {}
+): Promise<T> {
+  const intervalMs = Math.max(1_000, options.intervalMs ?? 30_000)
+  const leaseMs = Math.max(intervalMs * 2, options.leaseMs ?? 90_000)
+  const timer = setInterval(() => {
+    void refreshAgentJobHeartbeat(id, leaseMs).catch((error) => {
+      console.error("[agent-job heartbeat]", id, error)
+    })
+  }, intervalMs)
+  timer.unref?.()
+  try {
+    return await operation()
+  } finally {
+    clearInterval(timer)
+  }
 }
 
 export async function updateAgentJobCheckpoint(id: string, checkpoint: AgentJobCheckpoint) {
