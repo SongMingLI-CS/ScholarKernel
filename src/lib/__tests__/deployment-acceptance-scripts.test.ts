@@ -109,6 +109,21 @@ console.log("ok")
     expect(migration).toMatch(/CREATE UNIQUE INDEX IF NOT EXISTS "CanvasDocument_shareToken_key"/)
     expect(migration).not.toMatch(/DROP\s+(?:TABLE|COLUMN)|TRUNCATE|DELETE\s+FROM|UPDATE\s+/i)
   })
+
+  it("provides a guarded pgvector and compatibility verifier", () => {
+    const plan = run("verify-staging-rag-dag.mjs")
+    expect(plan.status).toBe(0)
+    expect(plan.stdout).toMatch(/vector[\s\S]*HNSW[\s\S]*legacy/i)
+    const refused = run("verify-staging-rag-dag.mjs", ["--run"])
+    expect(refused.status).not.toBe(0)
+    expect(refused.stderr).toContain("STAGING_DATABASE_URL")
+    const sql = readFileSync(path.join(repoRoot, "scripts/sql/verify-hybrid-rag-dag.sql"), "utf8")
+    expect(sql).toMatch(/extname = 'vector'/)
+    expect(sql).toMatch(/indexdef ILIKE '%USING hnsw%'/)
+    expect(sql).toMatch(/20260908173000_hybrid_rag_dag/)
+    expect(sql).toMatch(/20260908203000_content_aware_chunks/)
+    expect(sql).not.toMatch(/\b(?:DELETE|TRUNCATE|DROP)\b/i)
+  })
 })
 
 describe("Blob lifecycle smoke test", () => {
@@ -122,6 +137,27 @@ describe("Blob lifecycle smoke test", () => {
     const result = run("smoke-staging-blob.mjs", ["--run"])
     expect(result.status).not.toBe(0)
     expect(result.stderr).toContain("STAGING_BASE_URL")
+  })
+})
+
+describe("full staging release smoke test", () => {
+  it("defaults to a non-network PDF, async index, reindex, disconnect, reconnect, restart, cancel plan", () => {
+    const result = run("smoke-staging-release.mjs")
+    expect(result.status).toBe(0)
+    expect(result.stdout).toMatch(/large PDF[\s\S]*async index[\s\S]*reindex[\s\S]*disconnect[\s\S]*reconnect[\s\S]*restart[\s\S]*cancel/i)
+  })
+
+  it("refuses release smoke execution without an explicitly confirmed target", () => {
+    const result = run("smoke-staging-release.mjs", ["--run"])
+    expect(result.status).not.toBe(0)
+    expect(result.stderr).toContain("STAGING_BASE_URL")
+  })
+
+  it("requires a real restart trigger and verifies uploaded and deleted bytes", () => {
+    const script = readFileSync(path.join(repoRoot, "scripts/smoke-staging-release.mjs"), "utf8")
+    expect(script).toContain("STAGING_RESTART_WEBHOOK_URL")
+    expect(script).toMatch(/Buffer\.from\(await [\s\S]*arrayBuffer\(\)\)[\s\S]*\.equals\(pdf\)/)
+    expect(script).toMatch(/404, "document file after delete"/)
   })
 })
 

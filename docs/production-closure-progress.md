@@ -131,7 +131,7 @@ Last updated: 2026-09-03
 - Added a client-bundle credential scanner that reports only finding categories and asset filenames, never matched values.
 - Added a copy-and-verify-only migration procedure for legacy `file://` documents. It never deletes, moves, truncates, or overwrites original files; cleanup requires a separate approval and audit trail.
 - Corrected stale Models, Setup, sidebar, and chat copy so it describes authenticated server SSE, encrypted server-side credential storage, and status-only browser responses.
-- `.env.example` documents all 39 application, provider, storage, parser, reranking, staging-verification, and test variables expected by the current code and acceptance tools (39/39, none missing).
+- `.env.example` documents the application, provider, storage, parser, reranking, staging-verification, restart-smoke, and test variables expected by the current code and acceptance tools.
 
 ### Local validation complete
 

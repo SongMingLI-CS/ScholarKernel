@@ -84,11 +84,14 @@ npm run verify:staging:migration -- --status
 # Review backup, target identity, migration SQL, and status output before continuing.
 npm run verify:staging:migration -- --apply
 psql "$STAGING_DATABASE_URL" -f scripts/sql/verify-cancelled-migration.sql
+npm run verify:staging:rag-dag -- --run
 ```
 
 Both `--status` and `--apply` run `prisma validate` and `prisma migrate status`; `--apply` additionally runs the idempotent `prisma migrate deploy` followed by another status check. Capture pre/post counts for existing `pending`, `running`, `done`, and `error` jobs. The read-only SQL verifies the migration record, enum label/order, and post-migration job counts.
 
 The enum SQL is compatible with existing values because it only runs `ALTER TYPE "AgentJobStatus" ADD VALUE IF NOT EXISTS 'cancelled'`. It does not rewrite rows, tables, or existing enum labels, and a repeat execution is a no-op. Do not attempt to remove the value during rollback; deploy the earlier application first and leave the additive label in place.
+
+`verify:staging:rag-dag` is a separate, read-only post-migration gate. It asserts the `vector` extension, the 1536-dimensional vector column, the partial HNSW cosine index, both hybrid/content-aware migration records, and compatibility reads over legacy nullable Document, chunk, checkpoint, and node fields. With no `--run` argument it prints a plan and makes no connection.
 
 ## Object storage verification
 
@@ -111,6 +114,22 @@ npm run smoke:staging:blob -- --run
 ```
 
 The staging application—not this client script—must already have `BLOB_READ_WRITE_TOKEN`, or the Vercel OIDC pair `VERCEL_OIDC_TOKEN` and `BLOB_STORE_ID`. The script never prints those values or the auth cookie.
+
+For the complete release smoke, configure an Agent provider and a protected staging-only restart webhook. The webhook must return success only after accepting a restart of the selected staging deployment; it must not target production. The runner independently verifies its HTTPS hostname and sends its token only in the Authorization header.
+
+```bash
+npm run smoke:staging:release
+
+export STAGING_AGENT_PROVIDER_ID='openai'
+export STAGING_AGENT_MODEL='gpt-4.1-mini'
+export STAGING_RESTART_WEBHOOK_URL='https://deploy.example.com/hooks/restart-staging'
+export STAGING_EXPECTED_RESTART_HOST='deploy.example.com'
+export STAGING_RESTART_WEBHOOK_TOKEN='...'
+
+npm run smoke:staging:release -- --run
+```
+
+This generates a PDF of at least 1.5 MB; checks bounded upload response time and byte-identical download; waits for asynchronous indexing; validates marker retrieval and unchanged-file reindex; exercises SSE disconnect, completed-result refresh/replay, a real process restart with database recovery, and explicit cancellation; then deletes the exact test document and confirms both its API file and Library row are gone. Cleanup is attempted after intermediate failures. A dry plan is always safe and performs no network request.
 
 The legacy migration procedure is documented separately in [`library-file-migration.md`](library-file-migration.md). It permits copying, byte/digest verification, indexing verification, and a conditional database-reference switch. Original files are never deleted by that procedure.
 
