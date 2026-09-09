@@ -202,4 +202,27 @@ describe("POST /api/agent/stream", () => {
     expect(events.at(-1)).toMatchObject({ type: "done", final: "persisted after reconnect" })
     expect(mocks.runAgentOnServer).not.toHaveBeenCalled()
   })
+
+  it("atomically reclaims an expired running job after a process restart", async () => {
+    mocks.getAgentJobForUser.mockResolvedValueOnce({
+      id: "job-expired",
+      status: "running",
+      result: null,
+      leaseExpiresAt: new Date(Date.now() - 1_000),
+      checkpoint: {
+        phase: "running",
+        nodes: [{ id: "n1", type: "reasoning", provider: "cloud", status: "running", dependsOn: [] }],
+      },
+    })
+    const res = await POST(request({
+      jobId: "job-expired", userInput: "resume", provider: { providerId: "openai", model: "gpt-5" },
+    }))
+    const events = createAgentSseParser().push(await res.text())
+    expect(events.at(-1)).toMatchObject({ type: "done", final: "hello" })
+    expect(mocks.claimAgentJobRun).toHaveBeenCalledWith("job-expired")
+    expect(mocks.runAgentOnServer).toHaveBeenCalledWith(
+      expect.objectContaining({ jobId: "job-expired", resumeNodes: expect.any(Array) }),
+      expect.any(Object)
+    )
+  })
 })

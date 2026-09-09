@@ -118,12 +118,18 @@ describe("agent-jobs", () => {
     expect(update).not.toHaveBeenCalled()
   })
 
-  it("claims a pending job exactly once with a conditional database update", async () => {
+  it("claims pending, failed, or expired-running work exactly once with a conditional database update", async () => {
     updateMany.mockResolvedValueOnce({ count: 1 }).mockResolvedValueOnce({ count: 0 })
     await expect(claimAgentJobRun("j1")).resolves.toBe(true)
     await expect(claimAgentJobRun("j1")).resolves.toBe(false)
     expect(updateMany).toHaveBeenCalledWith(expect.objectContaining({
-      where: { id: "j1", status: { in: ["pending", "error"] } },
+      where: {
+        id: "j1",
+        OR: [
+          { status: { in: ["pending", "error"] } },
+          { status: "running", leaseExpiresAt: { lt: expect.any(Date) } },
+        ],
+      },
       data: expect.objectContaining({ status: "running", heartbeatAt: expect.any(Date), leaseExpiresAt: expect.any(Date) }),
     }))
   })

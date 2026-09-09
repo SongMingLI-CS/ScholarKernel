@@ -85,7 +85,13 @@ export async function markAgentJobRunning(id: string) {
 export async function claimAgentJobRun(id: string, leaseMs = 90_000): Promise<boolean> {
   const now = new Date()
   const claimed = await prisma.agentJob.updateMany({
-    where: { id, status: { in: ["pending", "error"] } },
+    where: {
+      id,
+      OR: [
+        { status: { in: ["pending", "error"] } },
+        { status: "running", leaseExpiresAt: { lt: now } },
+      ],
+    },
     data: {
       status: "running",
       heartbeatAt: now,

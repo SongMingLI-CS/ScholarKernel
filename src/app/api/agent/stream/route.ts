@@ -192,7 +192,13 @@ export async function POST(req: Request) {
     ].join("")
     return new Response(replay, { headers: { "Content-Type": "text/event-stream; charset=utf-8", "Cache-Control": "no-cache, no-transform" } })
   }
-  if (existingJob && !body.targetNodeId?.trim()) {
+  const existingLeaseExpired = existingJob?.status === "running"
+    && existingJob.leaseExpiresAt instanceof Date
+    && existingJob.leaseExpiresAt.getTime() < Date.now()
+  if (existingJob && !body.targetNodeId?.trim() && (
+    (existingJob.status === "running" && !existingLeaseExpired)
+    || existingJob.status === "cancelled"
+  )) {
     return reconnectJobStream({ initial: existingJob, userId, runId })
   }
   const runtimeKeys = await loadRuntimeKeysForUser(userId)
