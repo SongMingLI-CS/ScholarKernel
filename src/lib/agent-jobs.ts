@@ -160,8 +160,8 @@ export async function completeAgentJob(
   id: string,
   result: { final: string; nodes: unknown[]; sources: unknown[] }
 ) {
-  return prisma.agentJob.update({
-    where: { id },
+  await prisma.agentJob.updateMany({
+    where: { id, status: { in: ["pending", "running"] } },
     data: {
       status: "done",
       result: result as Prisma.InputJsonValue,
@@ -169,6 +169,7 @@ export async function completeAgentJob(
       leaseExpiresAt: null,
     },
   })
+  return prisma.agentJob.findUnique({ where: { id } })
 }
 
 export async function failAgentJob(

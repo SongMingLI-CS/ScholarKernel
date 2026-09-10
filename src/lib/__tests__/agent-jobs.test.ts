@@ -58,9 +58,22 @@ describe("agent-jobs", () => {
   })
 
   it("completeAgentJob sets done status", async () => {
-    update.mockResolvedValueOnce({ id: "j1", status: "done" })
+    updateMany.mockResolvedValueOnce({ count: 1 })
+    findUnique.mockResolvedValueOnce({ id: "j1", status: "done" })
     const job = await completeAgentJob("j1", { final: "ok", nodes: [], sources: [] })
-    expect(job.status).toBe("done")
+    expect(job?.status).toBe("done")
+    expect(updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: "j1", status: { in: ["pending", "running"] } },
+      data: expect.objectContaining({ status: "done" }),
+    }))
+  })
+
+  it("does not overwrite cancellation with a late completion", async () => {
+    updateMany.mockResolvedValueOnce({ count: 0 })
+    findUnique.mockResolvedValueOnce({ id: "j1", status: "cancelled" })
+    const job = await completeAgentJob("j1", { final: "late", nodes: [], sources: [] })
+    expect(job?.status).toBe("cancelled")
+    expect(update).not.toHaveBeenCalled()
   })
 
   it("failAgentJob stores error message and stack", async () => {
