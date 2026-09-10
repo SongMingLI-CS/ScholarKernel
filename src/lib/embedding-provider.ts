@@ -113,15 +113,33 @@ export class OpenAICompatibleEmbeddingProvider implements EmbeddingProvider {
   }
 }
 
-export function configuredEmbeddingProvider(): EmbeddingProvider | null {
-  // Embeddings are opt-in to avoid silently spending a chat-provider key.
-  const apiKey = process.env.EMBEDDING_API_KEY?.trim()
+function isVercelAiGatewayBaseUrl(value: string): boolean {
+  try {
+    const url = new URL(value)
+    return url.protocol === "https:" && url.hostname === "ai-gateway.vercel.sh" && /^\/v1\/?$/.test(url.pathname)
+  } catch {
+    return false
+  }
+}
+
+export function configuredEmbeddingProvider(
+  env: Record<string, string | undefined> = process.env
+): EmbeddingProvider | null {
+  // Embeddings remain opt-in: OIDC is considered only for an explicitly selected
+  // Vercel AI Gateway endpoint, never merely because Vercel injected a token.
+  const baseUrl = env.EMBEDDING_BASE_URL?.trim() || "https://api.openai.com/v1"
+  const usesVercelGateway = isVercelAiGatewayBaseUrl(baseUrl)
+  const apiKey = env.EMBEDDING_API_KEY?.trim() || (
+    usesVercelGateway
+      ? env.AI_GATEWAY_API_KEY?.trim() || env.VERCEL_OIDC_TOKEN?.trim()
+      : undefined
+  )
   if (!apiKey) return null
   return new OpenAICompatibleEmbeddingProvider(
-    process.env.EMBEDDING_MODEL?.trim() || "text-embedding-3-small",
+    env.EMBEDDING_MODEL?.trim() || (usesVercelGateway ? "openai/text-embedding-3-small" : "text-embedding-3-small"),
     apiKey,
-    process.env.EMBEDDING_BASE_URL?.trim() || "https://api.openai.com/v1",
-    embeddingRuntimeConfig()
+    baseUrl,
+    embeddingRuntimeConfig(env)
   )
 }
 

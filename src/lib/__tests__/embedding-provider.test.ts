@@ -1,6 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
 
-import { DeterministicFakeEmbeddingProvider, embeddingRuntimeConfig, OpenAICompatibleEmbeddingProvider } from "@/lib/embedding-provider"
+import {
+  configuredEmbeddingProvider,
+  DeterministicFakeEmbeddingProvider,
+  embeddingRuntimeConfig,
+  OpenAICompatibleEmbeddingProvider,
+} from "@/lib/embedding-provider"
 
 describe("embedding provider abstraction", () => {
   afterEach(() => vi.restoreAllMocks())
@@ -40,5 +45,31 @@ describe("embedding provider abstraction", () => {
     })
     await expect(provider.embed(["safe text"])).rejects.toThrow("EmbeddingHttpError:400")
     expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it("uses Vercel OIDC only when the AI Gateway base URL is explicitly selected", async () => {
+    const vector = Array.from({ length: 1536 }, () => 0.01)
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      Response.json({ data: [{ index: 0, embedding: vector }] })
+    )
+    const provider = configuredEmbeddingProvider({
+      EMBEDDING_BASE_URL: "https://ai-gateway.vercel.sh/v1",
+      EMBEDDING_MODEL: "openai/text-embedding-3-small",
+      VERCEL_OIDC_TOKEN: "short-lived-oidc",
+      EMBEDDING_REQUESTS_PER_MINUTE: "0",
+    })
+
+    await expect(provider?.embed(["safe text"])).resolves.toEqual([vector])
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://ai-gateway.vercel.sh/v1/embeddings",
+      expect.objectContaining({
+        headers: expect.objectContaining({ authorization: "Bearer short-lived-oidc" }),
+        body: expect.stringContaining('"model":"openai/text-embedding-3-small"'),
+      })
+    )
+  })
+
+  it("does not silently spend through Vercel OIDC without an explicit Gateway opt-in", () => {
+    expect(configuredEmbeddingProvider({ VERCEL_OIDC_TOKEN: "short-lived-oidc" })).toBeNull()
   })
 })
