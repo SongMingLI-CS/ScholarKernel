@@ -25,7 +25,7 @@
 
 ## 部署与回滚
 
-部署前必须在获授权的 staging clone 上确认 pgvector 权限并运行 `prisma migrate deploy`，配置独立的 `EMBEDDING_API_KEY`（或接受显式 BM25 降级），验证 Blob 上传、异步 index Job、混合查询、DAG 取消/恢复和浏览器凭据审计。历史文档既可通过 `PATCH /api/documents` 的 `reindex: true` 单篇回填，也可通过 `/api/documents/reindex` 做有界批处理。
+部署前必须在获授权的 staging clone 上确认 pgvector 权限并运行 `prisma migrate deploy`，配置独立的 `EMBEDDING_API_KEY`（或接受显式 BM25 降级），验证 Blob 上传、异步 index Job、混合查询、DAG 取消/恢复和浏览器凭据审计。历史文档既可通过 `PATCH /api/documents` 的 `reindex: true` 单篇回填，也可通过 `/api/documents/reindex` 做当前用户的有界批处理；管理员需配置 `LIBRARY_MAINTENANCE_ADMIN_USER_IDS`，再用 `/api/admin/documents/reindex` 的游标接口执行全局分批扫描。
 
 2026-09-09 已使用权限为 0600 的本地 staging 配置对受确认的 Neon clone 执行迁移：执行前两条新 migration 待应用，执行后 9/9 migration 全部完成。只读验收确认 Neon 可创建 pgvector 0.8.6、1536 维向量列和部分 HNSW cosine 索引。迁移后的代表性旧数据包括 1 篇旧文档、217 个旧 chunk、3 个旧格式工作流 checkpoint 和 4 个旧节点，兼容查询全部成功。
 

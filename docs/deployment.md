@@ -63,6 +63,8 @@ New uploads return after private object storage and database persistence, then u
 
 For an existing document, call authenticated `PATCH /api/documents` with `{ "id": "<document-id>", "reindex": true }`. The response contains `indexJobId`; poll `GET /api/agent/jobs/<indexJobId>`. The job compares file hash, parser version, chunk version, and embedding model version, so unchanged documents are skipped while changed files or models rebuild. Backfill in bounded batches and wait for each batch to finish before starting the next one to stay within database and embedding-provider limits.
 
+For global historical backfill, explicitly set `LIBRARY_MAINTENANCE_ADMIN_USER_IDS` to a comma-separated allowlist of authenticated user IDs. The endpoint fails closed when this variable is missing. An allowlisted operator can preview with `GET /api/admin/documents/reindex?limit=10&cursor=<document-id>` and schedule with `POST /api/admin/documents/reindex` using `{ "limit": 10, "cursor": "<document-id>" }`. Each response includes `scanned`, `nextCursor`, and `hasMore`; pass the returned cursor to the next request. The database scan is capped at ten times the requested batch (at most 500 rows), each batch schedules at most 50 documents, and jobs run as each document's actual owner. Wait for scheduled jobs to settle before requesting another batch. The existing `/api/documents/reindex` endpoint remains user-scoped.
+
 Set `AGENT_DAG_CONCURRENCY` to the maximum number of ready nodes executed inside one application process (default 3, minimum 1). This is not a distributed queue. A startup recovery pass marks expired running leases as an explicit error so they can be resumed instead of remaining RUNNING forever.
 
 ### Repeatable staging verification
