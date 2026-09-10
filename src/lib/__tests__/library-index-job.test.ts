@@ -1,14 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
 const mocks = vi.hoisted(() => ({
-  after: vi.fn(), createJob: vi.fn(), markRunning: vi.fn(), completeJob: vi.fn(), failJob: vi.fn(),
+  after: vi.fn(), createJob: vi.fn(), claimJob: vi.fn(), completeJob: vi.fn(), failJob: vi.fn(),
   withHeartbeat: vi.fn(async (_id: string, operation: () => Promise<unknown>) => operation()),
   findDocument: vi.fn(), countChunks: vi.fn(), updateDocument: vi.fn(), readObject: vi.fn(), index: vi.fn(),
 }))
 
-vi.mock("next/server", () => ({ after: mocks.after }))
+vi.mock("next/server", async (loadOriginal) => ({ ...(await loadOriginal<typeof import("next/server")>()), after: mocks.after }))
 vi.mock("@/lib/agent-jobs", () => ({
-  createAgentJob: mocks.createJob, markAgentJobRunning: mocks.markRunning,
+  createAgentJob: mocks.createJob, claimAgentJobRun: mocks.claimJob,
   completeAgentJob: mocks.completeJob, failAgentJob: mocks.failJob,
   withAgentJobHeartbeat: mocks.withHeartbeat,
 }))
@@ -31,7 +31,7 @@ describe("Library indexing on the existing Job lifecycle", () => {
     vi.clearAllMocks()
     mocks.createJob.mockResolvedValue({ id: "job-1" })
     mocks.updateDocument.mockResolvedValue({})
-    mocks.markRunning.mockResolvedValue({})
+    mocks.claimJob.mockResolvedValue(true)
     mocks.completeJob.mockResolvedValue({})
     mocks.failJob.mockResolvedValue({})
     mocks.readObject.mockResolvedValue(Buffer.from("same-file"))
@@ -65,5 +65,12 @@ describe("Library indexing on the existing Job lifecycle", () => {
     await runLibraryIndexJob("job-1", "user-1", "doc-1")
     expect(mocks.index).toHaveBeenCalledTimes(1)
     expect(mocks.completeJob).toHaveBeenCalled()
+  })
+
+  it("does no work when another request already owns the index lease", async () => {
+    mocks.claimJob.mockResolvedValueOnce(false)
+    await runLibraryIndexJob("job-1", "user-1", "doc-1")
+    expect(mocks.findDocument).not.toHaveBeenCalled()
+    expect(mocks.index).not.toHaveBeenCalled()
   })
 })

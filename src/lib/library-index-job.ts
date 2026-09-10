@@ -1,13 +1,13 @@
 import { after } from "next/server"
 
-import { completeAgentJob, createAgentJob, failAgentJob, markAgentJobRunning, withAgentJobHeartbeat } from "@/lib/agent-jobs"
+import { claimAgentJobRun, completeAgentJob, createAgentJob, failAgentJob, withAgentJobHeartbeat } from "@/lib/agent-jobs"
 import { configuredEmbeddingProvider } from "@/lib/embedding-provider"
 import { indexLibraryDocumentBuffer, libraryIndexFingerprint, libraryIndexNeedsRebuild } from "@/lib/library-index"
 import { readStoredLibraryObject } from "@/lib/library-storage"
 import { prisma } from "@/lib/prisma"
 
 export async function runLibraryIndexJob(jobId: string, userId: string, documentId: string): Promise<void> {
-  await markAgentJobRunning(jobId)
+  if (!await claimAgentJobRun(jobId, 300_000)) return
   await withAgentJobHeartbeat(jobId, async () => {
     try {
       const document = await prisma.document.findFirst({ where: { id: documentId, userId } })
