@@ -109,6 +109,8 @@ export STAGING_EXPECTED_HOST='staging.example.com'
 export STAGING_CONFIRMATION='scholarkernel-staging'
 # Required only when the staging application enforces authentication:
 export STAGING_AUTH_COOKIE='authjs.session-token=...'
+# Required when Vercel Deployment Protection is enabled:
+export STAGING_PROTECTION_BYPASS='...'
 
 npm run smoke:staging:blob -- --run
 ```

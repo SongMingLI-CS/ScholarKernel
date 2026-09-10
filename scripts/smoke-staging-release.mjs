@@ -1,8 +1,10 @@
 #!/usr/bin/env node
 
 import { randomUUID } from "node:crypto"
+import { deflateSync } from "node:zlib"
 
 const shouldRun = process.argv.includes("--run")
+const libraryOnly = process.argv.includes("--library-only")
 
 function printPlan() {
   console.log([
@@ -43,7 +45,12 @@ function restartTarget() {
 
 function headers(extra = {}) {
   const cookie = process.env.STAGING_AUTH_COOKIE?.trim()
-  return { ...(cookie ? { cookie } : {}), ...extra }
+  const protectionBypass = process.env.STAGING_PROTECTION_BYPASS?.trim()
+  return {
+    ...(cookie ? { cookie } : {}),
+    ...(protectionBypass ? { "x-vercel-protection-bypass": protectionBypass } : {}),
+    ...extra,
+  }
 }
 
 function pdfEscape(value) {
@@ -51,7 +58,7 @@ function pdfEscape(value) {
 }
 
 function generateLargePdf(marker, minimumBytes = 1_500_000) {
-  const pageCount = Math.max(48, Math.ceil(minimumBytes / 24_000))
+  const pageCount = 48
   const objects = new Map()
   const pageRefs = []
   objects.set(1, "<< /Type /Catalog /Pages 2 0 R >>")
@@ -62,23 +69,25 @@ function generateLargePdf(marker, minimumBytes = 1_500_000) {
     pageRefs.push(`${pageId} 0 R`)
     objects.set(pageId, `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents ${contentId} 0 R >>`)
     const visible = `BT /F1 11 Tf 54 730 Td (${pdfEscape(marker)} page ${page + 1}) Tj ET\n`
-    const padding = `${"% ScholarKernel staging PDF padding\n".repeat(760)}`
-    const stream = visible + padding
-    objects.set(contentId, `<< /Length ${Buffer.byteLength(stream)} >>\nstream\n${stream}endstream`)
+    const stream = deflateSync(Buffer.from(visible)).toString("latin1")
+    objects.set(contentId, `<< /Length ${Buffer.byteLength(stream, "latin1")} /Filter /FlateDecode >>\nstream\n${stream}\nendstream`)
   }
   objects.set(2, `<< /Type /Pages /Kids [${pageRefs.join(" ")}] /Count ${pageCount} >>`)
+  const paddingId = 4 + pageCount * 2
+  const padding = "0".repeat(Math.max(1, Math.floor(minimumBytes)))
+  objects.set(paddingId, `<< /Length ${Buffer.byteLength(padding)} >>\nstream\n${padding}\nendstream\n% unreferenced transport padding`)
   let pdf = "%PDF-1.4\n"
   const offsets = [0]
   const maxId = Math.max(...objects.keys())
   for (let id = 1; id <= maxId; id += 1) {
-    offsets[id] = Buffer.byteLength(pdf)
+    offsets[id] = Buffer.byteLength(pdf, "latin1")
     pdf += `${id} 0 obj\n${objects.get(id)}\nendobj\n`
   }
-  const xref = Buffer.byteLength(pdf)
+  const xref = Buffer.byteLength(pdf, "latin1")
   pdf += `xref\n0 ${maxId + 1}\n0000000000 65535 f \n`
   for (let id = 1; id <= maxId; id += 1) pdf += `${String(offsets[id]).padStart(10, "0")} 00000 n \n`
   pdf += `trailer\n<< /Size ${maxId + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`
-  return Buffer.from(pdf)
+  return Buffer.from(pdf, "latin1")
 }
 
 async function expectStatus(response, expected, step) {
@@ -154,10 +163,15 @@ async function triggerRestartAndWait(base, restart) {
 
 async function runSmoke() {
   const base = stagingTarget()
-  const restart = restartTarget()
-  const providerId = process.env.STAGING_AGENT_PROVIDER_ID?.trim()
-  const model = process.env.STAGING_AGENT_MODEL?.trim()
-  if (!providerId || !model) throw new Error("STAGING_AGENT_PROVIDER_ID and STAGING_AGENT_MODEL are required")
+  let restart
+  let providerId
+  let model
+  if (!libraryOnly) {
+    restart = restartTarget()
+    providerId = process.env.STAGING_AGENT_PROVIDER_ID?.trim()
+    model = process.env.STAGING_AGENT_MODEL?.trim()
+    if (!providerId || !model) throw new Error("STAGING_AGENT_PROVIDER_ID and STAGING_AGENT_MODEL are required")
+  }
   const marker = `scholarkernel-release-smoke-${randomUUID()}`
   const pdf = generateLargePdf(marker, Number(process.env.STAGING_PDF_MIN_BYTES || 1_500_000))
   const form = new FormData()
@@ -195,44 +209,46 @@ async function runSmoke() {
     if (secondIndex.status !== "done" || !String(secondIndex.result?.final ?? "").includes("already current")) throw new Error("unchanged PDF reindex was not skipped")
     console.log("reindex unchanged file: passed")
 
-    const agentInput = {
+    if (!libraryOnly) {
+      const agentInput = {
       userInput: process.env.STAGING_AGENT_USER_INPUT?.trim() || "Compare the selected evidence and return a concise staging verification result.",
       provider: { providerId, model }, documentIds: [documentId],
-    }
-    const disconnectedJobId = await startAndDisconnectAgent(base, agentInput)
-    const afterDisconnect = await (await expectStatus(await fetch(new URL(`/api/agent/jobs/${disconnectedJobId}`, base), { headers: headers() }), 200, "disconnect state")).json()
-    if (afterDisconnect.status === "cancelled") throw new Error("SSE disconnect incorrectly cancelled the database job")
-    console.log("disconnect: passed")
-    await reconnectAgent(base, agentInput, disconnectedJobId)
-    await reconnectAgent(base, agentInput, disconnectedJobId)
-    console.log("reconnect and refresh replay: passed")
+      }
+      const disconnectedJobId = await startAndDisconnectAgent(base, agentInput)
+      const afterDisconnect = await (await expectStatus(await fetch(new URL(`/api/agent/jobs/${disconnectedJobId}`, base), { headers: headers() }), 200, "disconnect state")).json()
+      if (afterDisconnect.status === "cancelled") throw new Error("SSE disconnect incorrectly cancelled the database job")
+      console.log("disconnect: passed")
+      await reconnectAgent(base, agentInput, disconnectedJobId)
+      await reconnectAgent(base, agentInput, disconnectedJobId)
+      console.log("reconnect and refresh replay: passed")
 
-    const restartInput = {
-      ...agentInput,
-      userInput: `${agentInput.userInput} Perform a deliberately detailed multi-step analysis so a real process restart occurs while work is active.`,
-    }
-    const restartJobId = await startAndDisconnectAgent(base, restartInput)
-    const beforeRestart = await (await expectStatus(await fetch(new URL(`/api/agent/jobs/${restartJobId}`, base), { headers: headers() }), 200, "restart precondition")).json()
-    if (!new Set(["pending", "running"]).has(beforeRestart.status)) throw new Error(`restart job became ${beforeRestart.status} before the process restart could be triggered`)
-    await triggerRestartAndWait(base, restart)
-    const afterRestartResponse = await expectStatus(await fetch(new URL(`/api/agent/jobs/${restartJobId}`, base), { headers: headers() }), 200, "restart state")
-    const afterRestart = await afterRestartResponse.json()
-    if (afterRestart.status === "running" && afterRestart.leaseExpiresAt) {
-      const leaseWaitMs = Math.max(0, new Date(afterRestart.leaseExpiresAt).getTime() - Date.now() + 1_000)
-      const maximumLeaseWaitMs = Number(process.env.STAGING_RESTART_LEASE_WAIT_MAX_MS || 120_000)
-      if (leaseWaitMs > maximumLeaseWaitMs) throw new Error(`restart lease wait ${leaseWaitMs}ms exceeds the configured safety bound`)
-      if (leaseWaitMs) await new Promise((resolve) => setTimeout(resolve, leaseWaitMs))
-    }
-    await reconnectAgent(base, restartInput, restartJobId)
-    const recovered = await pollJob(base, restartJobId, 30_000)
-    if (recovered.status !== "done") throw new Error(`restart recovery ended as ${recovered.status}`)
-    console.log("real process restart and database recovery: passed")
+      const restartInput = {
+        ...agentInput,
+        userInput: `${agentInput.userInput} Perform a deliberately detailed multi-step analysis so a real process restart occurs while work is active.`,
+      }
+      const restartJobId = await startAndDisconnectAgent(base, restartInput)
+      const beforeRestart = await (await expectStatus(await fetch(new URL(`/api/agent/jobs/${restartJobId}`, base), { headers: headers() }), 200, "restart precondition")).json()
+      if (!new Set(["pending", "running"]).has(beforeRestart.status)) throw new Error(`restart job became ${beforeRestart.status} before the process restart could be triggered`)
+      await triggerRestartAndWait(base, restart)
+      const afterRestartResponse = await expectStatus(await fetch(new URL(`/api/agent/jobs/${restartJobId}`, base), { headers: headers() }), 200, "restart state")
+      const afterRestart = await afterRestartResponse.json()
+      if (afterRestart.status === "running" && afterRestart.leaseExpiresAt) {
+        const leaseWaitMs = Math.max(0, new Date(afterRestart.leaseExpiresAt).getTime() - Date.now() + 1_000)
+        const maximumLeaseWaitMs = Number(process.env.STAGING_RESTART_LEASE_WAIT_MAX_MS || 120_000)
+        if (leaseWaitMs > maximumLeaseWaitMs) throw new Error(`restart lease wait ${leaseWaitMs}ms exceeds the configured safety bound`)
+        if (leaseWaitMs) await new Promise((resolve) => setTimeout(resolve, leaseWaitMs))
+      }
+      await reconnectAgent(base, restartInput, restartJobId)
+      const recovered = await pollJob(base, restartJobId, 30_000)
+      if (recovered.status !== "done") throw new Error(`restart recovery ended as ${recovered.status}`)
+      console.log("real process restart and database recovery: passed")
 
-    const cancelJobId = await startAndDisconnectAgent(base, { ...agentInput, userInput: `${agentInput.userInput} Perform a multi-step analysis before answering.` })
-    await expectStatus(await fetch(new URL(`/api/agent/jobs/${cancelJobId}`, base), { method: "DELETE", headers: headers() }), 200, "cancel")
-    const cancelled = await pollJob(base, cancelJobId, 30_000)
-    if (cancelled.status !== "cancelled") throw new Error(`explicit cancellation ended as ${cancelled.status}`)
-    console.log("cancel: passed")
+      const cancelJobId = await startAndDisconnectAgent(base, { ...agentInput, userInput: `${agentInput.userInput} Perform a multi-step analysis before answering.` })
+      await expectStatus(await fetch(new URL(`/api/agent/jobs/${cancelJobId}`, base), { method: "DELETE", headers: headers() }), 200, "cancel")
+      const cancelled = await pollJob(base, cancelJobId, 30_000)
+      if (cancelled.status !== "cancelled") throw new Error(`explicit cancellation ended as ${cancelled.status}`)
+      console.log("cancel: passed")
+    }
 
     await expectStatus(await fetch(new URL(`/api/documents?id=${encodeURIComponent(documentId)}`, base), { method: "DELETE", headers: headers() }), 200, "document delete")
     await expectStatus(await fetch(new URL(`/api/documents/${documentId}/file`, base), { headers: headers() }), 404, "document file after delete")
@@ -242,7 +258,15 @@ async function runSmoke() {
     console.log("document and private object deletion: passed")
   } finally {
     if (documentId) {
-      await fetch(new URL(`/api/documents?id=${encodeURIComponent(documentId)}`, base), { method: "DELETE", headers: headers() }).catch(() => undefined)
+      let cleaned = false
+      for (let attempt = 1; attempt <= 3 && !cleaned; attempt += 1) {
+        try {
+          const response = await fetch(new URL(`/api/documents?id=${encodeURIComponent(documentId)}`, base), { method: "DELETE", headers: headers() })
+          cleaned = response.ok || response.status === 404
+        } catch {}
+        if (!cleaned && attempt < 3) await new Promise((resolve) => setTimeout(resolve, 2_000))
+      }
+      if (!cleaned) console.error(`cleanup could not delete staging smoke document ${documentId}`)
     }
   }
 }

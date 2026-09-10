@@ -14,7 +14,7 @@
 [![Neon PostgreSQL](https://img.shields.io/badge/Neon-PostgreSQL-00E599?style=for-the-badge&logo=postgresql&logoColor=white)](https://neon.tech/)
 [![Upstash Redis](https://img.shields.io/badge/Upstash-Redis-00E9A3?style=for-the-badge&logo=redis&logoColor=white)](https://upstash.com/)
 [![DeepSeek-R1](https://img.shields.io/badge/DeepSeek--R1-Reasoning-0052FF?style=for-the-badge)](https://www.deepseek.com/)
-[![Tests](https://img.shields.io/badge/Tests-412%20Passed-22C55E?style=for-the-badge&logo=vitest&logoColor=white)](https://vitest.dev/)
+[![Tests](https://img.shields.io/badge/Tests-421%20Passed-22C55E?style=for-the-badge&logo=vitest&logoColor=white)](https://vitest.dev/)
 [![License](https://img.shields.io/badge/License-Private-lightgrey?style=for-the-badge)](https://github.com/SongMingLI-CS/ScholarKernel)
 
 [English](#english-quick-reference) · [快速启动](#-快速启动) · [架构拓扑](#-架构拓扑) · [功能矩阵](#-核心技术护城河-features-matrix) · [Issues](https://github.com/SongMingLI-CS/ScholarKernel/issues)
@@ -186,7 +186,7 @@ model Document {
 | **ORM / DB** | Prisma 7 · Neon PostgreSQL | 关系持久化 · Serverless Pool |
 | **缓存 / 限流** | Upstash Redis · @upstash/ratelimit | Edge 滑动窗口限流 |
 | **认证** | NextAuth.js 5 (JWT · GitHub · Credentials) | 影子用户 · 路由守卫 |
-| **测试** | Vitest 3 · Playwright | 412 单元测试 · E2E |
+| **测试** | Vitest 3 · Playwright | 421 单元测试 · E2E |
 
 ---
 
@@ -322,7 +322,7 @@ docker compose up --build -d
 本项目以 **测试驱动** 保障核心链路可靠性：
 
 ```bash
-npm test             # Vitest — 83 文件 · 412 项单测
+npm test             # Vitest — 85 文件 · 421 项单测
 npm run lint         # ESLint 静态分析
 npm run typecheck    # TypeScript noEmit
 npm run build        # prisma generate + next build
@@ -330,7 +330,7 @@ npm run build        # prisma generate + next build
 
 | 指标 | 状态 |
 |------|------|
-| **单元测试** | **412 / 412 Passed** ✅ |
+| **单元测试** | **421 / 421 Passed** ✅ |
 | **测试框架** | Vitest 3 |
 | **类型检查** | TypeScript strict · `npm run build` 零错误 |
 | **E2E** | Playwright（`npm run test:e2e`） |
@@ -396,7 +396,7 @@ scholarkernel-web/
 
 ```bash
 npm install && npm run db:push && npm run dev
-npm test    # 412 tests passed
+npm test    # 421 tests passed
 ```
 
 ---

@@ -159,6 +159,26 @@ describe("full staging release smoke test", () => {
     expect(script).toMatch(/Buffer\.from\(await [\s\S]*arrayBuffer\(\)\)[\s\S]*\.equals\(pdf\)/)
     expect(script).toMatch(/404, "document file after delete"/)
   })
+
+  it("supports an independently runnable large-PDF Library acceptance mode", () => {
+    const script = readFileSync(path.join(repoRoot, "scripts/smoke-staging-release.mjs"), "utf8")
+    expect(script).toContain("--library-only")
+    expect(script).toMatch(/if \(!libraryOnly\)[\s\S]*STAGING_AGENT_PROVIDER_ID/)
+  })
+
+  it("supports protected Vercel previews without logging the bypass secret", () => {
+    const script = readFileSync(path.join(repoRoot, "scripts/smoke-staging-release.mjs"), "utf8")
+    expect(script).toContain("STAGING_PROTECTION_BYPASS")
+    expect(script).toContain('"x-vercel-protection-bypass"')
+    expect(script).not.toMatch(/console\.(?:log|error)\([^\n]*STAGING_PROTECTION_BYPASS/)
+  })
+
+  it("pads transport size outside page content so the PDF is large without pathological text parsing", () => {
+    const script = readFileSync(path.join(repoRoot, "scripts/smoke-staging-release.mjs"), "utf8")
+    expect(script).toContain("unreferenced transport padding")
+    expect(script).toContain("/Filter /FlateDecode")
+    expect(script).not.toContain('repeat(760)')
+  })
 })
 
 describe("client bundle credential audit", () => {
