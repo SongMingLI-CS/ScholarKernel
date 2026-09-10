@@ -17,13 +17,17 @@ export async function runLibraryIndexJob(jobId: string, userId: string, document
       const provider = configuredEmbeddingProvider()
       const desired = libraryIndexFingerprint(buffer, provider?.modelVersion)
       const chunkCount = await prisma.documentChunk.count({ where: { documentId } })
-      const reusable = chunkCount > 0 && document.indexStatus === "ready" && !libraryIndexNeedsRebuild({
+      const reusable = chunkCount > 0 && !libraryIndexNeedsRebuild({
         fileHash: document.fileHash,
         parserVersion: document.parserVersion,
         chunkVersion: document.chunkVersion,
         embeddingModelVersion: document.embeddingModelVersion,
       }, desired)
       if (reusable) {
+        await prisma.document.update({
+          where: { id: documentId },
+          data: { indexStatus: "ready", indexError: null },
+        })
         await completeAgentJob(jobId, { final: "Library index already current", nodes: [], sources: [] })
         return
       }

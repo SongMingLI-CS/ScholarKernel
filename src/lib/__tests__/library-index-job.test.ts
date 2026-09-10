@@ -48,11 +48,17 @@ describe("Library indexing on the existing Job lifecycle", () => {
     const fingerprint = libraryIndexFingerprint(Buffer.from("same-file"), null)
     mocks.findDocument.mockResolvedValue({
       id: "doc-1", userId: "user-1", title: "paper.txt", fileType: "text/plain", fileUrl: "object://paper",
-      indexStatus: "ready", ...fingerprint,
+      // Scheduling a reindex intentionally exposes pending in the UI before the
+      // worker reads the existing fingerprint.
+      indexStatus: "pending", ...fingerprint,
     })
     await runLibraryIndexJob("job-1", "user-1", "doc-1")
     expect(mocks.withHeartbeat).toHaveBeenCalledWith("job-1", expect.any(Function), expect.objectContaining({ leaseMs: expect.any(Number) }))
     expect(mocks.index).not.toHaveBeenCalled()
+    expect(mocks.updateDocument).toHaveBeenCalledWith({
+      where: { id: "doc-1" },
+      data: { indexStatus: "ready", indexError: null },
+    })
     expect(mocks.completeJob).toHaveBeenCalledWith("job-1", expect.objectContaining({ final: "Library index already current" }))
   })
 
