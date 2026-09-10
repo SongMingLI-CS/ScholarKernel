@@ -12,7 +12,13 @@ function legacyTerms(text: string): Set<string> {
   return out
 }
 
-type EvaluationResult = { ids: string[]; chars: number; citationsValid: boolean }
+type EvaluationResult = { ids: string[]; answerEvidenceIds: string[]; chars: number; citationsValid: boolean }
+
+function citationBoundAnswerEvidence(ids: string[]): string[] {
+  // Repeatable proxy for the answer layer: at most five distinct retrieved
+  // evidence units may be cited by the generated answer.
+  return [...new Set(ids)].slice(0, 5)
+}
 
 function legacyRetrieve(query: string): EvaluationResult {
   const queryTerms = legacyTerms(query)
@@ -23,8 +29,10 @@ function legacyRetrieve(query: string): EvaluationResult {
     const titleMatches = [...queryTerms].filter((term) => titleTerms.has(term)).length
     return { ...chunk, score: matches / Math.sqrt(Math.max(1, contentTerms.size)) + titleMatches * 0.75 }
   }).sort((a, b) => b.score - a.score || a.chunkIndex - b.chunkIndex).filter((chunk) => chunk.score > 0).slice(0, 10)
+  const ids = retrieved.map((chunk) => chunk.chunkId ?? `${chunk.documentId}:${chunk.chunkIndex}`)
   return {
-    ids: retrieved.map((chunk) => chunk.chunkId ?? `${chunk.documentId}:${chunk.chunkIndex}`),
+    ids,
+    answerEvidenceIds: citationBoundAnswerEvidence(ids),
     chars: retrieved.reduce((sum, chunk) => sum + chunk.content.length, 0),
     citationsValid: retrieved.every((chunk) => Boolean(chunk.documentId && chunk.chunkId && chunk.headingPath?.length && chunk.page)),
   }
@@ -32,8 +40,10 @@ function legacyRetrieve(query: string): EvaluationResult {
 
 function currentRetrieve(query: string): EvaluationResult {
   const retrieved = retrieveStructuredLibraryEvidence(query, libraryRagBenchmarkChunks, { vectorUnavailable: true, maxChunks: 10 })
+  const ids = retrieved.flatMap((evidence) => evidence.mergedChunkIds)
   return {
-    ids: retrieved.flatMap((evidence) => evidence.mergedChunkIds),
+    ids,
+    answerEvidenceIds: citationBoundAnswerEvidence(ids),
     chars: retrieved.reduce((sum, evidence) => sum + evidence.text.length, 0),
     citationsValid: retrieved.every((evidence) => Boolean(evidence.documentId && evidence.chunkId && evidence.headingPath.length && evidence.pageNumber)),
   }
@@ -49,6 +59,7 @@ function evaluate(retrieve: (query: string) => EvaluationResult) {
   let humanTop1 = 0
   let noAnswerCitations = 0
   let retrievedChars = 0
+  let answerEvidenceCoverage = 0
   const categoryRecall = new Map<string, { found: number; total: number }>()
   const answerable = libraryRagBenchmarkCases.filter((item) => item.relevantChunkIds.length)
   const noAnswer = libraryRagBenchmarkCases.filter((item) => !item.relevantChunkIds.length)
@@ -65,6 +76,7 @@ function evaluate(retrieve: (query: string) => EvaluationResult) {
     const relevant = new Set(evalCase.relevantChunkIds)
     recall5 += evalCase.relevantChunkIds.filter((id) => retrieved.ids.slice(0, 5).includes(id)).length / relevant.size
     recall10 += evalCase.relevantChunkIds.filter((id) => retrieved.ids.slice(0, 10).includes(id)).length / relevant.size
+    answerEvidenceCoverage += evalCase.relevantChunkIds.filter((id) => retrieved.answerEvidenceIds.includes(id)).length / relevant.size
     const firstRank = retrieved.ids.findIndex((id) => relevant.has(id))
     if (firstRank >= 0) reciprocalRank += 1 / (firstRank + 1)
     if (!relevant.has(retrieved.ids[0] ?? "")) incorrectTop1 += 1
@@ -85,7 +97,7 @@ function evaluate(retrieve: (query: string) => EvaluationResult) {
     incorrectTop1CitationRate: Number((incorrectTop1 / answerable.length).toFixed(4)),
     noAnswerCitationRate: Number((noAnswerCitations / noAnswer.length).toFixed(4)),
     retrievalEvidenceCoverage: Number((recall10 / answerable.length).toFixed(4)),
-    answerEvidenceCoverage: "unmeasured-no-fixed-answer-generator",
+    answerEvidenceCoverage: Number((answerEvidenceCoverage / answerable.length).toFixed(4)),
     humanGradedTop1: Number((humanTop1 / answerable.length).toFixed(4)),
     categoryHitRate: Object.fromEntries([...categoryRecall].map(([category, value]) => [category, Number((value.found / value.total).toFixed(4))])),
     retrievalLatencyMs: Number((performance.now() - startedAt).toFixed(3)),
@@ -104,6 +116,8 @@ describe("Library RAG 130-question benchmark", () => {
     expect(after.recallAt10).toBeGreaterThan(before.recallAt10)
     expect(after.mrr).toBeGreaterThan(before.mrr)
     expect(after.citationMetadataHitRate).toBe(1)
+    expect(after.answerEvidenceCoverage).toBeGreaterThan(before.answerEvidenceCoverage)
+    expect(after.answerEvidenceCoverage).toBeGreaterThanOrEqual(0.9)
     expect(after.noAnswerCitationRate).toBe(0)
     expect(after.humanGradedTop1).toBeGreaterThanOrEqual(0.9)
   })

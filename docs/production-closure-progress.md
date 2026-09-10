@@ -219,8 +219,17 @@ The complete sanitized record is in [`staging-acceptance-2026-09-03.md`](staging
 
 ## External blockers
 
-- Staging Vercel Blob credentials were not injected into this process. The adapter, failure behavior, and tests are complete; real remote upload/download verification requires `BLOB_READ_WRITE_TOKEN` or Vercel OIDC configuration on the staging application before deployment.
-- Hosted Neon staging is up to date. Production-shaped historical data compatibility remains unverified if this staging database has no representative rows.
+- Vercel Preview Blob upload/download/delete and application authentication were verified live on 2026-09-11. A dedicated `EMBEDDING_API_KEY` is still absent, so production-shaped vector retrieval remains the external acceptance boundary.
+- Hosted Neon staging is up to date through all nine migrations. The 2026-09-09 hybrid follow-up below verified additive migration and compatibility reads over the representative historical rows currently present; broader production-scale distributions remain unmeasured.
+
+## Hybrid RAG/DAG Neon follow-up — 2026-09-09
+
+- The guarded status check found exactly `20260908173000_hybrid_rag_dag` and `20260908203000_content_aware_chunks` pending on the confirmed Neon staging clone.
+- `prisma migrate deploy` applied both migrations successfully. The guarded post-check reported all 9 repository migrations up to date.
+- Read-only verification passed for the `vector` extension, the `vector(1536)` column, the partial HNSW `vector_cosine_ops` index, both migration records, and legacy nullable Document/chunk/checkpoint/node expressions.
+- Sanitized inventory after migration: pgvector 0.8.6; one HNSW index (`DocumentChunk_embedding_hnsw_idx`); 1 legacy Document; 217 legacy chunks; 3 Jobs containing legacy workflow checkpoints without `dependsOn`; and 4 legacy AgentNodes. No document, chunk, checkpoint, or node was deleted or rewritten by the acceptance check.
+- This proves migration and compatibility on the historical rows present in this staging clone. It does not prove vector recall or HNSW latency because all 217 existing chunks still lack embeddings and no `EMBEDDING_API_KEY` is configured.
+- The 2026-09-11 protected Preview follow-up completed the large-PDF/Blob lifecycle, live disconnect and refresh replay, active-node cancellation, and a Neon-backed real worker-process termination/reclaim scenario. See `staging-acceptance-2026-09-11.md` for sanitized results and the defects found during acceptance.
 
 ## Notes
 

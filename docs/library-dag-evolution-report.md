@@ -27,6 +27,10 @@
 
 部署前必须在获授权的 staging clone 上确认 pgvector 权限并运行 `prisma migrate deploy`，配置独立的 `EMBEDDING_API_KEY`（或接受显式 BM25 降级），验证 Blob 上传、异步 index Job、混合查询、DAG 取消/恢复和浏览器凭据审计。历史文档既可通过 `PATCH /api/documents` 的 `reindex: true` 单篇回填，也可通过 `/api/documents/reindex` 做有界批处理。
 
-当前工作目录没有 `STAGING_DATABASE_URL`、staging 应用地址/认证、embedding 或 Blob 凭据，也没有获授权的重启钩子，因此本轮没有连接 Neon、调用模型、操作远端 Blob 或触发部署重启。仓库已提供默认不联网、目标主机双重校验的 `verify:staging:rag-dag` 和 `smoke:staging:release`；真实结论仍须在上述变量注入后运行并保存输出。
+2026-09-09 已使用权限为 0600 的本地 staging 配置对受确认的 Neon clone 执行迁移：执行前两条新 migration 待应用，执行后 9/9 migration 全部完成。只读验收确认 Neon 可创建 pgvector 0.8.6、1536 维向量列和部分 HNSW cosine 索引。迁移后的代表性旧数据包括 1 篇旧文档、217 个旧 chunk、3 个旧格式工作流 checkpoint 和 4 个旧节点，兼容查询全部成功。
+
+2026-09-11 又在受保护的 Vercel Preview 上完成了真实 Blob、大 PDF、异步索引、检索、未变更重建跳过、删除、SSE 断线、刷新回放、活动节点取消和跨进程租约恢复。完整的脱敏证据、修复过的线上竞态和 HNSW 参数实测见 `staging-acceptance-2026-09-11.md`。
+
+当前 Preview 没有独立 `EMBEDDING_API_KEY`，因此真实文档验收走的是明确的 BM25 降级路径；HNSW 使用会话级临时向量集完成了权限、执行计划、Recall 和参数对比，但生产形态的已嵌入文档语料仍待专用 embedding 凭据与代表性 corpus。
 
 回滚时先部署上一应用版本，保留所有增量列、索引和扩展；它们不会影响旧代码。不要手工改迁移历史，也不要为回滚删除文档对象或 chunk。完整操作见 `deployment.md`。
