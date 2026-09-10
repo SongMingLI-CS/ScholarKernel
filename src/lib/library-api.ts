@@ -39,10 +39,15 @@ export async function deleteLibraryDocument(id: string): Promise<void> {
   })
 }
 
-export async function fetchLibraryContext(documentIds: string[]): Promise<{ context: string; documentIds: string[] }> {
-  return apiFetch<{ context: string; documentIds: string[] }>("/api/documents/context", {
+export async function fetchLibraryContext(documentIds: string[], query = ""): Promise<{
+  context: string
+  documentIds: string[]
+  retrievalMode: "hybrid" | "lexical-degraded"
+  vectorEvidenceCount: number
+}> {
+  return apiFetch("/api/documents/context", {
     method: "POST",
-    body: JSON.stringify({ documentIds }),
+    body: JSON.stringify({ documentIds, ...(query.trim() ? { query: query.trim() } : {}) }),
   })
 }
 

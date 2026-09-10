@@ -5,12 +5,13 @@ import { deflateSync } from "node:zlib"
 
 const shouldRun = process.argv.includes("--run")
 const libraryOnly = process.argv.includes("--library-only")
+const requireVector = process.argv.includes("--require-vector")
 
 function printPlan() {
   console.log([
     "Full staging release smoke plan (no request sent):",
     "1. Upload a generated large PDF and assert the request returns before async index completion.",
-    "2. Poll the async index Job, retrieve marker evidence, and reindex unchanged bytes.",
+    "2. Poll the async index Job, optionally require real vector indexing/retrieval, retrieve marker evidence, and reindex unchanged bytes.",
     "3. Start an Agent run, disconnect its SSE transport, reconnect/refresh from database state, and verify completion without duplicate execution.",
     "4. Perform the documented restart lease scenario and verify recovery after a real application process restart.",
     "5. Start another Agent run and explicitly cancel it, then delete the test document and verify removal.",
@@ -196,10 +197,30 @@ async function runSmoke() {
     if (firstIndex.status !== "done") throw new Error(`async index failed with status ${firstIndex.status}`)
     console.log("async index: passed")
 
+    if (requireVector) {
+      const library = await (await expectStatus(
+        await fetch(new URL("/api/documents", base), { headers: headers() }),
+        200,
+        "vector index metadata"
+      )).json()
+      const indexedDocument = library.items?.find((item) => item.id === documentId)
+      if (
+        indexedDocument?.embeddingStatus !== "ready" ||
+        !indexedDocument.embeddingModelVersion ||
+        !(indexedDocument.chunkCount > 0)
+      ) {
+        throw new Error("strict vector gate requires ready embeddings, a model version, and indexed chunks")
+      }
+      console.log("vector index metadata: passed")
+    }
+
     const context = await (await expectStatus(await fetch(new URL("/api/documents/context", base), {
       method: "POST", headers: headers({ "content-type": "application/json" }), body: JSON.stringify({ documentIds: [documentId], query: marker }),
     }), 200, "marker retrieval")).json()
     if (!context.context?.includes(marker)) throw new Error("indexed PDF marker was not retrieved")
+    if (requireVector && (context.retrievalMode !== "hybrid" || !(context.vectorEvidenceCount > 0))) {
+      throw new Error("strict vector gate requires hybrid retrieval with vector-backed evidence")
+    }
     console.log("PDF retrieval: passed")
 
     const reindexed = await (await expectStatus(await fetch(new URL("/api/documents", base), {

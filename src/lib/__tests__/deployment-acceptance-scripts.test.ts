@@ -166,6 +166,15 @@ describe("full staging release smoke test", () => {
     expect(script).toMatch(/if \(!libraryOnly\)[\s\S]*STAGING_AGENT_PROVIDER_ID/)
   })
 
+  it("offers a strict vector gate that verifies both embedded chunks and vector-backed retrieval", () => {
+    const script = readFileSync(path.join(repoRoot, "scripts/smoke-staging-release.mjs"), "utf8")
+    expect(script).toContain("--require-vector")
+    expect(script).toMatch(/embeddingStatus[\s\S]*ready/)
+    expect(script).toMatch(/embeddingModelVersion/)
+    expect(script).toMatch(/retrievalMode[\s\S]*hybrid/)
+    expect(script).toMatch(/vectorEvidenceCount/)
+  })
+
   it("supports protected Vercel previews without logging the bypass secret", () => {
     const script = readFileSync(path.join(repoRoot, "scripts/smoke-staging-release.mjs"), "utf8")
     expect(script).toContain("STAGING_PROTECTION_BYPASS")

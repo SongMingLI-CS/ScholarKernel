@@ -8,7 +8,7 @@ This is a sanitized record of the hybrid Library RAG and durable Agent acceptanc
 - Final tested application revision: `34db47e`
 - Vercel environment: protected Preview at `scholar-kernel-staging-restart.vercel.app`
 - Database: explicitly confirmed Neon staging clone
-- Local gates: 86 Vitest files / 427 tests, production build, ESLint, TypeScript, Prisma validation, and client-bundle credential audit
+- Local gates: 87 Vitest files / 430 tests, production build, ESLint, TypeScript, Prisma validation, and client-bundle credential audit
 
 ## Database migration and compatibility
 
@@ -73,4 +73,6 @@ The protected Preview was deployed with the staging acceptance user explicitly a
 
 ## Remaining production-readiness boundary
 
-The Preview deliberately ran without `EMBEDDING_API_KEY`, so the real Library lifecycle accepted the documented BM25 degradation path (`embeddingStatus=unavailable`). HNSW itself was measured with isolated synthetic vectors, but vector retrieval over a production-shaped embedded document corpus remains unverified. A dedicated embedding credential and representative corpus are still required before claiming the vector half of hybrid retrieval is production-accepted.
+The Preview deliberately ran without `EMBEDDING_API_KEY`, so the real Library lifecycle accepted the documented BM25 degradation path (`embeddingStatus=unavailable`). HNSW itself was measured with isolated synthetic vectors, but vector retrieval over a production-shaped embedded document corpus remains unverified. A credential-presence audit found no dedicated Preview embedding key; a minimal probe of the only locally named OpenAI key returned `401 invalid_api_key`, and that invalid value was not deployed.
+
+The release smoke now has an explicit `--require-vector` gate. It requires ready embedding metadata and a real query response with `retrievalMode=hybrid` plus at least one vector-backed evidence unit, preventing a BM25 fallback from being counted as full hybrid acceptance. A valid dedicated embedding credential and representative corpus run are still required before claiming the vector half of hybrid retrieval is production-accepted.

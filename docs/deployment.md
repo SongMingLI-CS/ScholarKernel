@@ -135,6 +135,14 @@ npm run smoke:staging:release -- --run
 
 This generates a PDF of at least 1.5 MB; checks bounded upload response time and byte-identical download; waits for asynchronous indexing; validates marker retrieval and unchanged-file reindex; exercises SSE disconnect, completed-result refresh/replay, a real process restart with database recovery, and explicit cancellation; then deletes the exact test document and confirms both its API file and Library row are gone. Cleanup is attempted after intermediate failures. A dry plan is always safe and performs no network request.
 
+When an embedding credential is configured, add `--require-vector` (and optionally `--library-only`) for the strict hybrid gate:
+
+```bash
+npm run smoke:staging:release -- --run --library-only --require-vector
+```
+
+This mode fails unless the uploaded document reports `embeddingStatus=ready`, a non-empty embedding model version, and at least one chunk, and the marker query reports `retrievalMode=hybrid` with vector-backed evidence. The context endpoint exposes only the retrieval mode and selected vector-evidence count for this check; it does not expose embedding vectors or additional document text. Do not use a degraded run as evidence for full hybrid acceptance.
+
 The legacy migration procedure is documented separately in [`library-file-migration.md`](library-file-migration.md). It permits copying, byte/digest verification, indexing verification, and a conditional database-reference switch. Original files are never deleted by that procedure.
 
 ## Browser credential audit
