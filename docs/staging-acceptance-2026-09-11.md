@@ -5,7 +5,7 @@ This is a sanitized record of the hybrid Library RAG and durable Agent acceptanc
 ## Release candidate
 
 - Branch: `fix/production-closure`
-- Final tested application revision: `34db47e`
+- Final tested application revision: `84b8b63`
 - Vercel environment: protected Preview at `scholar-kernel-staging-restart.vercel.app`
 - Database: explicitly confirmed Neon staging clone
 - Local gates: 87 Vitest files / 430 tests, production build, ESLint, TypeScript, Prisma validation, and client-bundle credential audit
@@ -75,4 +75,6 @@ The protected Preview was deployed with the staging acceptance user explicitly a
 
 The Preview deliberately ran without `EMBEDDING_API_KEY`, so the real Library lifecycle accepted the documented BM25 degradation path (`embeddingStatus=unavailable`). HNSW itself was measured with isolated synthetic vectors, but vector retrieval over a production-shaped embedded document corpus remains unverified. A credential-presence audit found no dedicated Preview embedding key; a minimal probe of the only locally named OpenAI key returned `401 invalid_api_key`, and that invalid value was not deployed.
 
-The release smoke now has an explicit `--require-vector` gate. It requires ready embedding metadata and a real query response with `retrievalMode=hybrid` plus at least one vector-backed evidence unit, preventing a BM25 fallback from being counted as full hybrid acceptance. A valid dedicated embedding credential and representative corpus run are still required before claiming the vector half of hybrid retrieval is production-accepted.
+The release smoke now has an explicit `--require-vector` gate. It requires ready embedding metadata and a real query response with `retrievalMode=hybrid` plus at least one vector-backed evidence unit, preventing a BM25 fallback from being counted as full hybrid acceptance.
+
+The strict gate was exercised against revision `84b8b63` on the protected Preview. A 1,517,276-byte PDF uploaded in 3,704 ms, downloaded byte-identically, and completed asynchronous lexical indexing. The gate then exited non-zero with the expected missing-ready-embedding error. Its cleanup restored the count of smoke-tagged documents from zero to zero. This is evidence that degraded mode is rejected and cleaned up, not evidence that vector retrieval passed. A valid dedicated embedding credential and representative corpus run are still required before claiming the vector half of hybrid retrieval is production-accepted.
