@@ -5,8 +5,8 @@ This is a sanitized record of the hybrid Library RAG and durable Agent acceptanc
 ## Release candidate
 
 - Branch: `fix/production-closure`
-- Final tested application revision: `9eb3212`
-- Vercel environment: protected Preview, two identical deployments behind `scholar-kernel-staging-restart.vercel.app`
+- Final tested application revision: `34db47e`
+- Vercel environment: protected Preview at `scholar-kernel-staging-restart.vercel.app`
 - Database: explicitly confirmed Neon staging clone
 - Local gates: 86 Vitest files / 427 tests, production build, ESLint, TypeScript, Prisma validation, and client-bundle credential audit
 
@@ -64,6 +64,12 @@ A connection-scoped temporary table ensured the benchmark left no persistent row
 - `m=16`, `ef_construction=100`, `ef_search=80`: Recall@10 1.0; build 1,204 ms; mean ANN round trip 779.80 ms.
 
 The current pgvector defaults (`m=16`, `ef_construction=64`, `ef_search=40`) were retained: they achieved full recall and the best observed ANN latency in this staging-sized test. The absolute round-trip timings include the remote China-to-Neon path and should not be treated as server-only latency.
+
+## Global historical reindex operations
+
+Revision `34db47e` adds a fail-closed administrator endpoint for global historical backfill. It requires an explicit `LIBRARY_MAINTENANCE_ADMIN_USER_IDS` allowlist, scans by resumable document-id cursor, inspects no more than 500 rows per request, and schedules no more than 50 jobs as each document's actual owner. Five route tests cover unauthenticated, unauthorized, unconfigured, pagination, and cross-owner scheduling behavior.
+
+The protected Preview was deployed with the staging acceptance user explicitly allowlisted. An authenticated `GET /api/admin/documents/reindex?limit=1` through the stable staging alias returned `200`, inspected one global candidate, and returned a resumable cursor. The live check was deliberately read-only: it did not schedule or mutate the legacy document.
 
 ## Remaining production-readiness boundary
 
