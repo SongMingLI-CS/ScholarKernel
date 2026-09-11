@@ -4,6 +4,7 @@ const mocks = vi.hoisted(() => ({
   after: vi.fn(), createJob: vi.fn(), claimJob: vi.fn(), completeJob: vi.fn(), failJob: vi.fn(),
   withHeartbeat: vi.fn(async (_id: string, operation: () => Promise<unknown>) => operation()),
   findDocument: vi.fn(), countChunks: vi.fn(), updateDocument: vi.fn(), readObject: vi.fn(), index: vi.fn(),
+  configuredProvider: vi.fn(),
 }))
 
 vi.mock("next/server", async (loadOriginal) => ({ ...(await loadOriginal<typeof import("next/server")>()), after: mocks.after }))
@@ -17,7 +18,7 @@ vi.mock("@/lib/prisma", () => ({ prisma: {
   documentChunk: { count: mocks.countChunks },
 } }))
 vi.mock("@/lib/library-storage", () => ({ readStoredLibraryObject: mocks.readObject }))
-vi.mock("@/lib/embedding-provider", () => ({ configuredEmbeddingProvider: vi.fn(() => null) }))
+vi.mock("@/lib/embedding-provider", () => ({ configuredEmbeddingProvider: mocks.configuredProvider }))
 vi.mock("@/lib/library-index", async (loadOriginal) => {
   const original = await loadOriginal<typeof import("@/lib/library-index")>()
   return { ...original, indexLibraryDocumentBuffer: mocks.index }
@@ -36,12 +37,24 @@ describe("Library indexing on the existing Job lifecycle", () => {
     mocks.failJob.mockResolvedValue({})
     mocks.readObject.mockResolvedValue(Buffer.from("same-file"))
     mocks.countChunks.mockResolvedValue(2)
+    mocks.configuredProvider.mockReturnValue(null)
   })
 
   it("schedules after the response lifecycle instead of awaiting indexing", async () => {
     expect(await scheduleLibraryIndexJob("user-1", "doc-1")).toBe("job-1")
     expect(mocks.after).toHaveBeenCalledWith(expect.any(Function))
     expect(mocks.index).not.toHaveBeenCalled()
+  })
+
+  it("captures the request-scoped embedding provider before the after callback", async () => {
+    const provider = { modelVersion: "gateway-v1", dimensions: 1536, embed: vi.fn() }
+    mocks.configuredProvider.mockReturnValue(provider)
+    mocks.claimJob.mockResolvedValue(false)
+
+    await scheduleLibraryIndexJob("user-1", "doc-1")
+    expect(mocks.configuredProvider).toHaveBeenCalledTimes(1)
+    await mocks.after.mock.calls[0]?.[0]()
+    expect(mocks.configuredProvider).toHaveBeenCalledTimes(1)
   })
 
   it("does not re-index or re-embed an unchanged file and version", async () => {

@@ -8,7 +8,7 @@ This is a sanitized record of the hybrid Library RAG and durable Agent acceptanc
 - Final tested application revision: `84b8b63`
 - Vercel environment: protected Preview at `scholar-kernel-staging-restart.vercel.app`
 - Database: explicitly confirmed Neon staging clone
-- Local gates: 87 Vitest files / 432 tests, production build, ESLint, TypeScript, Prisma validation, and client-bundle credential audit
+- Local gates: 87 Vitest files / 433 tests, production build, ESLint, TypeScript, Prisma validation, and client-bundle credential audit
 
 ## Database migration and compatibility
 

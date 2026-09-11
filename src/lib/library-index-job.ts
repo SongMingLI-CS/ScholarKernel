@@ -1,12 +1,17 @@
 import { after } from "next/server"
 
 import { claimAgentJobRun, completeAgentJob, createAgentJob, failAgentJob, withAgentJobHeartbeat } from "@/lib/agent-jobs"
-import { configuredEmbeddingProvider } from "@/lib/embedding-provider"
+import { configuredEmbeddingProvider, type EmbeddingProvider } from "@/lib/embedding-provider"
 import { indexLibraryDocumentBuffer, libraryIndexFingerprint, libraryIndexNeedsRebuild } from "@/lib/library-index"
 import { readStoredLibraryObject } from "@/lib/library-storage"
 import { prisma } from "@/lib/prisma"
 
-export async function runLibraryIndexJob(jobId: string, userId: string, documentId: string): Promise<void> {
+export async function runLibraryIndexJob(
+  jobId: string,
+  userId: string,
+  documentId: string,
+  requestScopedEmbeddingProvider?: EmbeddingProvider | null
+): Promise<void> {
   if (!await claimAgentJobRun(jobId, 300_000)) return
   await withAgentJobHeartbeat(jobId, async () => {
     try {
@@ -14,7 +19,9 @@ export async function runLibraryIndexJob(jobId: string, userId: string, document
       if (!document) throw new Error("LibraryDocumentNotFound")
       const buffer = await readStoredLibraryObject(document.fileUrl)
       if (!buffer) throw new Error("LibraryObjectNotFound")
-      const provider = configuredEmbeddingProvider()
+      const provider = requestScopedEmbeddingProvider === undefined
+        ? configuredEmbeddingProvider()
+        : requestScopedEmbeddingProvider
       const desired = libraryIndexFingerprint(buffer, provider?.modelVersion)
       const chunkCount = await prisma.documentChunk.count({ where: { documentId } })
       const reusable = chunkCount > 0 && !libraryIndexNeedsRebuild({
@@ -53,11 +60,12 @@ export async function runLibraryIndexJob(jobId: string, userId: string, document
 }
 
 export async function scheduleLibraryIndexJob(userId: string, documentId: string): Promise<string> {
+  const embeddingProvider = configuredEmbeddingProvider()
   const job = await createAgentJob(userId, {
     userInput: `library-index:${documentId}`,
     provider: { kind: "library-index", documentId },
   })
   await prisma.document.update({ where: { id: documentId }, data: { indexJobId: job.id, indexStatus: "pending", indexError: null } })
-  after(() => runLibraryIndexJob(job.id, userId, documentId))
+  after(() => runLibraryIndexJob(job.id, userId, documentId, embeddingProvider))
   return job.id
 }
