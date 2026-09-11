@@ -96,6 +96,11 @@ async function expectStatus(response, expected, step) {
   return response
 }
 
+function embeddingFailureCategory(document) {
+  const match = String(document?.indexError ?? "").match(/EmbeddingHttpError:\d{3}/)
+  return match?.[0] ?? (document?.embeddingStatus === "failed" ? "EmbeddingFailed" : "EmbeddingUnavailable")
+}
+
 async function pollJob(base, jobId, timeoutMs = 240_000) {
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
@@ -209,7 +214,7 @@ async function runSmoke() {
         !indexedDocument.embeddingModelVersion ||
         !(indexedDocument.chunkCount > 0)
       ) {
-        throw new Error("strict vector gate requires ready embeddings, a model version, and indexed chunks")
+        throw new Error(`strict vector gate requires ready embeddings, a model version, and indexed chunks (${embeddingFailureCategory(indexedDocument)})`)
       }
       console.log("vector index metadata: passed")
     }

@@ -175,6 +175,13 @@ describe("full staging release smoke test", () => {
     expect(script).toMatch(/vectorEvidenceCount/)
   })
 
+  it("reports only a sanitized embedding HTTP category when the strict vector gate fails", () => {
+    const script = readFileSync(path.join(repoRoot, "scripts/smoke-staging-release.mjs"), "utf8")
+    expect(script).toContain("embeddingFailureCategory")
+    expect(script).toContain("EmbeddingHttpError:")
+    expect(script).not.toMatch(/console\.(?:log|error)\([^\n]*indexError/)
+  })
+
   it("supports protected Vercel previews without logging the bypass secret", () => {
     const script = readFileSync(path.join(repoRoot, "scripts/smoke-staging-release.mjs"), "utf8")
     expect(script).toContain("STAGING_PROTECTION_BYPASS")
