@@ -5,8 +5,8 @@ This is a sanitized record of the hybrid Library RAG and durable Agent acceptanc
 ## Release candidate
 
 - Branch: `fix/production-closure`
-- Final tested application revision: `84b8b63`
-- Vercel environment: protected Preview at `scholar-kernel-staging-restart.vercel.app`
+- Final tested application revision: `70899a8`
+- Vercel environment: protected Preview deployment for revision `70899a8`; the stable staging alias remains on the prior accepted revision until the strict vector gate passes
 - Database: explicitly confirmed Neon staging clone
 - Local gates: 87 Vitest files / 434 tests, production build, ESLint, TypeScript, Prisma validation, and client-bundle credential audit
 
@@ -73,8 +73,10 @@ The protected Preview was deployed with the staging acceptance user explicitly a
 
 ## Remaining production-readiness boundary
 
-The Preview deliberately ran without `EMBEDDING_API_KEY`, so the real Library lifecycle accepted the documented BM25 degradation path (`embeddingStatus=unavailable`). HNSW itself was measured with isolated synthetic vectors, but vector retrieval over a production-shaped embedded document corpus remains unverified. A credential-presence audit found no dedicated Preview embedding key; a minimal probe of the only locally named OpenAI key returned `401 invalid_api_key`, and that invalid value was not deployed.
+The first protected Preview deliberately ran without `EMBEDDING_API_KEY`, so its real Library lifecycle accepted the documented BM25 degradation path (`embeddingStatus=unavailable`). HNSW itself was measured with isolated synthetic vectors, but vector retrieval over a production-shaped embedded document corpus remained unverified. A credential-presence audit found no dedicated Preview embedding key; a minimal probe of the only locally named OpenAI key returned `401 invalid_api_key`, and that invalid value was not deployed.
 
-The release smoke now has an explicit `--require-vector` gate. It requires ready embedding metadata and a real query response with `retrievalMode=hybrid` plus at least one vector-backed evidence unit, preventing a BM25 fallback from being counted as full hybrid acceptance.
+The release smoke has an explicit `--require-vector` gate. It requires ready embedding metadata and a real query response with `retrievalMode=hybrid` plus at least one vector-backed evidence unit, preventing a BM25 fallback from being counted as full hybrid acceptance. Its failure output reports only a sanitized embedding status category and never prints provider responses or stored index errors.
 
-The strict gate was exercised against revision `84b8b63` on the protected Preview. A 1,517,276-byte PDF uploaded in 3,704 ms, downloaded byte-identically, and completed asynchronous lexical indexing. The gate then exited non-zero with the expected missing-ready-embedding error. Its cleanup restored the count of smoke-tagged documents from zero to zero. This is evidence that degraded mode is rejected and cleaned up, not evidence that vector retrieval passed. A valid dedicated embedding credential and representative corpus run are still required before claiming the vector half of hybrid retrieval is production-accepted.
+Revision `70899a8` added request-scoped Vercel OIDC capture for post-response indexing and was deployed with an explicit AI Gateway endpoint and the 1,536-dimension `openai/text-embedding-3-small` model. The strict gate uploaded a valid 1,517,307-byte PDF in 5,170 ms, downloaded it byte-identically, and completed asynchronous lexical indexing. The actual embedding request then failed with the sanitized category `EmbeddingHttpError:403`. Vercel documents `403` as insufficient permissions, so authentication reached the Gateway but the team/account is not currently authorized to run the request. Cleanup restored both the smoke-tagged and total staging document counts to zero.
+
+The code, migration, storage, lexical retrieval, HNSW, and durable Job paths are accepted, but the vector half of hybrid retrieval is not production-accepted. The remaining external gate is to enable AI Gateway inference for the Vercel team (or install a valid dedicated `AI_GATEWAY_API_KEY`/provider key), redeploy, and rerun the same strict smoke until ready embedding metadata and vector-backed hybrid evidence both pass.
