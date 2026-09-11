@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto"
+import { getVercelOidcTokenSync } from "@vercel/oidc"
 import { recordOperationalMetric } from "@/lib/operational-metrics"
 
 export const EMBEDDING_DIMENSIONS = 1536
@@ -123,17 +124,24 @@ function isVercelAiGatewayBaseUrl(value: string): boolean {
 }
 
 export function configuredEmbeddingProvider(
-  env: Record<string, string | undefined> = process.env
+  env: Record<string, string | undefined> = process.env,
+  readVercelOidcToken: () => string = getVercelOidcTokenSync
 ): EmbeddingProvider | null {
   // Embeddings remain opt-in: OIDC is considered only for an explicitly selected
   // Vercel AI Gateway endpoint, never merely because Vercel injected a token.
   const baseUrl = env.EMBEDDING_BASE_URL?.trim() || "https://api.openai.com/v1"
   const usesVercelGateway = isVercelAiGatewayBaseUrl(baseUrl)
-  const apiKey = env.EMBEDDING_API_KEY?.trim() || (
-    usesVercelGateway
-      ? env.AI_GATEWAY_API_KEY?.trim() || env.VERCEL_OIDC_TOKEN?.trim()
-      : undefined
-  )
+  let gatewayCredential = usesVercelGateway
+    ? env.AI_GATEWAY_API_KEY?.trim() || env.VERCEL_OIDC_TOKEN?.trim()
+    : undefined
+  if (usesVercelGateway && !gatewayCredential) {
+    try {
+      gatewayCredential = readVercelOidcToken().trim() || undefined
+    } catch {
+      gatewayCredential = undefined
+    }
+  }
+  const apiKey = env.EMBEDDING_API_KEY?.trim() || gatewayCredential
   if (!apiKey) return null
   return new OpenAICompatibleEmbeddingProvider(
     env.EMBEDDING_MODEL?.trim() || (usesVercelGateway ? "openai/text-embedding-3-small" : "text-embedding-3-small"),

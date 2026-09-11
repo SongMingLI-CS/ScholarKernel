@@ -52,14 +52,15 @@ describe("embedding provider abstraction", () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       Response.json({ data: [{ index: 0, embedding: vector }] })
     )
+    const oidcToken = vi.fn(() => "short-lived-oidc")
     const provider = configuredEmbeddingProvider({
       EMBEDDING_BASE_URL: "https://ai-gateway.vercel.sh/v1",
       EMBEDDING_MODEL: "openai/text-embedding-3-small",
-      VERCEL_OIDC_TOKEN: "short-lived-oidc",
       EMBEDDING_REQUESTS_PER_MINUTE: "0",
-    })
+    }, oidcToken)
 
     await expect(provider?.embed(["safe text"])).resolves.toEqual([vector])
+    expect(oidcToken).toHaveBeenCalledOnce()
     expect(fetchMock).toHaveBeenCalledWith(
       "https://ai-gateway.vercel.sh/v1/embeddings",
       expect.objectContaining({
@@ -70,6 +71,8 @@ describe("embedding provider abstraction", () => {
   })
 
   it("does not silently spend through Vercel OIDC without an explicit Gateway opt-in", () => {
-    expect(configuredEmbeddingProvider({ VERCEL_OIDC_TOKEN: "short-lived-oidc" })).toBeNull()
+    const oidcToken = vi.fn(() => "short-lived-oidc")
+    expect(configuredEmbeddingProvider({ VERCEL_OIDC_TOKEN: "short-lived-oidc" }, oidcToken)).toBeNull()
+    expect(oidcToken).not.toHaveBeenCalled()
   })
 })
