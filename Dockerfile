@@ -22,6 +22,7 @@ RUN apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=30 update && apt-get
 ENV NODE_ENV=production
 ENV PORT=3000
 COPY --from=builder --chown=node:node /app/package.json ./
+COPY --from=builder --chown=node:node /app/next.config.ts ./
 COPY --from=builder --chown=node:node /app/node_modules ./node_modules
 COPY --from=builder --chown=node:node /app/.next ./.next
 COPY --from=builder --chown=node:node /app/public ./public

@@ -25,6 +25,8 @@ services:
       - "127.0.0.1:3001:3000"
     env_file:
       - .env
+    volumes:
+      - ./next.config.ts:/app/next.config.ts:ro
     depends_on:
       scholarkernel-db:
         condition: service_healthy
