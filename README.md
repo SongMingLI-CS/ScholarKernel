@@ -89,4 +89,4 @@ Next.js 16 · React 19 · Prisma · Zustand · Vercel AI SDK · Tailwind 4
 `AUTH_URL` 使用公开的 `/scholar/api/auth` 地址。学习站服务端 API 地址也需要带 `/scholar`。
 独立部署不设置此变量。不要删除 PostgreSQL 卷；备份同时保存数据库和 `ENCRYPTION_SECRET`。
 
-若服务器连接 Debian 官方源缓慢，可设置 `DEBIAN_MIRROR=http://mirrors.aliyun.com` 再构建。
+若服务器连接 Debian 官方源缓慢，可设置 `DEBIAN_MIRROR=http://mirrors.aliyun.com` 再构建；npm 下载缓慢时可设置 `NPM_REGISTRY=https://registry.npmmirror.com`。

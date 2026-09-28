@@ -4,7 +4,8 @@ ARG DEBIAN_MIRROR="http://deb.debian.org"
 RUN sed -i "s|http://deb.debian.org|${DEBIAN_MIRROR}|g" /etc/apt/sources.list.d/debian.sources
 RUN apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=30 update && apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=30 install -y --no-install-recommends openssl ca-certificates && rm -rf /var/lib/apt/lists/*
 COPY package.json package-lock.json ./
-RUN npm ci --ignore-scripts
+ARG NPM_REGISTRY="https://registry.npmjs.org"
+RUN --mount=type=cache,target=/root/.npm npm ci --ignore-scripts --registry=$NPM_REGISTRY
 COPY . .
 ARG NEXT_PUBLIC_BASE_PATH=""
 ENV NEXT_PUBLIC_BASE_PATH=$NEXT_PUBLIC_BASE_PATH
