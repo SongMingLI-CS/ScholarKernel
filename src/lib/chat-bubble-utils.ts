@@ -1,4 +1,4 @@
-import { interceptWorkflowPlanInAssistantBubble } from "@/lib/agent-executor"
+import { interceptWorkflowPlanInAssistantBubble } from "@/lib/agent/planner"
 import { dictionary } from "@/lib/locales"
 import { interceptScholarCanvasInAssistantBubble, buildCanvasChatPlaceholder } from "@/lib/scholar-canvas"
 import { formatUserFacingErrorMessage } from "@/lib/user-facing-errors"

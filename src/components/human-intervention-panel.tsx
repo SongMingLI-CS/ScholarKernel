@@ -1,5 +1,7 @@
 "use client"
 
+import { appPath } from "@/lib/app-path"
+
 import { memo, useCallback, useState } from "react"
 
 import { useT } from "@/lib/locales"
@@ -40,7 +42,7 @@ export const HumanInterventionPanel = memo(function HumanInterventionPanel({
 
       setSubmitting(true)
       try {
-        const res = await fetch("/api/agent/intervention", {
+        const res = await fetch(appPath("/api/agent/intervention"), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({

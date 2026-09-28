@@ -1,3 +1,5 @@
+
+import { appPath } from "@/lib/app-path"
 /** 浏览器端 API 请求封装：统一 JSON 解析与 401 会话过期通知 */
 export class ApiUnauthorizedError extends Error {
   readonly status = 401
@@ -18,9 +20,9 @@ const SESSION_EXPIRED_REDIRECT_MS = 1200
 
 /** 构造 session 过期后的登录重定向 URL；已在 /login 时返回 null */
 export function buildLoginRedirectUrl(origin: string, pathname: string, search = ""): string | null {
-  if (pathname === "/login") return null
+  if (pathname === appPath("/login")) return null
   const callback = `${pathname}${search}`
-  const login = new URL("/login", origin)
+  const login = new URL(appPath("/login"), origin)
   if (callback && callback !== "/login") {
     login.searchParams.set("callbackUrl", callback)
   }
@@ -50,7 +52,7 @@ export function notifySessionExpired() {
 }
 
 export async function apiFetch<T>(input: RequestInfo, init?: RequestInit): Promise<T> {
-  const res = await fetch(input, {
+  const res = await fetch(typeof input === "string" ? appPath(input) : input, {
     ...init,
     credentials: "include",
     headers: {

@@ -5,6 +5,7 @@ import { AnimatePresence, motion } from "framer-motion"
 import { Menu } from "lucide-react"
 
 import { AuthProvider } from "@/components/auth-provider"
+import { LearningStudioLaunch } from "@/components/learning-studio-launch"
 import { LoginGate } from "@/components/login-gate"
 import { OnboardingWizard } from "@/components/onboarding-wizard"
 import { ChatPanel } from "@/components/chat-panel"
@@ -60,6 +61,7 @@ export const AppShell = memo(function AppShell() {
   return (
     <AuthProvider>
     <LoginGate>
+      <LearningStudioLaunch />
       <OnboardingWizard>
       <div className="relative h-screen w-full overflow-hidden bg-background text-foreground">
       <div className="sk-grid-overlay pointer-events-none fixed inset-0 z-0" aria-hidden />

@@ -30,6 +30,7 @@
     "@auth/prisma-adapter": "^2.11.2",
     "@base-ui/react": "^1.4.1",
     "@prisma/adapter-neon": "^7.8.0",
+    "@prisma/adapter-pg": "^7.8.0",
     "@prisma/client": "^7.8.0",
     "@tiptap/extension-table": "^3.24.0",
     "@tiptap/extension-table-cell": "^3.24.0",

@@ -31,6 +31,7 @@ export type PeerReviewStreamProgress = {
 }
 
 export type AgentExecutorDeps = {
+  localFileTool?: ReturnType<typeof import("@/lib/tools/file-tool").createFileTool>
   activeProvider: ActiveProviderConfig
   userId?: string
   jobId?: string

@@ -1,3 +1,5 @@
+import { createFileTool } from "@/lib/tools/file-tool"
+import { safeReadTextFile } from "@/lib/tools/file-reader-server"
 import { AgentExecutor } from "@/lib/agent-executor"
 import { runtimeKeysFromEnv } from "@/lib/agent/llm-utils"
 import type { AgentExecutorDeps, AgentExecutorHooks } from "@/lib/agent/executor-types"
@@ -46,6 +48,7 @@ export async function runAgentOnServer(
 
   const executor = new AgentExecutor(
     {
+      localFileTool: createFileTool(safeReadTextFile),
       userId: input.userId,
       activeProvider: input.activeProvider,
       jobId: input.jobId,

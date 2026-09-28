@@ -1,3 +1,5 @@
+
+import { appPath } from "@/lib/app-path"
 export const MAX_BROWSER_FILE_BYTES = 2 * 1024 * 1024
 
 const TEXT_EXTENSIONS = new Set([
@@ -56,7 +58,7 @@ async function parseLayoutAwareUpload(file: File): Promise<string> {
   const form = new FormData()
   form.append("file", file, file.name)
 
-  const res = await fetch("/api/documents/parse", { method: "POST", body: form })
+  const res = await fetch(appPath("/api/documents/parse"), { method: "POST", body: form })
   if (!res.ok) {
     const err = await res.json().catch(() => ({}))
     const msg = typeof err?.error === "string" ? err.error : `ParseFailed:${res.status}`

@@ -1,15 +1,38 @@
 services:
+  scholarkernel-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: scholarkernel
+      POSTGRES_USER: scholarkernel
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    volumes:
+      - sk-postgres:/var/lib/postgresql/data
+    restart: unless-stopped
+    mem_limit: 256m
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U scholarkernel -d scholarkernel"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
   scholarkernel-web:
-    build: .
+    build:
+      context: .
+      args:
+        NEXT_PUBLIC_BASE_PATH: ${NEXT_PUBLIC_BASE_PATH:-}
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3001:3000"
     env_file:
       - .env
-    environment:
-      DATABASE_URL: file:/data/scholarkernel.db
-    volumes:
-      - sk-data:/data
+    depends_on:
+      scholarkernel-db:
+        condition: service_healthy
     restart: unless-stopped
-
+    mem_limit: 1g
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000${NEXT_PUBLIC_BASE_PATH:-}/api/auth/session').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
 volumes:
-  sk-data:
+  sk-postgres:

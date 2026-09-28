@@ -29,6 +29,7 @@ import { downloadConversationAsDocx, downloadConversationAsPdf } from "@/lib/exp
 import { formatFileAttachmentBlock, readBrowserFileAsText } from "@/lib/browser-file"
 import { connKey, looksLikeWorkflowPlanJson, randomChatId } from "@/lib/chat-bubble-utils"
 import { bubbleContentToPlainText } from "@/lib/scholar-canvas"
+import { learningDraftKey } from "@/lib/learning-studio"
 import { useChatSend } from "@/hooks/use-chat-send"
 import { useMediaQuery } from "@/hooks/use-media-query"
 import { extractDoi, fetchMetadataByDoi, formatReferenceBlock } from "@/lib/reference-import"
@@ -229,6 +230,20 @@ const ChatPanelInner = memo(function ChatPanelInner() {
   const setSidebarDrawerOpen = useAgentStore((s) => s.actions.setSidebarDrawerOpen)
   const isMobile = useMediaQuery("(max-width: 767px)")
   const [input, setInput] = useState("")
+  useEffect(() => {
+    function loadLearningDraft() {
+      if (!currentConversationId || conversationLoading) return
+      const key = learningDraftKey(currentConversationId)
+      const draft = sessionStorage.getItem(key)
+      if (draft) {
+        setInput(draft)
+        sessionStorage.removeItem(key)
+      }
+    }
+    loadLearningDraft()
+    window.addEventListener("sk:learning-draft", loadLearningDraft)
+    return () => window.removeEventListener("sk:learning-draft", loadLearningDraft)
+  }, [currentConversationId, conversationLoading])
   const [mobileTab, setMobileTab] = useState<MobileWorkspaceTab>("chat")
   const [topologyOpen, setTopologyOpen] = useState(() => {
     if (typeof window === "undefined") return false

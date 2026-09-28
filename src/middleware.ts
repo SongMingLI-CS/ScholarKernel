@@ -1,3 +1,5 @@
+
+import { appPath } from "@/lib/app-path"
 import { type NextRequest, NextResponse } from "next/server"
 import { getToken } from "next-auth/jwt"
 
@@ -38,7 +40,7 @@ export async function middleware(req: NextRequest) {
     return NextResponse.json(unauthorizedJsonBody, { status: 401 })
   }
 
-  const login = new URL("/login", req.nextUrl.origin)
+  const login = new URL(appPath("/login"), req.nextUrl.origin)
   const callback = `${pathname}${req.nextUrl.search}`
   if (callback && callback !== "/login") {
     login.searchParams.set("callbackUrl", callback)

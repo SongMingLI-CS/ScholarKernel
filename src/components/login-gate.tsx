@@ -1,5 +1,7 @@
 "use client"
 
+import { appPath } from "@/lib/app-path"
+
 import { memo, useCallback, useEffect, useState } from "react"
 import { Lock } from "lucide-react"
 
@@ -20,7 +22,7 @@ export const LoginGate = memo(function LoginGate({ children }: { children: React
   const refreshSession = useCallback(async () => {
     setSession({ status: "loading" })
     try {
-      const res = await fetch("/api/auth/session", { credentials: "include", cache: "no-store" })
+      const res = await fetch(appPath("/api/auth/session"), { credentials: "include", cache: "no-store" })
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const data = (await res.json()) as { authEnabled?: boolean; authenticated?: boolean }
       if (!data.authEnabled || data.authenticated) {
@@ -49,7 +51,7 @@ export const LoginGate = memo(function LoginGate({ children }: { children: React
     setBusy(true)
     setError(null)
     try {
-      const res = await fetch("/api/auth/login", {
+      const res = await fetch(appPath("/api/auth/login"), {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },

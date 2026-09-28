@@ -1,33 +1,28 @@
-FROM node:20-bookworm-slim AS deps
+FROM node:22-bookworm-slim AS builder
 WORKDIR /app
-RUN apt-get update && apt-get install -y --no-install-recommends python3 make g++ \
-  && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends openssl ca-certificates && rm -rf /var/lib/apt/lists/*
 COPY package.json package-lock.json ./
-RUN npm ci
-
-FROM node:20-bookworm-slim AS builder
-WORKDIR /app
-RUN apt-get update && apt-get install -y --no-install-recommends python3 make g++ \
-  && rm -rf /var/lib/apt/lists/*
-COPY --from=deps /app/node_modules ./node_modules
+RUN npm ci --ignore-scripts
 COPY . .
-ENV DATABASE_URL="file:./prisma/dev.db"
-RUN npx prisma generate && npm run build
+ARG NEXT_PUBLIC_BASE_PATH=""
+ENV NEXT_PUBLIC_BASE_PATH=$NEXT_PUBLIC_BASE_PATH
+ENV DATABASE_URL="postgresql://build:build@localhost:5432/build"
+ENV ENCRYPTION_SECRET="build-only-placeholder-not-used-at-runtime"
+ENV NODE_OPTIONS="--max-old-space-size=1024"
+RUN npm run build -- --webpack
 
-FROM node:20-bookworm-slim AS runner
+FROM node:22-bookworm-slim AS runner
 WORKDIR /app
+RUN apt-get update && apt-get install -y --no-install-recommends openssl ca-certificates && rm -rf /var/lib/apt/lists/*
 ENV NODE_ENV=production
-ENV DATABASE_URL="file:/data/scholarkernel.db"
-ENV HOSTNAME="0.0.0.0"
 ENV PORT=3000
-RUN apt-get update && apt-get install -y --no-install-recommends python3 make g++ \
-  && rm -rf /var/lib/apt/lists/*
-COPY --from=builder /app/package.json ./
-COPY --from=builder /app/node_modules ./node_modules
-COPY --from=builder /app/.next ./.next
-COPY --from=builder /app/public ./public
-COPY --from=builder /app/prisma ./prisma
-COPY --from=builder /app/generated ./generated
-RUN mkdir -p /data
+COPY --from=builder --chown=node:node /app/package.json ./
+COPY --from=builder --chown=node:node /app/node_modules ./node_modules
+COPY --from=builder --chown=node:node /app/.next ./.next
+COPY --from=builder --chown=node:node /app/public ./public
+COPY --from=builder --chown=node:node /app/prisma ./prisma
+COPY --from=builder --chown=node:node /app/prisma.config.ts ./
+COPY --from=builder --chown=node:node /app/generated ./generated
+USER node
 EXPOSE 3000
-CMD ["sh", "-c", "npx prisma migrate deploy && npm start"]
+CMD ["sh", "-c", "npm run db:migrate && npm start -- --hostname 0.0.0.0"]

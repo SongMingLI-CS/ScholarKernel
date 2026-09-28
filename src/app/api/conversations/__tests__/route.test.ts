@@ -7,6 +7,9 @@ const { findMany, create } = vi.hoisted(() => ({
   create: vi.fn(),
 }))
 
+vi.mock("@/auth", () => ({ auth: vi.fn(async () => null) }))
+vi.mock("@/lib/session-auth", () => ({ isAuthEnabled: () => false }))
+
 vi.mock("@/lib/auth-user", () => ({
   resolveUserIdFromRequest: vi.fn(async () => "user-test"),
   conversationOwnerWhere: (userId: string) => ({ userId }),
@@ -14,6 +17,7 @@ vi.mock("@/lib/auth-user", () => ({
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
+    user: { findUnique: vi.fn(async () => ({ id: "user-test" })), upsert: vi.fn() },
     conversation: {
       findMany,
       create,

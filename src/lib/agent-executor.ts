@@ -553,7 +553,7 @@ export class AgentExecutor {
       ...this.effectiveSearchKeys(),
     })
 
-    const readLocalFile = createFileTool()
+    const readLocalFile = this.deps.localFileTool ?? createFileTool()
 
     return { localSourceAudit, globalLiteratureReview, academicSearch, readLocalFile }
   }

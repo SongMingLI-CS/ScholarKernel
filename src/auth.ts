@@ -1,3 +1,5 @@
+
+import { appPath } from "@/lib/app-path"
 import { PrismaAdapter } from "@auth/prisma-adapter"
 import bcrypt from "bcryptjs"
 import NextAuth from "next-auth"
@@ -38,6 +40,7 @@ async function ensureCredentialsUser() {
 
 export const { handlers, signIn, signOut, auth } = NextAuth({
   adapter: PrismaAdapter(prisma),
+  basePath: appPath("/api/auth"),
   secret:
     process.env.AUTH_SECRET ??
     process.env.NEXTAUTH_SECRET ??
@@ -45,7 +48,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
     process.env.ENCRYPTION_SECRET,
   session: { strategy: "jwt" },
   pages: {
-    signIn: "/",
+    signIn: appPath("/"),
   },
   providers: [
     ...(hasGitHub

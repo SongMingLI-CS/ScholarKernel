@@ -1,5 +1,7 @@
 "use client"
 
+import { appPath } from "@/lib/app-path"
+
 import { memo, useEffect, useMemo, useState } from "react"
 import type { ComponentType, ReactNode } from "react"
 import { Cloud, Gauge, Zap } from "lucide-react"
@@ -58,7 +60,7 @@ export const CloudMetrics = memo(function CloudMetrics() {
     let cancelled = false
     const load = async () => {
       try {
-        const res = await fetch("/api/user/billing-metrics", { cache: "no-store" })
+        const res = await fetch(appPath("/api/user/billing-metrics"), { cache: "no-store" })
         if (!res.ok) return
         const data = (await res.json()) as BillingMetricsPayload
         if (!cancelled) setBilling(data)

@@ -1,3 +1,5 @@
+
+import { appPath } from "@/lib/app-path"
 const PROXY_TOKEN_STORAGE_KEY = "sk:proxy-access-token"
 
 export function getStoredProxyAccessToken(): string | null {
@@ -39,7 +41,7 @@ export function proxyAwareFetch(input: RequestInfo | URL, init?: RequestInit): P
           : String(input)
 
   if (isProxyUrl(url)) {
-    return fetch(input, applyProxyAuthHeaders(init))
+    return fetch(typeof input === "string" ? appPath(input) : input instanceof URL && typeof window !== "undefined" && input.origin === window.location.origin ? new URL(appPath(input.pathname) + input.search, input.origin) : input, applyProxyAuthHeaders(init))
   }
   return fetch(input, init)
 }

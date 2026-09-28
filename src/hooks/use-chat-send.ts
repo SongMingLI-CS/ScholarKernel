@@ -1,5 +1,7 @@
 "use client"
 
+import { appPath } from "@/lib/app-path"
+
 import { useCallback, useEffect, useRef, useState, type MutableRefObject } from "react"
 import { type ProviderConfig } from "@/lib/ai-gateway"
 import {
@@ -238,7 +240,7 @@ export function useChatSend({
               tavilyApiKey: runtimeKeys?.tavily,
               serperApiKey: runtimeKeys?.serper,
             },
-            sourceApiBase: typeof window !== "undefined" ? window.location.origin : undefined,
+            sourceApiBase: typeof window !== "undefined" ? window.location.origin + appPath("/").replace(/\/$/, "") : undefined,
             signal: ctrl.signal,
             localOnly: localOnly || undefined,
             getChatHistory: () => buildChatHistoryForExecutor(useAgentStore.getState().chat.messages),
