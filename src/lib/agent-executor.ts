@@ -4,6 +4,7 @@ import { createOpenAI } from "@ai-sdk/openai"
 import { createGoogleGenerativeAI } from "@ai-sdk/google"
 import { createOllama } from "ai-sdk-ollama"
 import { z } from "zod"
+import { normalizeReferenceSections } from "./reference-sections"
 import {
   DEFAULT_ACADEMIC_SEARCH_MAX_RESULTS,
   mergeAcademicSearchHits,
@@ -998,7 +999,7 @@ export class AgentExecutor {
 
     const final =
       typeof lastReasoning?.text === "string"
-        ? [lastReasoning.text, citationsMarkdown ? `\n\n${citationsMarkdown}` : ""].filter(Boolean).join("")
+        ? normalizeReferenceSections(lastReasoning.text, citationsMarkdown)
         : [
             "我已执行完工作流，但未生成最终回答文本。",
             "",
@@ -1009,4 +1010,3 @@ export class AgentExecutor {
     return { final, nodes, sources }
   }
 }
-

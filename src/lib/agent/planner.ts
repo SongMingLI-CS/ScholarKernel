@@ -481,9 +481,9 @@ function isLikelyRemotePaperReference(path: string): boolean {
 
 function extractPaperTitlesFromContent(content: string): string[] {
   const titles: string[] = []
-  const refRe = /^\s*\[(\d+)\]\s*(.+?)(?:\s*\((?:19|20)\d{2}[^)]*\))?\s*$/gm
+  const refRe = /^\s*(?:[-*+]\s+)?\[(\d+)\]\s*(.+?)(?:\s*\((?:19|20)\d{2}[^)]*\))?\s*$/gm
   for (const m of content.matchAll(refRe)) {
-    const title = m[2]?.trim()
+    const title = m[2]?.replace(/\[([^\]]+)\]\(https?:\/\/[^\s)]+\)/g, "$1").trim()
     if (title && title.length > 4) titles.push(title)
   }
   return titles

@@ -1,6 +1,7 @@
 import katex from "katex"
 import { marked } from "marked"
 import TurndownService from "turndown"
+import { normalizeReferenceSections } from "./reference-sections"
 
 marked.setOptions({ gfm: true, breaks: true })
 
@@ -46,7 +47,7 @@ export function markdownToHtml(markdown: string): string {
 
 /** Scholar Canvas: Markdown + LaTeX delimiters → HTML for TipTap. */
 export function markdownToCanvasHtml(markdown: string): string {
-  const md = markdown.trim()
+  const md = normalizeReferenceSections(markdown).trim()
   if (!md) return "<p></p>"
   return marked.parse(injectCanvasMathDelimiters(md), { async: false }) as string
 }

@@ -107,7 +107,7 @@ export const dictionary = {
     "chat.boot":
       "ScholarKernel-Agent 已启动。当前为浏览器直连模式（无后端存储）。已支持：Ollama 本地流式；OpenAI/DeepSeek（OpenAI 兼容）；Anthropic Messages（SSE）；Gemini streamGenerateContent（?alt=sse）。**Markdown / LaTeX / 代码高亮** 已在对话区启用。云端直连可能受 CORS 影响：必要时请使用自建网关。",
     "chat.errorPrefix": "[错误]",
-    "chat.sources": "参考文献 (Sources)",
+    "chat.sources": "检索来源详情",
     "chat.sources.show": "展开",
     "chat.sources.hide": "收起",
     "chat.export": "导出 Markdown",
@@ -585,7 +585,7 @@ export const dictionary = {
     "chat.boot":
       "ScholarKernel-Agent booted. Browser direct mode (no backend storage). Supported: Ollama local streaming; OpenAI/DeepSeek (OpenAI compatible); Anthropic Messages (SSE); Gemini streamGenerateContent (?alt=sse). **Markdown / LaTeX / code highlighting** enabled. Cloud direct calls may be blocked by CORS—use your own gateway when needed.",
     "chat.errorPrefix": "[ERROR]",
-    "chat.sources": "Sources",
+    "chat.sources": "Search source details",
     "chat.sources.show": "Show",
     "chat.sources.hide": "Hide",
     "chat.export": "Export Markdown",
@@ -998,4 +998,3 @@ export function useT() {
     return s
   }
 }
-

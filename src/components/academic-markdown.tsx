@@ -11,6 +11,7 @@ import type { Components } from "react-markdown"
 import type { PluggableList } from "unified"
 
 import { cn } from "@/lib/utils"
+import { normalizeReferenceSections } from "@/lib/reference-sections"
 
 import "katex/dist/katex.min.css"
 import "highlight.js/styles/github-dark.css"
@@ -117,7 +118,7 @@ const components: Components = {
       className={cn(
         "mb-2 mt-4 text-base font-semibold tracking-wide text-foreground",
         isReferencesHeading(children) &&
-          "border-t border-sidebar-primary/25 pt-3 font-mono text-[13px] uppercase tracking-widest text-sidebar-primary/90",
+          "border-t border-border/60 pt-4 text-sky-300",
         className
       )}
       {...props}
@@ -135,7 +136,7 @@ const components: Components = {
       target="_blank"
       rel="noopener noreferrer"
       className={cn(
-        "break-all text-sky-400/90 underline decoration-sky-500/30 underline-offset-2 transition-colors hover:text-sky-300 hover:decoration-sky-400/60",
+        "break-words [overflow-wrap:anywhere] text-sky-400/90 underline decoration-sky-500/30 underline-offset-2 transition-colors hover:text-sky-300 hover:decoration-sky-400/60",
         className
       )}
     />
@@ -215,7 +216,7 @@ export const AcademicMarkdown = memo(function AcademicMarkdown({
     () => [rehypeKatex, [rehypeHighlight, { detect: true, ignoreMissing: true }]] as PluggableList,
     []
   )
-  const safeContent = useMemo(() => safeMarkdownContent(content), [content])
+  const safeContent = useMemo(() => normalizeReferenceSections(safeMarkdownContent(content)), [content])
 
   return (
     <MarkdownRenderErrorBoundary fallbackPrefix={fallbackPrefix}>

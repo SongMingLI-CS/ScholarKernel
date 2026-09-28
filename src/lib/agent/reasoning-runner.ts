@@ -147,7 +147,7 @@ export async function executeReasoningNode(ctx: ReasoningNodeContext): Promise<S
     "",
     "学术严谨性（必须遵守）：",
     "- 当你引用本次检索到的文献时，必须在对应观点后用 [1] [2] 这样的编号标注引用（与 References 列表编号一致）。",
-    '- 最后必须输出一个 "## 参考文献 (References)" 小节，汇总本次对话中用到的文献（与 [n] 编号一致）。',
+    '- 仅引用真实可核验来源；有引用时在文末输出唯一一个 "## 参考文献 (References)" 小节，每条用独立 Markdown 列表项（- [n] [标题](URL)），编号与正文一致。不要在多个章节重复列出参考文献；完整报告写入 scholar-canvas 时，文献只放在报告内。没有引用时不要输出空的文献区。',
     "",
     ACADEMIC_OUTPUT_DISCIPLINE,
   ].join("\n")

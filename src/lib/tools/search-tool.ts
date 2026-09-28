@@ -445,11 +445,12 @@ export function synthesizeCitationsMarkdown(results: AcademicSearchHit[], title 
     const sid = r.source_id?.trim() ? r.source_id.trim() : String(i + 1)
     const yearMatch = r.publishedAt?.match(/\b(19|20)\d{2}\b/)
     const year = yearMatch ? ` (${yearMatch[0]})` : r.publishedAt ? ` (${r.publishedAt})` : ""
-    return `[${sid}] ${r.title}${year}`
+    const label = r.title.replace(/([\\[\]])/g, "\\$1")
+    const url = /^https?:\/\//i.test(r.url) ? r.url.replace(/\(/g, "%28").replace(/\)/g, "%29") : ""
+    return `- [${sid}] ${url ? `[${label}](${url})` : label}${year}`
   })
   return {
     count: results.length,
-    markdown: [`${title}`, "", ...lines].join("\n"),
+    markdown: `${title}\n\n${lines.join("\n\n")}`,
   }
 }
-

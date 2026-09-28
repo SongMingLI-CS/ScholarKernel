@@ -972,7 +972,7 @@ const ChatPanelInner = memo(function ChatPanelInner() {
                       m.role === "assistant" &&
                         cn(
                           "rounded-sm border-border/70 bg-card/35 font-sans",
-                          "prose-invert [&_.sk-md-root]:text-[13.5px]",
+                          "prose-invert [&_.sk-md-root]:text-[15px]",
                           isLiveAssistant && "sk-streaming-bubble border-emerald-500/20"
                         ),
                       m.role === "system" &&
