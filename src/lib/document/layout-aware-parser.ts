@@ -6,7 +6,12 @@ import {
 import { applyColumnReorder, type LayoutTextBlock, type PageGeometry } from "@/lib/document/column-reorder"
 import { normalizeAcademicFormulas } from "@/lib/document/formula-normalizer"
 import { extractDocxFromBuffer } from "@/lib/document/docx-text-extract"
-import { extractPdfFromBuffer } from "@/lib/document/pdf-text-extract"
+import {
+  extractPdfFromBuffer,
+  MAX_PDF_BYTES,
+  PDF_PARSE_TIMEOUT_MS,
+  PdfParseError,
+} from "@/lib/document/pdf-text-extract"
 
 export type LayoutParseFormat = "pdf" | "docx" | "text" | "unknown"
 
@@ -25,6 +30,7 @@ export type ExternalLayoutParserRequest = {
   buffer: Buffer
   filename: string
   mimeType?: string
+  signal?: AbortSignal
 }
 
 export type ExternalLayoutParser = (
@@ -50,45 +56,74 @@ function safeEnv(name: string): string {
 async function callExternalLayoutParser(
   buffer: Buffer,
   filename: string,
-  mimeType?: string
+  mimeType?: string,
+  timeoutMs?: number
 ): Promise<{ text: string; blocks?: LayoutTextBlock[] } | null> {
-  if (externalParserHook) {
-    return externalParserHook({ buffer, filename, mimeType })
+  const controller = new AbortController()
+  const request = async () => {
+    if (externalParserHook) {
+      return await externalParserHook({ buffer, filename, mimeType, signal: controller.signal })
+    }
+
+    const url = safeEnv("LAYOUT_PARSER_URL")
+    const apiKey = safeEnv("LAYOUT_PARSER_API_KEY")
+    if (!url) return null
+
+    const headers: Record<string, string> = {}
+    if (apiKey) headers["Authorization"] = `Bearer ${apiKey}`
+
+    let res: Response
+    try {
+      const body = new FormData()
+      body.append("file", new Blob([new Uint8Array(buffer)], { type: mimeType }), filename)
+      res = await fetch(url, { method: "POST", headers, body, signal: controller.signal })
+    } catch {
+      if (controller.signal.aborted) return null
+      res = await fetch(url, {
+        method: "POST",
+        headers: { ...headers, "content-type": "application/json" },
+        body: JSON.stringify({
+          filename,
+          mimeType,
+          content_base64: buffer.toString("base64"),
+        }),
+        signal: controller.signal,
+      })
+    }
+    if (!res.ok) return null
+
+    const data = (await res.json()) as {
+      text?: string
+      markdown?: string
+      blocks?: LayoutTextBlock[]
+    }
+    const text = (data.text ?? data.markdown ?? "").trim()
+    if (!text) return null
+    return { text, blocks: data.blocks }
   }
 
-  const url = safeEnv("LAYOUT_PARSER_URL")
-  const apiKey = safeEnv("LAYOUT_PARSER_API_KEY")
-  if (!url) return null
+  if (timeoutMs === undefined) {
+    try {
+      return await request()
+    } catch {
+      return null
+    }
+  }
 
-  const headers: Record<string, string> = {}
-  if (apiKey) headers["Authorization"] = `Bearer ${apiKey}`
-
-  let res: Response
+  let timeout: ReturnType<typeof setTimeout> | undefined
+  const timedOut = new Promise<null>((resolve) => {
+    timeout = setTimeout(() => {
+      controller.abort()
+      resolve(null)
+    }, Math.max(1, timeoutMs))
+  })
   try {
-    const body = new FormData()
-    body.append("file", new Blob([new Uint8Array(buffer)], { type: mimeType }), filename)
-    res = await fetch(url, { method: "POST", headers, body })
+    return await Promise.race([request(), timedOut])
   } catch {
-    res = await fetch(url, {
-      method: "POST",
-      headers: { ...headers, "content-type": "application/json" },
-      body: JSON.stringify({
-        filename,
-        mimeType,
-        content_base64: buffer.toString("base64"),
-      }),
-    })
+    return null
+  } finally {
+    if (timeout) clearTimeout(timeout)
   }
-  if (!res.ok) return null
-
-  const data = (await res.json()) as {
-    text?: string
-    markdown?: string
-    blocks?: LayoutTextBlock[]
-  }
-  const text = (data.text ?? data.markdown ?? "").trim()
-  if (!text) return null
-  return { text, blocks: data.blocks }
 }
 
 function detectFormat(filename: string, mimeType?: string): LayoutParseFormat {
@@ -143,8 +178,21 @@ export async function parseLayoutAwareDocument(input: {
 }): Promise<LayoutParseResult> {
   const warnings: string[] = []
   const format = detectFormat(input.filename, input.mimeType)
+  const pdfDeadline = format === "pdf" ? Date.now() + PDF_PARSE_TIMEOUT_MS : undefined
 
-  const external = await callExternalLayoutParser(input.buffer, input.filename, input.mimeType)
+  if (format === "pdf" && input.buffer.length > MAX_PDF_BYTES) {
+    throw new PdfParseError("PDF_TOO_LARGE")
+  }
+
+  const external = await callExternalLayoutParser(
+    input.buffer,
+    input.filename,
+    input.mimeType,
+    pdfDeadline === undefined ? undefined : Math.max(1, pdfDeadline - Date.now())
+  )
+  if (pdfDeadline !== undefined && Date.now() >= pdfDeadline) {
+    throw new PdfParseError("PDF_TIMEOUT")
+  }
   if (external?.text) {
     const reordered = applyColumnReorder(external.text, external.blocks)
     const normalized = normalizeAcademicFormulas(cleanAcademicNoise(reordered.text))
@@ -164,11 +212,13 @@ export async function parseLayoutAwareDocument(input: {
   let pageGeometries: PageGeometry[] = []
 
   if (format === "pdf") {
-    const pdf = extractPdfFromBuffer(input.buffer)
+    const pdf = await extractPdfFromBuffer(input.buffer, {
+      timeoutMs: pdfDeadline === undefined ? undefined : Math.max(1, pdfDeadline - Date.now()),
+    })
     rawText = pdf.text
     blocks = pdf.blocks
     pageGeometries = pdf.pageGeometries
-    if (!rawText.trim()) warnings.push("PdfExtractEmpty")
+    if (!rawText.trim()) throw new PdfParseError("PDF_NO_TEXT")
   } else if (format === "docx") {
     try {
       rawText = extractDocxFromBuffer(input.buffer)

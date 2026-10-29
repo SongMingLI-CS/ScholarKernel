@@ -1,148 +1,199 @@
+import path from "node:path"
+
+import { getDocument } from "pdfjs-dist/legacy/build/pdf.mjs"
+import type { PDFDocumentLoadingTask, PDFPageProxy } from "pdfjs-dist"
+
 import type { LayoutTextBlock, PageGeometry } from "@/lib/document/column-reorder"
 
-type PdfExtractResult = {
+export const MAX_PDF_BYTES = 8 * 1024 * 1024
+export const PDF_PARSE_TIMEOUT_MS = 15_000
+
+const PDFJS_DATA_DIRECTORY = path.join(process.cwd(), "node_modules", "pdfjs-dist")
+const PDFJS_CMAP_DIRECTORY = `${path.join(PDFJS_DATA_DIRECTORY, "cmaps")}${path.sep}`
+const PDFJS_STANDARD_FONTS_DIRECTORY = `${path.join(PDFJS_DATA_DIRECTORY, "standard_fonts")}${path.sep}`
+
+export type PdfParseErrorCode =
+  | "PDF_TOO_LARGE"
+  | "PDF_TIMEOUT"
+  | "PDF_PASSWORD_PROTECTED"
+  | "PDF_INVALID"
+  | "PDF_UNSUPPORTED"
+  | "PDF_NO_TEXT"
+
+const PDF_PARSE_MESSAGES: Record<PdfParseErrorCode, string> = {
+  PDF_TOO_LARGE: "PDF 文件超过 8 MiB 限制，请压缩或拆分后重试。",
+  PDF_TIMEOUT: "PDF 解析超过 15 秒。请压缩或拆分文档后重试。",
+  PDF_PASSWORD_PROTECTED: "该 PDF 受密码保护或已加密，请上传解除密码保护的副本。",
+  PDF_INVALID: "无法读取该 PDF，文件可能已损坏或不是有效的 PDF。请重新导出后重试。",
+  PDF_UNSUPPORTED: "当前 PDF 的压缩方式或字体编码暂不支持。请另存为标准 PDF，或导出为可复制文本的 PDF。",
+  PDF_NO_TEXT: "未能从该 PDF 提取可复制文本。文件可能是空白页或扫描图片，请先进行 OCR 后再上传。",
+}
+
+export class PdfParseError extends Error {
+  constructor(
+    readonly code: PdfParseErrorCode,
+    readonly status: number = code === "PDF_TOO_LARGE" ? 413 : code === "PDF_TIMEOUT" ? 408 : 422
+  ) {
+    super(PDF_PARSE_MESSAGES[code])
+    this.name = "PdfParseError"
+  }
+}
+
+export type PdfExtractResult = {
   text: string
   blocks: LayoutTextBlock[]
   pageGeometries: PageGeometry[]
 }
 
-function decodePdfLiteral(s: string): string {
-  return s
-    .replace(/\\n/g, "\n")
-    .replace(/\\r/g, "\r")
-    .replace(/\\t/g, "\t")
-    .replace(/\\\(/g, "(")
-    .replace(/\\\)/g, ")")
-    .replace(/\\\\/g, "\\")
+type PositionedText = {
+  text: string
+  x: number
+  y: number
+  width: number
+  height: number
+  hasEOL: boolean
 }
 
-function decodePdfHex(hex: string): string {
-  const clean = hex.replace(/\s+/g, "")
-  if (!clean) return ""
-  let out = ""
-  for (let i = 0; i < clean.length; i += 2) {
-    const byte = parseInt(clean.slice(i, i + 2), 16)
-    if (!Number.isNaN(byte)) out += String.fromCharCode(byte)
+function toPdfParseError(error: unknown): PdfParseError {
+  if (error instanceof PdfParseError) return error
+
+  const name =
+    typeof error === "object" && error !== null && "name" in error ? String(error.name) : ""
+  if (name === "PasswordException") return new PdfParseError("PDF_PASSWORD_PROTECTED")
+  if (["InvalidPDFException", "MissingPDFException", "FormatError"].includes(name)) {
+    return new PdfParseError("PDF_INVALID")
   }
-  return out
+  return new PdfParseError("PDF_UNSUPPORTED")
 }
 
-/** 从 PDF 对象树提取各页 MediaBox 宽度（用于双栏中轴线判定）。 */
-export function extractPdfPageGeometries(buffer: Buffer): PageGeometry[] {
-  const raw = buffer.toString("latin1")
-  const geometries: PageGeometry[] = []
-  const mediaRe = /\/MediaBox\s*\[\s*([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s*\]/g
-  let page = 0
-  let m: RegExpExecArray | null
-  while ((m = mediaRe.exec(raw)) !== null) {
-    page += 1
-    const x0 = parseFloat(m[1]!)
-    const y0 = parseFloat(m[2]!)
-    const x1 = parseFloat(m[3]!)
-    const y1 = parseFloat(m[4]!)
-    if ([x0, y0, x1, y1].some((v) => Number.isNaN(v))) continue
-    geometries.push({
-      page,
-      width: Math.abs(x1 - x0),
-      height: Math.abs(y1 - y0),
-    })
-  }
-  return geometries
+function appendText(previous: PositionedText, next: PositionedText): void {
+  const previousEnd = previous.x + previous.width
+  const gap = next.x - previousEnd
+  const needsSpace =
+    !previous.text.endsWith(" ") &&
+    !next.text.startsWith(" ") &&
+    gap > Math.max(0.5, Math.min(3, next.height * 0.15))
+
+  previous.text += `${needsSpace ? " " : ""}${next.text}`
+  previous.width = Math.max(previous.width, next.x + next.width - previous.x)
+  previous.hasEOL = next.hasEOL
 }
 
-/** 从 PDF content stream 片段提取带坐标的文本块（Tm/Td/Tj/TJ）。 */
-export function extractPdfLayoutBlocks(buffer: Buffer): PdfExtractResult {
-  const raw = buffer.toString("latin1")
-  const blocks: LayoutTextBlock[] = []
-  const pageGeometries = extractPdfPageGeometries(buffer)
-
-  const streamRe = /stream\r?\n([\s\S]*?)\r?\nendstream/g
-  let page = 0
-
-  const flushText = (text: string, x: number, y: number) => {
-    const t = text.replace(/\s+/g, " ").trim()
-    if (t.length < 2) return
-    blocks.push({ text: t, x, y, page })
+function createPageBlocks(
+  page: PDFPageProxy,
+  pageNumber: number
+): Promise<{ blocks: LayoutTextBlock[]; geometry: PageGeometry }> {
+  const viewport = page.getViewport({ scale: 1 })
+  const view = page.view
+  const viewX = view[0] ?? 0
+  const geometry: PageGeometry = {
+    page: pageNumber,
+    width: Math.abs((view[2] ?? viewport.width) - viewX),
+    height: Math.abs((view[3] ?? viewport.height) - (view[1] ?? 0)),
   }
 
-  let match: RegExpExecArray | null
-  while ((match = streamRe.exec(raw)) !== null) {
-    page += 1
-    const stream = match[1] ?? ""
-    let x = 0
-    let y = 0
-    let pending = ""
+  return page.getTextContent().then((content) => {
+    const items: PositionedText[] = []
+    for (const item of content.items) {
+      if (!("str" in item) || !item.str.trim()) continue
+      const x = Number(item.transform[4]) - viewX
+      const y = Number(item.transform[5])
+      const width = Number(item.width)
+      const height = Number(item.height)
+      if (![x, y, width, height].every(Number.isFinite)) continue
+      items.push({ text: item.str, x, y, width, height, hasEOL: item.hasEOL })
+    }
 
-    const tokens = stream.match(/[^\s]+|\((?:\\.|[^\\)])*\)|<[0-9A-Fa-f\s]+>/g) ?? []
-    for (let i = 0; i < tokens.length; i++) {
-      const tok = tokens[i]!
-      if (tok === "Tm" && i >= 6) {
-        const ty = parseFloat(tokens[i - 1]!)
-        const tx = parseFloat(tokens[i - 4]!)
-        if (!Number.isNaN(tx)) x = tx
-        if (!Number.isNaN(ty)) y = ty
-        i -= 6
-        continue
-      }
-      if (tok === "Td" && i >= 2) {
-        const dy = parseFloat(tokens[i - 1]!)
-        const dx = parseFloat(tokens[i - 2]!)
-        if (!Number.isNaN(dx)) x += dx
-        if (!Number.isNaN(dy)) y += dy
-        i -= 2
-        continue
-      }
-      if (tok === "Tj" && i >= 1) {
-        const prev = tokens[i - 1]!
-        if (prev.startsWith("(")) pending += decodePdfLiteral(prev.slice(1, -1))
-        else if (prev.startsWith("<")) pending += decodePdfHex(prev.slice(1, -1))
-        i -= 1
-        continue
-      }
-      if (tok === "TJ" && i >= 1) {
-        const arr = tokens[i - 1] ?? ""
-        const parts = arr.match(/\((?:\\.|[^\\)])*\)|<[0-9A-Fa-f\s]+>/g) ?? []
-        for (const p of parts) {
-          if (p.startsWith("(")) pending += decodePdfLiteral(p.slice(1, -1))
-          else if (p.startsWith("<")) pending += decodePdfHex(p.slice(1, -1))
-        }
-        i -= 1
-        continue
-      }
-      if (tok === "T*" || tok === "ET" || tok === "Q") {
-        if (pending.trim()) flushText(pending, x, y)
-        pending = ""
+    items.sort((a, b) => b.y - a.y || a.x - b.x)
+
+    const lineItems: PositionedText[] = []
+    const midline = geometry.width / 2
+    for (const item of items) {
+      const previous = lineItems[lineItems.length - 1]
+      const sameColumn = previous && (previous.x < midline) === (item.x < midline)
+      const lineTolerance = Math.max(1.5, Math.min(4, item.height * 0.25))
+      if (
+        previous &&
+        sameColumn &&
+        !previous.hasEOL &&
+        Math.abs(previous.y - item.y) <= lineTolerance
+      ) {
+        appendText(previous, item)
+      } else {
+        lineItems.push({ ...item })
       }
     }
-    if (pending.trim()) flushText(pending, x, y)
-  }
 
-  if (blocks.length === 0) {
-    const fallback = extractPdfPlainText(raw)
-    return { text: fallback, blocks: [], pageGeometries }
-  }
+    const blocks = lineItems
+      .map((item) => ({ text: item.text, x: item.x, y: item.y, page: pageNumber, width: item.width }))
+      .filter((block) => block.text.trim().length > 0)
 
-  // 不在此处做 naive 排序拼接；交由 column-reorder 按双栏阅读顺序重组。
-  return { text: blocks.map((b) => b.text).join("\n"), blocks, pageGeometries }
+    return { blocks, geometry }
+  })
 }
 
-/** 无坐标时的纯文本兜底：抓取 (..) 与 <hex> 字串。 */
-export function extractPdfPlainText(rawLatin1: string): string {
-  const chunks: string[] = []
-  const litRe = /\((?:\\.|[^\\)])*\)/g
-  let m: RegExpExecArray | null
-  while ((m = litRe.exec(rawLatin1)) !== null) {
-    const decoded = decodePdfLiteral(m[0].slice(1, -1)).trim()
-    if (decoded.length >= 2) chunks.push(decoded)
+async function destroyLoadingTask(task: PDFDocumentLoadingTask): Promise<void> {
+  try {
+    await task.destroy()
+  } catch {
+    // The worker may already have been destroyed when a parse timed out.
   }
-  const hexRe = /<([0-9A-Fa-f\s]{4,})>/g
-  while ((m = hexRe.exec(rawLatin1)) !== null) {
-    const decoded = decodePdfHex(m[1] ?? "").trim()
-    if (decoded.length >= 2) chunks.push(decoded)
-  }
-  return chunks.join("\n")
 }
 
-export function extractPdfFromBuffer(buffer: Buffer): PdfExtractResult {
-  return extractPdfLayoutBlocks(buffer)
+export async function extractPdfFromBuffer(
+  buffer: Buffer,
+  options: { timeoutMs?: number } = {}
+): Promise<PdfExtractResult> {
+  if (buffer.length > MAX_PDF_BYTES) throw new PdfParseError("PDF_TOO_LARGE")
+
+  const timeoutMs = options.timeoutMs ?? PDF_PARSE_TIMEOUT_MS
+  const task = getDocument({
+    data: new Uint8Array(buffer),
+    cMapUrl: PDFJS_CMAP_DIRECTORY,
+    cMapPacked: true,
+    standardFontDataUrl: PDFJS_STANDARD_FONTS_DIRECTORY,
+    useSystemFonts: true,
+  })
+  let destroyPromise: Promise<void> | undefined
+  const destroy = () => (destroyPromise ??= destroyLoadingTask(task))
+  let timeout: ReturnType<typeof setTimeout> | undefined
+
+  try {
+    const parse = async () => {
+      const document = await task.promise
+      const blocks: LayoutTextBlock[] = []
+      const pageGeometries: PageGeometry[] = []
+
+      for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber += 1) {
+        const page = await document.getPage(pageNumber)
+        try {
+          const result = await createPageBlocks(page, pageNumber)
+          blocks.push(...result.blocks)
+          pageGeometries.push(result.geometry)
+        } finally {
+          page.cleanup()
+        }
+      }
+
+      return {
+        text: blocks.map((block) => block.text).join("\n"),
+        blocks,
+        pageGeometries,
+      }
+    }
+
+    const timedOut = new Promise<never>((_, reject) => {
+      timeout = setTimeout(() => {
+        void destroy()
+        reject(new PdfParseError("PDF_TIMEOUT"))
+      }, Math.max(1, timeoutMs))
+    })
+
+    return await Promise.race([parse(), timedOut])
+  } catch (error) {
+    throw toPdfParseError(error)
+  } finally {
+    if (timeout) clearTimeout(timeout)
+    await destroy()
+  }
 }
