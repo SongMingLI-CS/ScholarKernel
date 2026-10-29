@@ -52,13 +52,10 @@ const FULL_DIRTY_PAPER = [
 ].join("\n")
 
 describe("academic-rag pipeline", () => {
-  it("reorders interleaved double-column plain text left-then-right", () => {
+  it("preserves the reading order when plain text has no column coordinates", () => {
     const out = applyColumnReorder(DIRTY_DOUBLE_COLUMN)
-    expect(out.layout).toBe("double")
-    expect(out.text.indexOf("L1")).toBeLessThan(out.text.indexOf("R1"))
-    expect(out.text.indexOf("L4")).toBeLessThan(out.text.indexOf("R4"))
-    expect(out.text.startsWith("L1")).toBe(true)
-    expect(out.text).toContain("R4")
+    expect(out.layout).toBe("unknown")
+    expect(out.text).toBe(DIRTY_DOUBLE_COLUMN)
   })
 
   it("uses page midline from MediaBox width for coordinate blocks", () => {
@@ -112,6 +109,34 @@ describe("academic-rag pipeline", () => {
     expect(detectSectionTitle("2. Related Work")).toBe("Related Work")
     expect(detectSectionTitle("## 3. Methodology")).toBe("Methodology")
     expect(detectSectionTitle("References")).toBe("References")
+    expect(detectSectionTitle("2 方法")).toBe("Methodology")
+    expect(detectSectionTitle("参考文献")).toBe("References")
+    expect(detectSectionTitle("Introduction This paper studies attention")).toBeNull()
+  })
+
+  it("keeps absent page mappings unknown and only records observed page values", () => {
+    const text = "2 方法\n\n具体实现说明"
+    const unknown = semanticChunkAcademicText({
+      text,
+      pageGeometries: [{ page: 1, width: 612 }, { page: 2, width: 612 }],
+    })
+    expect(unknown[0]?.metadata.page).toBeUndefined()
+
+    const observed = semanticChunkAcademicText({
+      text,
+      blocks: [{ text: "具体实现说明", x: 40, y: 700, page: 7 }],
+    })
+    expect(observed[0]?.metadata.page).toBe(7)
+  })
+
+  it("splits long sections into bounded chunks without inventing page metadata", () => {
+    const paragraphs = Array.from({ length: 8 }, (_, index) => `段落${index + 1} ${"研究方法与实验结果。".repeat(40)}`)
+    const chunks = semanticChunkAcademicText({ text: `1. Methodology\n${paragraphs.join("\n")}` })
+
+    expect(chunks.length).toBeGreaterThan(1)
+    expect(chunks.every((chunk) => chunk.text.length <= 2400)).toBe(true)
+    expect(chunks.every((chunk) => chunk.metadata.page === undefined)).toBe(true)
+    expect(chunks.every((chunk) => chunk.metadata.section === "Methodology")).toBe(true)
   })
 
   it("formatAcademicChunksForContext emits section-tagged RAG blocks", () => {

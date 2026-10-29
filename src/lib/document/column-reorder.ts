@@ -124,8 +124,8 @@ export function reorderDoubleColumnBlocks(
 }
 
 /**
- * 纯文本双栏启发式：检测「左栏行 + 右栏行」交替穿插的乱序模式并重排。
- * 常见于 naive PDF 提取器按物理坐标扫描导致的交叉文本。
+ * 没有块坐标时无法可靠区分双栏交错和正常单栏段落，因此保留原顺序。
+ * PDF 页面带有 x/y 坐标时由 reorderDoubleColumnBlocks 处理双栏。
  */
 export function reorderInterleavedPlainText(raw: string): ColumnReorderResult {
   const lines = raw
@@ -133,32 +133,7 @@ export function reorderInterleavedPlainText(raw: string): ColumnReorderResult {
     .map((l) => l.trim())
     .filter(Boolean)
 
-  if (lines.length < 8) {
-    return { text: raw.trim(), layout: "unknown", blocks: lines.length }
-  }
-
-  const shortLines = lines.filter((l) => l.length <= 72)
-  if (shortLines.length < lines.length * 0.55) {
-    return { text: raw.trim(), layout: "single", blocks: lines.length }
-  }
-
-  const even: string[] = []
-  const odd: string[] = []
-  for (let i = 0; i < lines.length; i++) {
-    if (i % 2 === 0) even.push(lines[i]!)
-    else odd.push(lines[i]!)
-  }
-
-  const evenAvg = even.reduce((s, l) => s + l.length, 0) / Math.max(even.length, 1)
-  const oddAvg = odd.reduce((s, l) => s + l.length, 0) / Math.max(odd.length, 1)
-  const balance = Math.min(evenAvg, oddAvg) / Math.max(evenAvg, oddAvg)
-
-  if (balance < 0.35) {
-    return { text: raw.trim(), layout: "unknown", blocks: lines.length }
-  }
-
-  const reordered = [...even, ...odd].join("\n")
-  return { text: reordered, layout: "double", blocks: lines.length }
+  return { text: raw.trim(), layout: "unknown", blocks: lines.length }
 }
 
 export function applyColumnReorder(

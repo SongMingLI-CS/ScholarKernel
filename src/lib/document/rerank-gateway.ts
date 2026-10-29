@@ -8,6 +8,14 @@ export type RerankScore = {
   score: number
 }
 
+const RERANK_TIMEOUT_MS = 15_000
+
+function rerankTimeoutSignal(): AbortSignal | undefined {
+  return typeof AbortSignal !== "undefined" && "timeout" in AbortSignal
+    ? AbortSignal.timeout(RERANK_TIMEOUT_MS)
+    : undefined
+}
+
 function safeEnv(name: string): string {
   try {
     const v = (process.env as Record<string, string | undefined> | undefined)?.[name]
@@ -18,11 +26,34 @@ function safeEnv(name: string): string {
 }
 
 function tokenize(text: string): string[] {
-  return text
-    .toLowerCase()
-    .replace(/[^\p{L}\p{N}\s]/gu, " ")
-    .split(/\s+/)
-    .filter((t) => t.length > 1)
+  const tokens: string[] = []
+  const segments = text.toLowerCase().match(/\p{Script=Han}+|[\p{L}\p{N}]+/gu) ?? []
+  for (const segment of segments) {
+    if (/^\p{Script=Han}/u.test(segment)) {
+      if (segment.length === 1) tokens.push(segment)
+      else {
+        for (let i = 0; i < segment.length - 1; i++) tokens.push(segment.slice(i, i + 2))
+      }
+    } else if (segment.length > 1) {
+      tokens.push(segment)
+    }
+  }
+  return tokens
+}
+
+function normalizeScores(
+  rows: Array<{ index: number; score: number }>,
+  documentCount: number
+): RerankScore[] | null {
+  const seen = new Set<number>()
+  const scores: RerankScore[] = []
+  for (const row of rows) {
+    if (!Number.isInteger(row.index) || row.index < 0 || row.index >= documentCount) continue
+    if (!Number.isFinite(row.score) || seen.has(row.index)) continue
+    seen.add(row.index)
+    scores.push({ index: row.index, score: row.score })
+  }
+  return scores.length ? scores : null
 }
 
 /** BM25 风格轻量词项打分（无外部 API 时的兜底重排）。 */
@@ -74,12 +105,13 @@ async function cohereRerank(query: string, docs: string[]): Promise<RerankScore[
       documents: docs,
       top_n: Math.min(docs.length, RETRIEVAL_RECALL_TOP_K),
     }),
+    signal: rerankTimeoutSignal(),
   })
   if (!res.ok) return null
 
   const data = (await res.json()) as { results?: Array<{ index: number; relevance_score: number }> }
   if (!Array.isArray(data.results)) return null
-  return data.results.map((r) => ({ index: r.index, score: r.relevance_score }))
+  return normalizeScores(data.results.map((r) => ({ index: r.index, score: r.relevance_score })), docs.length)
 }
 
 async function bgeRerankViaHttp(query: string, docs: string[]): Promise<RerankScore[] | null> {
@@ -98,6 +130,7 @@ async function bgeRerankViaHttp(query: string, docs: string[]): Promise<RerankSc
       query,
       documents: docs,
     }),
+    signal: rerankTimeoutSignal(),
   })
   if (!res.ok) return null
 
@@ -107,13 +140,13 @@ async function bgeRerankViaHttp(query: string, docs: string[]): Promise<RerankSc
   }
 
   if (Array.isArray(data.results)) {
-    return data.results.map((r) => ({
+    return normalizeScores(data.results.map((r) => ({
       index: r.index,
       score: r.score ?? r.relevance_score ?? 0,
-    }))
+    })), docs.length)
   }
   if (Array.isArray(data.scores) && data.scores.length === docs.length) {
-    return data.scores.map((score, index) => ({ index, score }))
+    return normalizeScores(data.scores.map((score, index) => ({ index, score })), docs.length)
   }
   return null
 }
@@ -147,11 +180,21 @@ export async function rerankAcademicHits(
   }
 
   const docs = recall.map(hitToRerankDoc)
-  let scores: RerankScore[] | null = await cohereRerank(query, docs)
+  let scores: RerankScore[] | null = null
   let provider: RerankGatewayResult["rerankProvider"] = "cohere"
 
+  try {
+    scores = await cohereRerank(query, docs)
+  } catch {
+    scores = null
+  }
+
   if (!scores) {
-    scores = await bgeRerankViaHttp(query, docs)
+    try {
+      scores = await bgeRerankViaHttp(query, docs)
+    } catch {
+      scores = null
+    }
     provider = "bge-http"
   }
   if (!scores) {
@@ -159,7 +202,10 @@ export async function rerankAcademicHits(
     provider = "lexical"
   }
 
-  const ranked = [...scores].sort((a, b) => b.score - a.score).slice(0, finalTopK)
+  const ranked = [...scores]
+    .filter((score) => Number.isInteger(score.index) && score.index >= 0 && score.index < recall.length && Number.isFinite(score.score))
+    .sort((a, b) => b.score - a.score)
+    .slice(0, finalTopK)
   const reranked = ranked.map((r, idx) => ({
     ...recall[r.index]!,
     source_id: String(idx + 1),

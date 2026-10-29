@@ -8,6 +8,7 @@ import {
   isSurveyOrProgressTopic,
   mergeAcademicSearchHits,
   mergeAcademicSearchResponses,
+  reconcileAcademicSearchSources,
   RERANK_FINAL_TOP_K,
   resolveResearchQueryList,
   RETRIEVAL_RECALL_TOP_K,
@@ -55,6 +56,20 @@ describe("academic-search-strategy", () => {
     expect(merged.map((x) => x.title)).toEqual(["Paper A", "Paper B"])
     expect(merged[0]?.source_id).toBe("1")
     expect(merged[1]?.source_id).toBe("2")
+  })
+
+  it("deduplicates tracking variants and keeps citation IDs global across batches", () => {
+    const existing: AcademicSearchHit[] = [{ source_id: "1", title: "Paper A", url: "https://a.org/paper#abstract" }]
+    const incoming: AcademicSearchHit[] = [
+      { source_id: "1", title: "Paper A refreshed", url: "https://a.org/paper/?utm_source=search" },
+      { source_id: "2", title: "Paper B", url: "https://b.org/paper" },
+    ]
+
+    const reconciled = reconcileAcademicSearchSources(existing, incoming)
+
+    expect(reconciled.sources.map((hit) => hit.source_id)).toEqual(["1", "2"])
+    expect(reconciled.results.map((hit) => hit.source_id)).toEqual(["1", "2"])
+    expect(reconciled.results).toHaveLength(2)
   })
 
   it("formatResearchHitLines keeps every URL", () => {

@@ -7,8 +7,8 @@ import { z } from "zod"
 import { normalizeReferenceSections } from "./reference-sections"
 import {
   DEFAULT_ACADEMIC_SEARCH_MAX_RESULTS,
-  mergeAcademicSearchHits,
   mergeAcademicSearchResponses,
+  reconcileAcademicSearchSources,
   RERANK_FINAL_TOP_K,
   resolveResearchQueryList,
 } from "@/lib/tools/academic-search-strategy"
@@ -768,7 +768,9 @@ export class AgentExecutor {
             continue
           }
 
-          sources = mergeAcademicSearchHits(sources, Array.isArray(out?.results) ? out.results : [])
+          const reconciled = reconcileAcademicSearchSources(sources, Array.isArray(out?.results) ? out.results : [])
+          sources = reconciled.sources
+          out = { ...out, results: reconciled.results }
           const synthesized = synthesizeCitationsMarkdown(sources)
           citationsMarkdown = synthesized.markdown
 

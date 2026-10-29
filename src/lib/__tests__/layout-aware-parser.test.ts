@@ -20,12 +20,18 @@ describe("column-reorder", () => {
     expect(out.text.indexOf("Left B")).toBeLessThan(out.text.indexOf("Right B"))
   })
 
-  it("fixes interleaved plain text columns", () => {
+  it("keeps plain text in original order when layout coordinates are unavailable", () => {
     const raw = ["L1", "R1", "L2", "R2", "L3", "R3", "L4", "R4"].join("\n")
     const out = applyColumnReorder(raw)
-    expect(out.layout).toBe("double")
-    expect(out.text.startsWith("L1\nL2\nL3\nL4")).toBe(true)
-    expect(out.text.endsWith("R4")).toBe(true)
+    expect(out.layout).toBe("unknown")
+    expect(out.text).toBe(raw)
+  })
+
+  it("does not reorder a regular eight-line single-column passage", () => {
+    const lines = Array.from({ length: 8 }, (_, index) => `Sentence ${index + 1}: this paragraph remains in reading order.`)
+    const out = applyColumnReorder(lines.join("\n"))
+    expect(out.text.split("\n")).toEqual(lines)
+    expect(out.layout).toBe("unknown")
   })
 })
 

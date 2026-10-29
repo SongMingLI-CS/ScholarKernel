@@ -155,12 +155,48 @@ export function mergeAcademicSearchHits(
 
   for (const r of [...existing, ...incoming]) {
     const url = r.url?.trim()
-    if (!url || seen.has(url)) continue
-    seen.add(url)
+    const key = normalizeAcademicUrlKey(url)
+    if (!key || seen.has(key)) continue
+    seen.add(key)
     merged.push({ ...r, source_id: "" })
   }
 
   return merged.map((r, idx) => ({ ...r, source_id: String(idx + 1) }))
+}
+
+function normalizeAcademicUrlKey(raw: string | undefined): string {
+  if (!raw) return ""
+  try {
+    const url = new URL(raw)
+    url.hash = ""
+    for (const key of [...url.searchParams.keys()]) {
+      if (/^utm_/i.test(key)) url.searchParams.delete(key)
+    }
+    if (url.pathname.length > 1) url.pathname = url.pathname.replace(/\/+$/, "")
+    url.searchParams.sort()
+    return url.toString()
+  } catch {
+    return raw.trim()
+  }
+}
+
+/** Merge a new search batch and reassign each result to the global citation ID. */
+export function reconcileAcademicSearchSources(
+  existing: AcademicSearchHit[],
+  incoming: AcademicSearchHit[]
+): { sources: AcademicSearchHit[]; results: AcademicSearchHit[] } {
+  const sources = mergeAcademicSearchHits(existing, incoming)
+  const idByUrl = new Map(sources.map((hit) => [normalizeAcademicUrlKey(hit.url), hit.source_id]))
+  const seen = new Set<string>()
+  const results: AcademicSearchHit[] = []
+  for (const hit of incoming) {
+    const key = normalizeAcademicUrlKey(hit.url)
+    const sourceId = idByUrl.get(key)
+    if (!key || !sourceId || seen.has(key)) continue
+    seen.add(key)
+    results.push({ ...hit, source_id: sourceId })
+  }
+  return { sources, results }
 }
 
 export function mergeAcademicSearchResponses(
