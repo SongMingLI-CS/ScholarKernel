@@ -23,19 +23,36 @@ docker compose up --build -d
 
 ```bash
 npm install
-npm run db:push    # 首次同步 PostgreSQL schema
+npm run db:migrate # 将仓库中的迁移应用到已配置的本地数据库
 npm run dev        # http://localhost:3000
 ```
 
-## 质量门禁（Agent / CI）
+开发 schema 时使用 `npm run db:migrate:dev` 创建并应用迁移。部署使用 `npm run db:migrate`；不要用 `db push` 代替已提交的迁移历史。CI 从空 PostgreSQL 数据库执行迁移、重复执行迁移并比较 schema。
+
+## 质量检查
 
 ```bash
-npm test           # Vitest
+npm run test:quality   # 普通功能测试白名单，不触发外部模型 API
+npm run test:workflow # Agent Job 生命周期测试（跳过用户归属专项用例）
+npm run test:e2e      # Playwright 浏览器测试
+npx tsc --noEmit      # TypeScript
 npm run lint       # ESLint
 npm run build      # prisma generate + next build
 ```
 
-Agent 挂机闭环见 [AGENTS.md](./AGENTS.md) 与 [.cursor/rules/](.cursor/rules/)。
+`npm test` 运行 Vitest 全部测试；`test:quality` 是 CI 使用的普通功能测试集合。端到端测试覆盖健康接口和聊天输入框草稿交互，不发送模型请求。运行模型相关功能仍需在设置中提供对应供应商密钥。
+
+## 文献解析与 RAG 范围
+
+- PDF 文本提取由 PDF.js 完成；页面几何信息可用时按栏重排，随后按学术章节边界分块。页码只使用解析器实际观察到的页码，没有页码映射时保持未知。
+- 当前不包含 OCR。扫描版或仅含页面图片的 PDF 无法提取正文；加密、损坏或解析器不支持的文件会返回可读错误。
+- 检索结果按规范化 URL 去重并统一来源编号；可选 Reranker 不可用时回退到本地词项排序。该排序是规则处理，不是训练出的模型；项目没有宣称训练了嵌入模型或 Reranker。
+- `contextLimit` 是字符数上限，不是精确 Token 计数。模型输出上限按设置传给 AI SDK，但供应商仍可能另有限制。
+- 用量日志记录供应商返回的 Token 数；成本由仓库中的静态价格表估算，不等同供应商账单。
+
+架构和工程边界见 [架构说明](docs/ARCHITECTURE.md)。面试讲解建议结合 [面试指南](docs/INTERVIEW_GUIDE.md) 和 [最终工程修复报告](docs/audit/final-engineering-remediation.md)。
+
+Agent 本地协作约定见 [AGENTS.md](./AGENTS.md) 与 [.cursor/rules/](.cursor/rules/)。
 
 ## 环境变量
 
@@ -51,6 +68,9 @@ Agent 挂机闭环见 [AGENTS.md](./AGENTS.md) 与 [.cursor/rules/](.cursor/rule
 | `AUTH_PASSWORD` | 公开部署建议 | 设置后需登录；API 与 Proxy 接受 session cookie |
 | `AUTH_SESSION_SECRET` | Auth 启用时必填 | 会话签名密钥；未设时回退 `ENCRYPTION_SECRET` |
 | `AUTH_USER_ID` | 否 | 登录用户的 DB userId，默认 `primary_user` |
+| `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `GOOGLE_API_KEY` / `DEEPSEEK_API_KEY` | 否 | 服务端运行时模型密钥；也可在应用中配置。`GEMINI_API_KEY` 是 `GOOGLE_API_KEY` 的兼容别名 |
+| `TAVILY_API_KEY` / `SERPER_API_KEY` | 否 | 学术搜索 Provider；无密钥时不能执行对应在线检索 |
+| `COHERE_API_KEY` 或 `RERANK_API_URL` + `RERANK_API_KEY` | 否 | 可选服务端重排；缺少或调用失败时使用词项排序 |
 
 生成生产密钥示例：`openssl rand -base64 32`
 
