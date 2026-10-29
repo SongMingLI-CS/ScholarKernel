@@ -23,7 +23,7 @@
 | C：Academic RAG | `2b3054f` | `academic-semantic-chunker.ts`、`column-reorder.ts`、`rerank-gateway.ts`、`academic-search-strategy.ts`、Agent 来源映射和相应测试；无页码映射时保留未知，纯文本不猜栏序，来源 ID 跨批次统一。 |
 | D：Token 和模型调用 | `555d084` | `llm-utils.ts`、Agent runners、计费桥接/聚合、`TokenAuditLog.agentId` 迁移及 Token、流、RAG 回归测试；落实 `maxOutputTokens`，移除搜索字符数到模型 Token 的伪计量。 |
 | E：测试和 CI | `02ca1b3`, `a0aa5c6` | `package.json`、`.github/workflows/ci.yml`、`eslint.config.mjs`、`next.config.ts`、Playwright workspace 测试、`src/app/api/documents/parse/__tests__/route.test.ts` 和明确 UI lint 清理；CI 改用功能用例白名单并增加 E2E 与文档解析 API 测试。 |
-| F：文档整理 | 随本报告与指南的文档提交 | 更新 `README.md`、`.env.example`，新增架构说明、面试指南和本报告；九份已有审计 Markdown 保持原样并纳入文档提交。 |
+| F：文档整理 | `b9fc436` | 更新 `README.md`、`.env.example`，新增架构说明、面试指南和本报告；九份已有审计 Markdown 保持原样并纳入文档提交。 |
 
 ## 3. 各阶段修复概要
 
