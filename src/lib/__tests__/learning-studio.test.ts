@@ -8,7 +8,7 @@ describe("learning launch", () => {
   })
   it("reads a bounded draft from import metadata, without using ordinary messages", () => {
     expect(learningDraftFromMessages([{ metadata: { learningStudioDraft: "Explain this passage" } }])).toBe("Explain this passage")
-    expect(learningDraftFromMessages([{ content: "ordinary" }, { metadata: { learningStudioDraft: 3 } }])).toBeNull()
+    expect(learningDraftFromMessages([{ content: "ordinary", metadata: undefined }, { metadata: { learningStudioDraft: 3 } }])).toBeNull()
     expect(learningDraftFromMessages([{ metadata: { learningStudioDraft: "a".repeat(18001) } }])).toBeNull()
   })
 })

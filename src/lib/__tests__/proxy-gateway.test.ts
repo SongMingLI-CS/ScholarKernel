@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 import {
   checkProxyAuth,
@@ -16,10 +16,11 @@ describe("proxy-gateway", () => {
     process.env = { ...envSnapshot }
     delete process.env.PROXY_ACCESS_TOKEN
     delete process.env.PROXY_RATE_LIMIT_PER_MIN
-    process.env.NODE_ENV = "development"
+    vi.stubEnv("NODE_ENV", "development")
   })
 
   afterEach(() => {
+    vi.unstubAllEnvs()
     process.env = { ...envSnapshot }
     resetProxyRateLimitsForTests()
   })
@@ -41,7 +42,7 @@ describe("proxy-gateway", () => {
   })
 
   it("allows proxy in production when PROXY_ACCESS_TOKEN is unset (direct fallback)", async () => {
-    process.env.NODE_ENV = "production"
+    vi.stubEnv("NODE_ENV", "production")
     const req = new Request("http://localhost/api/proxy/openai/v1/models")
     await expect(checkProxyAuth(req)).resolves.toEqual({ ok: true })
   })

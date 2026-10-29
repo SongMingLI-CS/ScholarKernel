@@ -134,7 +134,15 @@ describe("token pricing", () => {
 
 describe("usage extraction", () => {
   it("normalizes AI SDK usage metadata", () => {
-    expect(extractUsageCounts({ inputTokens: 120, outputTokens: 80, totalTokens: 200 })).toEqual({
+    expect(
+      extractUsageCounts({
+        inputTokens: 120,
+        inputTokenDetails: { noCacheTokens: 120, cacheReadTokens: 0, cacheWriteTokens: 0 },
+        outputTokens: 80,
+        outputTokenDetails: { textTokens: 80, reasoningTokens: 0 },
+        totalTokens: 200,
+      })
+    ).toEqual({
       inputTokens: 120,
       outputTokens: 80,
     })
