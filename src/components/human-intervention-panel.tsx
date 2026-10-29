@@ -1,6 +1,7 @@
 "use client"
 
 import { appPath } from "@/lib/app-path"
+import { resolveHumanInterventionSession } from "@/lib/agent/human-intervention-gate"
 
 import { memo, useCallback, useState } from "react"
 
@@ -42,6 +43,16 @@ export const HumanInterventionPanel = memo(function HumanInterventionPanel({
 
       setSubmitting(true)
       try {
+        const decision =
+          action === "approve"
+            ? { action: "approve" as const }
+            : { action: "redirect" as const, instruction: instruction.trim() }
+        const localResolution = resolveHumanInterventionSession(sessionId, decision)
+        if (localResolution.ok) {
+          clearIntervention()
+          return
+        }
+
         const res = await fetch(appPath("/api/agent/intervention"), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
