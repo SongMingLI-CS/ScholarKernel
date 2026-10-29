@@ -3,6 +3,7 @@ import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
   output: "standalone",
   basePath: process.env.NEXT_PUBLIC_BASE_PATH || "",
+  allowedDevOrigins: ["127.0.0.1"],
   experimental: { cpus: 1 },
   outputFileTracingIncludes: {
     "/api/documents/parse": [

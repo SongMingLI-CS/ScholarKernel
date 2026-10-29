@@ -12,6 +12,8 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Audit evidence scripts are preserved verbatim and are not application source.
+    "docs/audit/evidence/probes/**",
   ]),
 ]);
 

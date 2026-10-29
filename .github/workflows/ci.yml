@@ -50,11 +50,23 @@ jobs:
           npx prisma migrate deploy
           npx prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --exit-code
 
-      - name: Unit tests
-        run: npm test
+      - name: Ordinary feature tests
+        run: npm run test:quality
+
+      - name: Agent job lifecycle tests
+        run: npm run test:workflow
+
+      - name: TypeScript
+        run: npx tsc --noEmit
 
       - name: Lint
         run: npm run lint
+
+      - name: Install Playwright browser
+        run: npx playwright install --with-deps chromium
+
+      - name: Browser tests
+        run: npm run test:e2e
 
       - name: Production build
         run: npm run build
