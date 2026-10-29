@@ -75,6 +75,25 @@ describe("executePeerReviewGroup checkpoint resume", () => {
     expect(generateReview).toHaveBeenCalledWith(expect.objectContaining({ personaId: "innovation_scout" }))
     expect(checkpoints.some((c) => (c as { markComplete?: string }).markComplete === "r2")).toBe(true)
   })
+
+  it("persists a completed reviewer before propagating the other reviewer's failure", async () => {
+    const nodes = buildPeerReviewWorkflowNodes()
+    const checkpoints: Array<{ markComplete?: string }> = []
+
+    await expect(executePeerReviewGroup({
+      groupNodes: nodes,
+      userInput: "Abstract: one reviewer failure",
+      deps: { activeProvider: { providerId: "deepseek_openai_compat", model: "deepseek-chat" } },
+      hooks: { onNodeLog: () => {}, onNodePatch: () => {} },
+      generateReviewStream: async ({ personaId }) => {
+        if (personaId === "innovation_scout") throw new Error("reviewer failed")
+        return "methodology review complete"
+      },
+      onCheckpoint: (patch) => { checkpoints.push(patch) },
+    })).rejects.toThrow("reviewer failed")
+
+    expect(checkpoints).toEqual([expect.objectContaining({ markComplete: "r1" })])
+  })
 })
 
 describe("executePeerReviewGroup stream isolation", () => {

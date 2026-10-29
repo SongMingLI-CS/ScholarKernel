@@ -31,7 +31,6 @@ import {
   logLlmCallFailure,
   normalizeModelId,
   providerSelfIntro,
-  type StreamTextCallExtras,
 } from "@/lib/agent/llm-utils"
 import { recordLlmUsageAsync } from "@/lib/billing/token-usage-bridge"
 import type { WorkflowNode } from "@/lib/agent/planner"
@@ -206,7 +205,8 @@ async function runSingleReviewer(
   hooks: ExecutePeerReviewGroupInput["hooks"],
   generateStream: PeerReviewGenerateStreamFn,
   nodeStartedAt: number,
-  cachedText?: string
+  cachedText?: string,
+  onComplete?: (text: string) => Promise<void>
 ): Promise<{ node: WorkflowNode; text: string; skipped: boolean }> {
   const persona = getPersonaById(personaId) ?? METHODOLOGY_CRITIC_PERSONA
 
@@ -282,6 +282,7 @@ async function runSingleReviewer(
         streamDrafts: { [personaId]: text },
       },
     })
+    await onComplete?.(text)
     return { node, text, skipped: false }
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
@@ -352,23 +353,36 @@ export async function executePeerReviewGroup(input: ExecutePeerReviewGroupInput)
     hooks.onNodePatch?.(r2Node!.id, { status: r2Cached ? "done" : "running" })
   }
 
-  const [r1Out, r2Out] = await Promise.all([
-    runSingleReviewer(r1Node!, r1PersonaId, subject, deps, hooks, generateStream, groupStartedAt, r1Cached),
-    runSingleReviewer(r2Node!, r2PersonaId, subject, deps, hooks, generateStream, groupStartedAt, r2Cached),
+  const reviewerOutcomes = await Promise.allSettled([
+    runSingleReviewer(
+      r1Node!,
+      r1PersonaId,
+      subject,
+      deps,
+      hooks,
+      generateStream,
+      groupStartedAt,
+      r1Cached,
+      (text) => persistStageCheckpoint(input, cpState, { methodologyReview: text, markComplete: "r1" })
+    ),
+    runSingleReviewer(
+      r2Node!,
+      r2PersonaId,
+      subject,
+      deps,
+      hooks,
+      generateStream,
+      groupStartedAt,
+      r2Cached,
+      (text) => persistStageCheckpoint(input, cpState, { innovationReview: text, markComplete: "r2" })
+    ),
   ])
-
-  if (!r1Out.skipped) {
-    await persistStageCheckpoint(input, cpState, {
-      methodologyReview: r1Out.text,
-      markComplete: "r1",
-    })
-  }
-  if (!r2Out.skipped) {
-    await persistStageCheckpoint(input, cpState, {
-      innovationReview: r2Out.text,
-      markComplete: "r2",
-    })
-  }
+  const r1Outcome = reviewerOutcomes[0]!
+  const r2Outcome = reviewerOutcomes[1]!
+  if (r1Outcome.status === "rejected") throw r1Outcome.reason
+  if (r2Outcome.status === "rejected") throw r2Outcome.reason
+  const r1Out = r1Outcome.value
+  const r2Out = r2Outcome.value
 
   hooks.onNodeLog?.(r1Node!.id, "【Debate Stream】Reviewer #1 批判意见已提交，进入激辩…")
   hooks.onNodeLog?.(r2Node!.id, "【Debate Stream】等待 Reviewer #2 回应…")

@@ -93,11 +93,38 @@ export {
 export class AgentExecutor {
   /** 本轮 run 内由工具节点写入的临时会话上下文（research 结果等），与 getChatHistory 合并。 */
   private sessionContextMessages: ChatHistoryEntry[] = []
+  private currentWorkflowNodes: WorkflowNode[] = []
 
   constructor(
     private deps: AgentExecutorDeps,
-    private hooks: AgentExecutorHooks = {}
-  ) {}
+    hooks: AgentExecutorHooks = {}
+  ) {
+    this.hooks = {
+      ...hooks,
+      onWorkflowPlanned: (nodes) => {
+        this.currentWorkflowNodes = nodes
+        hooks.onWorkflowPlanned?.(nodes)
+      },
+      onWorkflowTopologyPruned: (nodes) => {
+        this.currentWorkflowNodes = nodes
+        hooks.onWorkflowTopologyPruned?.(nodes)
+      },
+      onNodePatch: (id, patch) => {
+        const index = this.currentWorkflowNodes.findIndex((node) => node.id === id)
+        if (index >= 0) {
+          const current = this.currentWorkflowNodes[index]!
+          this.currentWorkflowNodes[index] = {
+            ...current,
+            ...patch,
+            metadata: patch.metadata ? { ...current.metadata, ...patch.metadata } : current.metadata,
+          }
+        }
+        hooks.onNodePatch?.(id, patch)
+      },
+    }
+  }
+
+  private hooks: AgentExecutorHooks
 
   private throwIfAborted() {
     assertNotAborted(this.deps.signal)
@@ -471,7 +498,7 @@ export class AgentExecutor {
       execute: async ({ path, content, focus }: { path?: string; content?: string; focus?: string }) => {
         const src =
           content ??
-          (path && this.deps.sourceApiBase ? await readSourceText(this.deps.sourceApiBase, path) : null)
+          (path && this.deps.sourceApiBase ? await readSourceText(this.deps.sourceApiBase, path, this.deps.signal) : null)
         if (!src) throw new Error("MissingSourceContent")
 
         const provider = createOllama({ baseURL: this.deps.activeProvider.baseUrl })
@@ -576,18 +603,30 @@ export class AgentExecutor {
   async run(
     userInput: string,
     options?: { planRetryMessage?: string }
-  ): Promise<{ final: string; nodes: WorkflowNode[]; sources: AcademicSearchHit[] }> {
+  ): Promise<{ final: string; nodes: WorkflowNode[]; sources: AcademicSearchHit[]; status: "done" | "partial" | "error" }> {
     console.log("🚀 Agent 收到输入:", userInput)
 
     if (isDirectChatInput(userInput)) {
       console.log("💬 走普通对话路由")
       const final = await this.runDirectChat(userInput)
-      return { final, nodes: [], sources: [] }
+      return { final, nodes: [], sources: [], status: "done" }
     }
 
     console.log("🛠️ 走任务规划路由")
     this.sessionContextMessages = []
-    let nodes = await this.plan(userInput, options?.planRetryMessage ? { retryMessage: options.planRetryMessage } : undefined)
+    if (this.deps.signal?.aborted) throw new AgentRunCancelledError()
+    this.throwIfAborted()
+    const checkpoint = this.deps.resumeCheckpoint
+    let nodes: WorkflowNode[]
+    if (checkpoint?.nodes.length) {
+      nodes = checkpoint.nodes.map((node) =>
+        node.status === "done" ? node : { ...node, status: "pending", error: undefined }
+      )
+      this.hooks.onWorkflowPlanned?.(nodes)
+    } else {
+      nodes = await this.plan(userInput, options?.planRetryMessage ? { retryMessage: options.planRetryMessage } : undefined)
+    }
+    this.currentWorkflowNodes = nodes
     const tools = this.buildTools()
     const inf = this.inferenceCfg()
 
@@ -599,19 +638,26 @@ export class AgentExecutor {
       },
     }
 
-    const results: Array<{ id: string; ok: boolean; summary: string; output?: unknown }> = []
-    let sources: AcademicSearchHit[] = []
+    const completedNodeIds = new Set(nodes.filter((node) => node.status === "done").map((node) => node.id))
+    const results: Array<{ id: string; ok: boolean; summary: string; output?: unknown }> = (checkpoint?.partialResults ?? [])
+      .filter((result) => completedNodeIds.has(result.id))
+    let sources: AcademicSearchHit[] = checkpoint?.sources ?? []
     let citationsMarkdown = ""
 
     for (let ni = 0; ni < nodes.length; ni++) {
       const n = nodes[ni]!
-      this.throwIfAborted()
+      if (n.status === "done") continue
+      if (this.deps.signal?.aborted) {
+        this.markWorkflowCancelled(nodes)
+        throw new AgentRunCancelledError()
+      }
       this.hooks.onNodeLog?.(n.id, `进入节点：${n.id}`)
       execHooks.onNodePatch?.(n.id, { status: "running" })
       execHooks.onNodeLog?.(n.id, `开始执行：${n.type} · ${n.provider}`)
       const nodeStartedAt = performance.now()
 
       try {
+        this.throwIfAborted()
         if (n.type === "peer_review" && isPeerReviewGroupStart(nodes, ni)) {
           const group = collectPeerReviewGroup(nodes, ni)
           const groupResults = await executePeerReviewGroup({
@@ -843,7 +889,7 @@ export class AgentExecutor {
           let text = ""
           try {
             this.hooks.onNodeLog?.(n.id, `调用工具：read_file(path="${path}")`)
-            text = await readSourceText(this.deps.sourceApiBase, path)
+            text = await readSourceText(this.deps.sourceApiBase, path, this.deps.signal)
           } catch (e) {
             const msg = e instanceof Error ? e.message : String(e)
             const durationMs = Math.round(performance.now() - nodeStartedAt)
@@ -942,6 +988,10 @@ export class AgentExecutor {
         results.push(reasoningResult)
         continue
       } catch (e) {
+        if (this.deps.signal?.aborted || isAbortError(e) || isAgentCancellationError(e)) {
+          this.markWorkflowCancelled(nodes, n.id)
+          throw new AgentRunCancelledError()
+        }
         const msg = e instanceof Error ? e.message : String(e)
         const durationMs = Math.round(performance.now() - nodeStartedAt)
         logLlmCallFailure(`run: node ${n.id} (${n.type})`, e)
@@ -970,23 +1020,54 @@ export class AgentExecutor {
             )
           }
         }
-        this.hooks.onNodePatch?.(n.id, { status: "error", error: msg, metadata: { durationMs } })
-        results.push({
-          id: n.id,
-          ok: false,
-          summary: `失败：${msg}`,
-          output: {
-            error_info: {
-              node_id: n.id,
-              node_type: n.type,
-              provider: n.provider,
-              message: msg,
-              durationMs,
-              is_networkish: isNetworkishError(e),
+        const failedNodes = n.type === "peer_review" && isPeerReviewGroupStart(nodes, ni)
+          ? collectPeerReviewGroup(nodes, ni)
+          : [n]
+        for (const failedNode of failedNodes) {
+          if (failedNode.status !== "done") this.hooks.onNodePatch?.(failedNode.id, { status: "error", error: msg, metadata: { durationMs } })
+        }
+        if (n.type === "peer_review" && isPeerReviewGroupStart(nodes, ni)) {
+          results.push(...failedNodes.map((failedNode) => {
+            const output = failedNode.output ?? {
+              error_info: {
+                node_id: failedNode.id,
+                node_type: failedNode.type,
+                provider: failedNode.provider,
+                message: msg,
+                durationMs,
+                is_networkish: isNetworkishError(e),
+              },
+            }
+            return {
+              id: failedNode.id,
+              ok: failedNode.status === "done",
+              summary: failedNode.status === "done" ? `完成：${failedNode.id}` : `失败：${msg}`,
+              output,
+            }
+          }))
+        } else {
+          results.push({
+            id: n.id,
+            ok: false,
+            summary: `失败：${msg}`,
+            output: {
+              error_info: {
+                node_id: n.id,
+                node_type: n.type,
+                provider: n.provider,
+                message: msg,
+                durationMs,
+                is_networkish: isNetworkishError(e),
+              },
             },
-          },
-        })
+          })
+        }
       }
+    }
+
+    if (this.deps.signal?.aborted) {
+      this.markWorkflowCancelled(nodes)
+      throw new AgentRunCancelledError()
     }
 
     const lastReasoning = results
@@ -1007,6 +1088,28 @@ export class AgentExecutor {
             ...results.map((r) => `- ${r.id}: ${r.ok ? "OK" : "ERR"} · ${r.summary}`),
           ].join("\n")
 
-    return { final, nodes, sources }
+    const failedCount = results.filter((result) => !result.ok).length
+    const succeededCount = results.length - failedCount
+    const status = failedCount === 0 ? "done" : succeededCount > 0 ? "partial" : "error"
+    return { final, nodes, sources, status }
   }
+
+  private markWorkflowCancelled(nodes: WorkflowNode[], currentNodeId?: string) {
+    for (const node of nodes) {
+      if (node.status === "pending" || node.status === "running" || node.status === "pending_approval" || node.id === currentNodeId) {
+        this.hooks.onNodePatch?.(node.id, { status: "cancelled", error: "任务已取消" })
+      }
+    }
+  }
+}
+
+export class AgentRunCancelledError extends Error {
+  constructor() {
+    super("Agent run cancelled")
+    this.name = "AgentRunCancelledError"
+  }
+}
+
+function isAgentCancellationError(error: unknown): boolean {
+  return error instanceof Error && (error.name === "AbortError" || error.name === "AgentRunCancelledError")
 }

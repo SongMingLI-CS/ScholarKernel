@@ -51,6 +51,8 @@ function statusClass(status: FlowStatus) {
         "shadow-[0_0_0_1px_oklch(0.58_0.22_25/0.45),0_0_22px_oklch(0.55_0.2_25/0.32)]",
         "sk-node-error"
       )
+    case "cancelled":
+      return "border-zinc-500/45 bg-zinc-500/10 text-zinc-300 shadow-[inset_0_0_0_1px_oklch(1_0_0/0.04)]"
     case "pending":
       return cn(
         "border-zinc-500/40 bg-zinc-500/8 text-zinc-300/85",

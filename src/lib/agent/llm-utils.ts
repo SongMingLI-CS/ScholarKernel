@@ -157,10 +157,10 @@ export async function consumeStreamTextOutput(
   return acc
 }
 
-export async function readSourceText(sourceApiBase: string, path: string) {
+export async function readSourceText(sourceApiBase: string, path: string, signal?: AbortSignal) {
   const qp = new URLSearchParams({ path })
   const url = `${sourceApiBase.replace(/\/$/, "")}/api/source?${qp.toString()}`
-  const res = await fetch(url)
+  const res = await fetch(url, { signal })
   if (!res.ok) {
     const txt = await res.text().catch(() => "")
     const isLogLike = /(^|\/)logs\/.+\.log$/i.test(path.replace(/\\/g, "/")) || /\.log$/i.test(path)

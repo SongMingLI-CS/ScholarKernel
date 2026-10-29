@@ -12,7 +12,7 @@ import type { ActiveProviderConfig } from "@/lib/agent/planner"
 export type { PeerReviewCheckpointData } from "@/lib/agent/peer-review-checkpoint"
 
 export type AgentJobCheckpoint = {
-  phase: "planning" | "running" | "done" | "error"
+  phase: "planning" | "running" | "done" | "partial" | "error" | "cancelled"
   nodes?: unknown[]
   partialResults?: unknown[]
   sources?: unknown[]
@@ -22,6 +22,12 @@ export type AgentJobCheckpoint = {
     action: "approve" | "redirect"
     instruction: string | null
     appliedAt: number
+  }
+  humanInterventionPending?: {
+    nodeId: string
+    reason: string
+    sessionId: string
+    at: number
   }
 }
 
@@ -81,16 +87,38 @@ export async function updateAgentJobPeerReviewCheckpoint(
 
 export async function completeAgentJob(
   id: string,
-  result: { final: string; nodes: unknown[]; sources: unknown[] }
+  result: { final: string; nodes: unknown[]; sources: unknown[]; status?: "done" | "partial" | "error" }
 ) {
+  const status = result.status ?? "done"
   return prisma.agentJob.update({
     where: { id },
     data: {
-      status: "done",
+      status,
       result: result as Prisma.InputJsonValue,
-      checkpoint: { phase: "done", nodes: result.nodes, sources: result.sources } as Prisma.InputJsonValue,
+      checkpoint: { phase: status, nodes: result.nodes, sources: result.sources } as Prisma.InputJsonValue,
     },
   })
+}
+
+export async function cancelAgentJob(id: string, checkpoint?: AgentJobCheckpoint) {
+  return prisma.agentJob.update({
+    where: { id },
+    data: {
+      status: "cancelled",
+      error: null,
+      errorMessage: null,
+      errorStack: null,
+      ...(checkpoint ? { checkpoint: checkpoint as Prisma.InputJsonValue } : {}),
+    },
+  })
+}
+
+export async function claimAgentJobForResume(id: string, userId: string) {
+  const claimed = await prisma.agentJob.updateMany({
+    where: { id, userId, status: { in: ["cancelled", "error", "partial"] } },
+    data: { status: "running", error: null, errorMessage: null, errorStack: null },
+  })
+  return claimed.count === 1
 }
 
 export async function failAgentJob(

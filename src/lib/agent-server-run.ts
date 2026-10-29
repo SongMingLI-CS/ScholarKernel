@@ -22,6 +22,7 @@ export type AgentRunInput = {
   runtimeKeys?: AgentExecutorDeps["runtimeKeys"]
   sourceApiBase?: string
   signal?: AbortSignal
+  resumeCheckpoint?: AgentExecutorDeps["resumeCheckpoint"]
 }
 
 export function mergeRuntimeKeysForServer(
@@ -66,6 +67,7 @@ export async function runAgentOnServer(
       sourceApiBase: input.sourceApiBase,
       signal: input.signal,
       localOnly: input.localOnly,
+      resumeCheckpoint: input.resumeCheckpoint,
     },
     hooks
   )

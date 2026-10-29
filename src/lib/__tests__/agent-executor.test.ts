@@ -1,6 +1,8 @@
-import { describe, expect, it } from "vitest"
+import { afterEach, describe, expect, it, vi } from "vitest"
 
 import {
+  AgentExecutor,
+  AgentRunCancelledError,
   WorkflowPlanParseError,
   buildChatHistoryForExecutor,
   extractLlmHistory,
@@ -8,6 +10,7 @@ import {
   isDirectChatInput,
   parsePlan,
 } from "@/lib/agent-executor"
+import type { WorkflowNode } from "@/lib/agent/planner"
 
 describe("agent-executor helpers", () => {
   describe("isDirectChatInput", () => {
@@ -90,5 +93,71 @@ describe("agent-executor helpers", () => {
       expect(err.causeDetail).toBe("missing tasks")
       expect(err.name).toBe("WorkflowPlanParseError")
     })
+  })
+})
+
+describe("AgentExecutor workflow outcomes", () => {
+  afterEach(() => vi.restoreAllMocks())
+  it("returns updated node failure state and an error run outcome", async () => {
+    const node: WorkflowNode = { id: "read-1", type: "read_file", provider: "cloud", status: "pending", input: {} }
+    vi.spyOn(AgentExecutor.prototype, "plan").mockResolvedValue([node])
+    const executor = new AgentExecutor({ activeProvider: { providerId: "ollama", model: "local" } })
+
+    const result = await executor.run("请读取一个项目文件并总结")
+
+    expect(result.status).toBe("error")
+    expect(result.nodes[0]?.status).toBe("error")
+  })
+
+  it("marks active and pending nodes cancelled when the run signal is aborted", async () => {
+    const controller = new AbortController()
+    const node: WorkflowNode = { id: "read-1", type: "read_file", provider: "cloud", status: "pending", input: {} }
+    vi.spyOn(AgentExecutor.prototype, "plan").mockResolvedValue([node])
+    const patches: Array<{ id: string; status?: string }> = []
+    const executor = new AgentExecutor(
+      { activeProvider: { providerId: "ollama", model: "local" }, signal: controller.signal },
+      { onNodePatch: (id, patch) => {
+        patches.push({ id, status: patch.status })
+        if (patch.status === "running") controller.abort()
+      } }
+    )
+
+    await expect(executor.run("请读取一个项目文件并总结")).rejects.toBeInstanceOf(AgentRunCancelledError)
+    expect(patches).toContainEqual({ id: "read-1", status: "cancelled" })
+  })
+
+  it("resumes from completed nodes without invoking the planner", async () => {
+    const plan = vi.spyOn(AgentExecutor.prototype, "plan")
+    const executor = new AgentExecutor({
+      activeProvider: { providerId: "ollama", model: "local" },
+      resumeCheckpoint: {
+        nodes: [{ id: "done-1", type: "read_file", provider: "cloud", status: "done", output: { text: "saved" } }],
+        partialResults: [{ id: "done-1", ok: true, summary: "saved output", output: { text: "saved" } }],
+      },
+    })
+
+    const result = await executor.run("继续任务")
+
+    expect(plan).not.toHaveBeenCalled()
+    expect(result.status).toBe("done")
+    expect(result.nodes[0]?.status).toBe("done")
+  })
+
+  it("reports partial when a resumed completed node is followed by a failed node", async () => {
+    const executor = new AgentExecutor({
+      activeProvider: { providerId: "ollama", model: "local" },
+      resumeCheckpoint: {
+        nodes: [
+          { id: "done-1", type: "read_file", provider: "cloud", status: "done", output: { text: "saved" } },
+          { id: "read-2", type: "read_file", provider: "cloud", status: "pending", input: {} },
+        ],
+        partialResults: [{ id: "done-1", ok: true, summary: "saved output", output: { text: "saved" } }],
+      },
+    })
+
+    const result = await executor.run("继续刚才的论文分析任务并整理结论")
+
+    expect(result.status).toBe("partial")
+    expect(result.nodes.map((node) => node.status)).toEqual(["done", "error"])
   })
 })

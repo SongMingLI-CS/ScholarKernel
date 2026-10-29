@@ -1,19 +1,22 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
-const { create, findFirst, update } = vi.hoisted(() => ({
+const { create, findFirst, update, updateMany } = vi.hoisted(() => ({
   create: vi.fn(),
   findFirst: vi.fn(),
   update: vi.fn(),
+  updateMany: vi.fn(),
 }))
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
-    agentJob: { create, findFirst, update },
+    agentJob: { create, findFirst, update, updateMany },
   },
 }))
 
 import {
   completeAgentJob,
+  cancelAgentJob,
+  claimAgentJobForResume,
   createAgentJob,
   failAgentJob,
   getAgentJobForUser,
@@ -55,6 +58,27 @@ describe("agent-jobs", () => {
     update.mockResolvedValueOnce({ id: "j1", status: "done" })
     const job = await completeAgentJob("j1", { final: "ok", nodes: [], sources: [] })
     expect(job.status).toBe("done")
+  })
+
+  it("completeAgentJob preserves partial outcome status", async () => {
+    update.mockResolvedValueOnce({ id: "j1", status: "partial" })
+    await completeAgentJob("j1", { final: "partial result", nodes: [], sources: [], status: "partial" })
+    expect(update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: "partial" }) }))
+  })
+
+  it("cancelAgentJob stores a resumable cancelled checkpoint", async () => {
+    update.mockResolvedValueOnce({ id: "j1", status: "cancelled" })
+    const job = await cancelAgentJob("j1", { phase: "cancelled", nodes: [] })
+    expect(job.status).toBe("cancelled")
+    expect(update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: "cancelled", checkpoint: { phase: "cancelled", nodes: [] } }) }))
+  })
+
+  it("claims only resumable job states", async () => {
+    updateMany.mockResolvedValueOnce({ count: 1 })
+    await expect(claimAgentJobForResume("j1", "u1")).resolves.toBe(true)
+    expect(updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: "j1", userId: "u1", status: { in: ["cancelled", "error", "partial"] } },
+    }))
   })
 
   it("failAgentJob stores error message and stack", async () => {

@@ -111,7 +111,9 @@ enum AgentJobStatus {
   pending
   running
   done
+  partial
   error
+  cancelled
 }
 
 model AgentJob {

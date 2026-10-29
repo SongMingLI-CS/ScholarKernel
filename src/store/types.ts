@@ -69,7 +69,7 @@ export type TopologyState = {
   edges: Array<{ id: string; source: string; target: string }>
 }
 
-export type WorkflowNodeStatus = "pending" | "running" | "done" | "error" | "pending_approval"
+export type WorkflowNodeStatus = "pending" | "running" | "done" | "error" | "cancelled" | "pending_approval"
 export type WorkflowNodeType = "read_file" | "reasoning" | "audit" | "research" | "peer_review"
 export type WorkflowNodeProvider = "local" | "cloud"
 

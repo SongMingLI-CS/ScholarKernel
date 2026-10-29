@@ -58,6 +58,11 @@ export type AgentExecutorDeps = {
   sourceApiBase?: string
   signal?: AbortSignal
   localOnly?: boolean
+  resumeCheckpoint?: {
+    nodes: WorkflowNode[]
+    partialResults?: SubtaskResult[]
+    sources?: AcademicSearchHit[]
+  }
 }
 
 export type AgentExecutorHooks = {
