@@ -151,6 +151,7 @@ model TokenAuditLog {
   userId         String
   user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   jobId          String?
+  agentId        String?
   modelUsed      String
   inputTokens    Int      @default(0)
   outputTokens   Int      @default(0)
@@ -160,4 +161,5 @@ model TokenAuditLog {
 
   @@index([userId, createdAt])
   @@index([userId, jobId])
+  @@index([userId, agentId, createdAt])
 }

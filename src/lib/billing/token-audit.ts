@@ -30,6 +30,7 @@ export async function recordTokenUsage(input: RecordTokenUsageInput): Promise<vo
       data: {
         userId: input.userId,
         jobId: input.jobId ?? null,
+        agentId: input.agentId ?? null,
         modelUsed: input.modelUsed,
         inputTokens,
         outputTokens,

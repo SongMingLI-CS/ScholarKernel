@@ -25,6 +25,7 @@ import {
   type PeerReviewCheckpointData,
 } from "@/lib/agent/peer-review-checkpoint"
 import {
+  buildReasoningOutputTokenBudget,
   buildGenModelForCloudInference,
   consumeStreamTextOutput,
   llmCallSettings,
@@ -106,7 +107,7 @@ export function enrichPeerReviewSubject(subject: string): string {
   if (chunks.length <= 1) return trimmed
 
   const rag = formatAcademicChunksForContext(chunks)
-  return [trimmed, "", rag].join("\n")
+  return rag || trimmed
 }
 
 function personaIdFromNode(node: WorkflowNode, fallback: PeerReviewPersonaId): PeerReviewPersonaId {
@@ -152,6 +153,7 @@ async function defaultGenerateReviewStream(
     system: [providerSelfIntro(active), "", systemPrompt].join("\n"),
     prompt: userPrompt,
     temperature: deps.inference?.temperature ?? 0.35,
+    maxOutputTokens: buildReasoningOutputTokenBudget(deps.inference?.maxTokens),
     ...llmCallSettings(deps.signal),
   })
 
@@ -166,9 +168,11 @@ async function defaultGenerateReviewStream(
     deps.signal,
     {
       onStreamComplete: ({ ttftMs }) => {
-        void streamed.usage.then((usage) => {
-          recordLlmUsageAsync(deps, modelUsed, usage, ttftMs)
-        })
+        void Promise.resolve(streamed.usage)
+          .then((usage) => {
+            recordLlmUsageAsync(deps, modelUsed, usage, ttftMs, personaId)
+          })
+          .catch((error: unknown) => logLlmCallFailure(`peer review ${personaId}: usage unavailable`, error))
       },
     }
   )

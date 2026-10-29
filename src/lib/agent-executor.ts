@@ -49,6 +49,7 @@ import {
   assertNotAborted,
   asRecord,
   buildLlmMessages,
+  buildReasoningOutputTokenBudget,
   clampTextByChars,
   createPlanningFetch,
   extractLlmHistory,
@@ -70,7 +71,7 @@ import {
   trimHistoryToContextLimit,
   type GenModel,
 } from "@/lib/agent/llm-utils"
-import { recordLlmUsageAsync, recordSearchUsageAsync } from "@/lib/billing/token-usage-bridge"
+import { recordLlmUsageAsync } from "@/lib/billing/token-usage-bridge"
 export {
   buildChatHistoryForExecutor,
   extractLlmHistory,
@@ -164,16 +165,18 @@ export class AgentExecutor {
     const cl = this.deps.inference?.contextLimit
     return {
       temperature: typeof t === "number" && Number.isFinite(t) ? Math.max(0, Math.min(2, t)) : undefined,
-      // NOTE: `ai` SDK v6's `generateText` CallSettings doesn't expose a stable maxTokens option
-      // across providers in our current setup. Keep it in settings for future wiring.
       maxTokens: typeof mt === "number" && Number.isFinite(mt) ? Math.max(1, Math.floor(mt)) : undefined,
       contextLimit: typeof cl === "number" && Number.isFinite(cl) ? Math.max(0, Math.floor(cl)) : undefined,
     }
   }
 
   /** 构造含完整历史链条的 messages（system 由调用方单独传入）。 */
-  private buildConversationMessages(currentUserInput: string, currentUserContent: string): LlmHistoryMessage[] {
-    const rawMessages = this.getMergedChatHistory()
+  private buildConversationMessages(
+    currentUserInput: string,
+    currentUserContent: string,
+    includeSessionContext = true
+  ): LlmHistoryMessage[] {
+    const rawMessages = includeSessionContext ? this.getMergedChatHistory() : this.deps.getChatHistory?.() ?? []
     const raw = rawMessages.length ? rawMessages : []
     const history = trimHistoryToContextLimit(
       extractLlmHistory(raw, currentUserInput),
@@ -298,6 +301,7 @@ export class AgentExecutor {
         systemPlain: `${sysTextArray}\n\n${planningIntroDeepSeek}`,
         messages: planMessages,
         temperature: inf.temperature ?? 0.2,
+        maxOutputTokens: buildReasoningOutputTokenBudget(inf.maxTokens),
         signal: this.deps.signal,
       })
       planGen = planResult.gen
@@ -316,6 +320,7 @@ export class AgentExecutor {
           system: `${sysTextArray}\n\n${providerSelfIntro(active)}`,
           messages: planMessages,
           temperature: inf.temperature ?? 0.2,
+          maxOutputTokens: buildReasoningOutputTokenBudget(inf.maxTokens),
           ...this.llmSettings(),
         })
       } else if (active.providerId === "google") {
@@ -326,6 +331,7 @@ export class AgentExecutor {
           system: `${sysTextArray}\n\n${providerSelfIntro(active)}`,
           messages: planMessages,
           temperature: inf.temperature ?? 0.2,
+          maxOutputTokens: buildReasoningOutputTokenBudget(inf.maxTokens),
           ...this.llmSettings(),
         })
       } else if (active.providerId === "openai" || active.providerId === "deepseek_openai_compat") {
@@ -342,6 +348,7 @@ export class AgentExecutor {
           systemPlain: `${sysTextArray}\n\n${providerSelfIntro(active)}`,
           messages: planMessages,
           temperature: inf.temperature ?? 0.2,
+          maxOutputTokens: buildReasoningOutputTokenBudget(inf.maxTokens),
           signal: this.deps.signal,
         })
         planGen = planResult.gen
@@ -363,7 +370,7 @@ export class AgentExecutor {
       dsKey
         ? "deepseek-chat"
         : normalizeModelId(active.providerId, active.model)
-    recordLlmUsageAsync(this.deps, planModelUsed, planGen.usage)
+    recordLlmUsageAsync(this.deps, planModelUsed, planGen.usage, undefined, "planner")
 
     const list = usesStructuredJson
       ? parseAndValidateTaskList(planGen.text, planGen.output as unknown)
@@ -507,6 +514,7 @@ export class AgentExecutor {
         const auditGen = await generateText({
           model,
           ...llmCallSettings(this.deps.signal),
+          maxOutputTokens: buildReasoningOutputTokenBudget(inf.maxTokens),
           temperature: Math.min(inf.temperature ?? 0.1, 0.2),
           system: [
             "你是严谨的代码审计助手。",
@@ -523,7 +531,7 @@ export class AgentExecutor {
             clampTextByChars(src, inf.contextLimit),
           ].join("\n"),
         })
-        recordLlmUsageAsync(this.deps, auditModel, auditGen.usage)
+        recordLlmUsageAsync(this.deps, auditModel, auditGen.usage, undefined, "local-source-audit")
         return { ok: true, path, focus, report: auditGen.text }
       },
     })
@@ -562,6 +570,7 @@ export class AgentExecutor {
         const reviewGen = await generateText({
           model,
           ...llmCallSettings(this.deps.signal),
+          maxOutputTokens: buildReasoningOutputTokenBudget(inf.maxTokens),
           temperature: inf.temperature ?? 0.4,
           system: [
             "你是资深科研助理，擅长学术综述写作。",
@@ -571,7 +580,7 @@ export class AgentExecutor {
           ].join("\n"),
           prompt: [`Topic: ${topic}`, constraints ? `Constraints: ${constraints}` : ""].filter(Boolean).join("\n"),
         })
-        recordLlmUsageAsync(this.deps, normalizedModel, reviewGen.usage)
+        recordLlmUsageAsync(this.deps, normalizedModel, reviewGen.usage, undefined, "global-literature-review")
 
         return { ok: true, provider: active.providerId, review: reviewGen.text }
       },
@@ -803,16 +812,6 @@ export class AgentExecutor {
           }
 
           this.hooks.onNodeLog?.(n.id, `正在分析 ${sources.length} 篇相关论文（本轮新增 ${out.total} 条）…`)
-          const resultChars = (out.results ?? []).reduce(
-            (sum, hit) => sum + (hit.title?.length ?? 0) + (hit.snippet?.length ?? 0),
-            0
-          )
-          recordSearchUsageAsync(
-            this.deps,
-            out.provider === "serper" ? "serper" : "tavily",
-            queryList.join(" | "),
-            resultChars
-          )
           this.pushResearchIntoSessionContext(out, citationsMarkdown, n.id)
           this.hooks.onNodeLog?.(
             n.id,
@@ -984,7 +983,7 @@ export class AgentExecutor {
           tools,
           runtimeKeys: this.effectiveRuntimeKeys(),
           inference: inf,
-          buildConversationMessages: (a, b) => this.buildConversationMessages(a, b),
+          buildConversationMessages: (a, b) => this.buildConversationMessages(a, b, false),
           nodeStartedAt,
         })
         results.push(reasoningResult)

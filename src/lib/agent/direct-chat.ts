@@ -83,9 +83,11 @@ export async function streamDirectChat(ctx: DirectChatContext): Promise<string> 
     deps.signal,
     {
       onStreamComplete: ({ ttftMs }) => {
-        void streamed.usage.then((usage) => {
-          recordLlmUsageAsync(deps, normalizeModelId(active.providerId, active.model), usage, ttftMs)
-        })
+        void Promise.resolve(streamed.usage)
+          .then((usage) => {
+            recordLlmUsageAsync(deps, normalizeModelId(active.providerId, active.model), usage, ttftMs, "direct-chat")
+          })
+          .catch((error: unknown) => logLlmCallFailure("streamDirectChat: usage unavailable", error))
       },
     }
   )

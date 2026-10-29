@@ -1,10 +1,9 @@
 import type { LanguageModelUsage } from "ai"
 
-import { estimateSearchTokenUsage } from "./token-pricing"
-
 export type RecordTokenUsageInput = {
   userId: string
   jobId?: string
+  agentId?: string
   modelUsed: string
   inputTokens: number
   outputTokens: number
@@ -28,7 +27,8 @@ export function recordLlmUsageAsync(
   ctx: { userId?: string; jobId?: string; recordTokenUsage?: (input: RecordTokenUsageInput) => void },
   modelUsed: string,
   usage: LanguageModelUsage | undefined | null,
-  ttftMs?: number | null
+  ttftMs?: number | null,
+  agentId?: string
 ): void {
   if (!ctx.userId || !ctx.recordTokenUsage) return
   const counts = extractUsageCounts(usage)
@@ -36,25 +36,9 @@ export function recordLlmUsageAsync(
   ctx.recordTokenUsage({
     userId: ctx.userId,
     jobId: ctx.jobId,
+    agentId,
     modelUsed,
     ...counts,
     ttftMs,
-  })
-}
-
-export function recordSearchUsageAsync(
-  ctx: { userId?: string; jobId?: string; recordTokenUsage?: (input: RecordTokenUsageInput) => void },
-  provider: "tavily" | "serper",
-  query: string,
-  resultChars: number
-): void {
-  if (!ctx.userId || !ctx.recordTokenUsage) return
-  const tokens = estimateSearchTokenUsage(query, resultChars)
-  ctx.recordTokenUsage({
-    userId: ctx.userId,
-    jobId: ctx.jobId,
-    modelUsed: provider === "tavily" ? "tavily-search" : "serper-search",
-    inputTokens: tokens,
-    outputTokens: 0,
   })
 }

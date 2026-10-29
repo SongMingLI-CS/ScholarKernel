@@ -246,16 +246,19 @@ export function mergeAcademicSearchResponses(
   }
 }
 
-/** 子任务 JSON 中保留全部引用元数据，仅压缩摘要预览 */
-export function serializeResearchOutputForReasoning(output: Record<string, unknown>) {
+/** 可按调用方需要省去引用详情，避免与单独的引用区重复占用上下文。 */
+export function serializeResearchOutputForReasoning(
+  output: Record<string, unknown>,
+  options?: { includeCitationDetails?: boolean }
+) {
   const results = Array.isArray(output["results"]) ? (output["results"] as AcademicSearchHit[]) : []
   const references = results.map((r, i) => {
     const sid = r.source_id?.trim() ? r.source_id.trim() : String(i + 1)
     return {
       source_id: sid,
-      title: r.title,
-      url: r.url,
-      publishedAt: r.publishedAt,
+      ...(options?.includeCitationDetails === false
+        ? {}
+        : { title: r.title, url: r.url, publishedAt: r.publishedAt }),
       snippet_preview: r.snippet?.trim()
         ? truncateSnippet(r.snippet, 360)
         : undefined,
@@ -282,19 +285,22 @@ export function clampReasoningPrompt(text: string, limit: number | undefined): s
 
   const markerIdx = text.indexOf(REASONING_JSON_MARKER)
   if (markerIdx < 0) {
-    return text.slice(0, lim) + "\n\n[...truncated by contextLimit...]"
+    return text.slice(0, lim)
   }
 
   const head = text.slice(0, markerIdx + REASONING_JSON_MARKER.length)
-  const jsonPart = text.slice(markerIdx + REASONING_JSON_MARKER.length)
-  const reserved = lim - head.length - 64
-  if (reserved <= 0) return head + "\n\n[...truncated by contextLimit...]"
+  if (head.length >= lim) return head.slice(0, lim)
 
-  const jsonBudget = Math.max(200, reserved)
-  const trimmedJson =
-    jsonPart.length <= jsonBudget
-      ? jsonPart
-      : `${jsonPart.slice(0, jsonBudget)}\n\n[...subtask JSON truncated; full references kept above...]`
+  const body = text.slice(head.length)
+  const marker = "\n\n[...subtask results truncated by contextLimit...]\n\n"
+  const available = lim - head.length
+  if (body.length <= available) return head + body
+  if (available <= marker.length) return head + body.slice(0, available)
 
-  return head + trimmedJson
+  // Keep both the beginning of the result JSON and the final tool guidance.
+  // The visible marker makes the omitted middle explicit; no part can exceed lim.
+  const retained = available - marker.length
+  const leading = Math.ceil(retained * 0.7)
+  const trailing = retained - leading
+  return `${head}${body.slice(0, leading)}${marker}${trailing > 0 ? body.slice(-trailing) : ""}`
 }

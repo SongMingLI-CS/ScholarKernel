@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest"
 
+import { clampReasoningPrompt } from "@/lib/tools/academic-search-strategy"
 import {
   AcademicChunkArraySchema,
   detectSectionTitle,
@@ -149,10 +150,30 @@ describe("academic-rag pipeline", () => {
     expect(ctx).toContain("[Methodology")
   })
 
-  it("enrichPeerReviewSubject appends semantic RAG for long submissions", () => {
+  it("bounds reasoning prompts and preserves references and final tool guidance when possible", () => {
+    const prompt = [
+      "用户需求：比较研究",
+      "完整参考文献：[1] Paper A https://example.org/paper-a",
+      "已完成子任务结果（JSON）：",
+      "{" + '"result":"' + "x".repeat(500) + '"}',
+      "",
+      "你可以：调用工具",
+    ].join("\n")
+
+    const clamped = clampReasoningPrompt(prompt, 300)
+
+    expect(clamped.length).toBeLessThanOrEqual(300)
+    expect(clamped).toContain("Paper A https://example.org/paper-a")
+    expect(clamped).toContain("[...subtask results truncated by contextLimit...]")
+    expect(clamped.endsWith("你可以：调用工具")).toBe(true)
+    expect(clampReasoningPrompt("x".repeat(50), 12)).toBe("x".repeat(12))
+  })
+
+  it("enrichPeerReviewSubject replaces duplicate full text with semantic RAG chunks", () => {
     const longSubject = FULL_DIRTY_PAPER.repeat(3)
     const enriched = enrichPeerReviewSubject(longSubject)
-    expect(enriched.length).toBeGreaterThan(longSubject.length)
+    expect(enriched).not.toContain(longSubject)
+    expect(enriched.startsWith("[学术语义切片")).toBe(true)
     expect(enriched).toContain("[学术语义切片")
   })
 

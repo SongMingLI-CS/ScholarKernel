@@ -18,6 +18,12 @@ export type BillingMetricsPayload = {
   usagePercent: number
   quotaExceeded: boolean
   recentJobs: RecentJobMetric[]
+  agentUsage: Array<{
+    agentId: string
+    inputTokens: number
+    outputTokens: number
+    costUsd: number
+  }>
 }
 
 export async function getUserBillingMetrics(userId: string): Promise<BillingMetricsPayload> {
@@ -34,6 +40,11 @@ export async function getUserBillingMetrics(userId: string): Promise<BillingMetr
       ttftMs: true,
       createdAt: true,
     },
+  })
+  const agentGroups = await prisma.tokenAuditLog.groupBy({
+    by: ["agentId"],
+    where: { userId },
+    _sum: { inputTokens: true, outputTokens: true, calculatedCost: true },
   })
 
   const orderedJobIds: string[] = []
@@ -61,5 +72,13 @@ export async function getUserBillingMetrics(userId: string): Promise<BillingMetr
   return {
     ...snapshot,
     recentJobs,
+    agentUsage: agentGroups
+      .map((group) => ({
+        agentId: group.agentId ?? "unknown",
+        inputTokens: group._sum.inputTokens ?? 0,
+        outputTokens: group._sum.outputTokens ?? 0,
+        costUsd: Math.round((group._sum.calculatedCost ?? 0) * 1e6) / 1e6,
+      }))
+      .sort((a, b) => b.costUsd - a.costUsd),
   }
 }

@@ -19,6 +19,7 @@ import {
   type ChatHistoryEntry,
 } from "@/lib/agent/planner"
 import type { AgentExecutorDeps, LlmHistoryMessage } from "@/lib/agent/executor-types"
+import { recordLlmUsageAsync } from "@/lib/billing/token-usage-bridge"
 
 export type GenModel = Parameters<typeof generateText>[0]["model"]
 
@@ -26,7 +27,7 @@ export const PROXY_SDK_FETCH = proxyAwareFetch as typeof fetch
 
 export const LLM_STREAM_TIMEOUT_MS = 60_000
 export const REASONING_TOOL_LOOP_STEPS = 12
-export const REASONING_MIN_OUTPUT_TOKENS = 8192
+export const REASONING_MAX_OUTPUT_TOKENS = 8192
 
 export type StreamTextCallExtras = {
   experimental_continueOnLimit?: boolean
@@ -43,6 +44,7 @@ export function mergeAbortSignals(primary?: AbortSignal | null, secondary?: Abor
 export function llmCallSettings(signal?: AbortSignal) {
   return {
     timeout: LLM_STREAM_TIMEOUT_MS,
+    maxRetries: 1,
     ...(signal ? { abortSignal: signal } : {}),
   }
 }
@@ -69,7 +71,7 @@ export function createPlanningFetch(onHttpError: (msg: string) => void, abortSig
 
 export function buildReasoningOutputTokenBudget(maxTokens: number | undefined) {
   const configured = typeof maxTokens === "number" && Number.isFinite(maxTokens) ? Math.floor(maxTokens) : 1024
-  return Math.max(configured, REASONING_MIN_OUTPUT_TOKENS)
+  return Math.max(1, Math.min(configured, REASONING_MAX_OUTPUT_TOKENS))
 }
 
 export function formatResearchResultsForSessionContext(out: AcademicSearchResponse, citationsMarkdown: string): string {
@@ -81,6 +83,7 @@ const ABSORBED_STREAM_PART_TYPES = new Set([
   "text-end",
   "reasoning-start",
   "reasoning-end",
+  "reasoning-delta",
   "tool-input-start",
   "tool-input-delta",
   "tool-input-end",
@@ -113,7 +116,7 @@ export async function consumeStreamTextOutput(
     for await (const part of streamed.fullStream) {
       assertNotAborted(signal)
       try {
-        if (part.type === "text-delta" || part.type === "reasoning-delta") {
+        if (part.type === "text-delta") {
           if (ttftMs == null) ttftMs = Math.round(performance.now() - streamStartedAt)
           acc += part.text
           onAccumulated(acc)
@@ -121,17 +124,21 @@ export async function consumeStreamTextOutput(
         }
         if (ABSORBED_STREAM_PART_TYPES.has(part.type)) continue
         if (part.type === "error") {
-          console.warn("跳过未知流片段:", part)
-          continue
+          const detail = "error" in part ? formatPlanCrashMessage(part.error) : "未知模型流错误"
+          throw new ModelStreamError(`模型生成失败：${detail}`, acc)
         }
         console.warn("跳过未知流片段:", part)
       } catch (chunkErr) {
-        console.warn("跳过未知流片段:", part, chunkErr)
+        if (chunkErr instanceof ModelStreamError) throw chunkErr
+        console.warn("处理模型流片段失败:", part, chunkErr)
       }
     }
   } catch (e) {
     logLlmCallFailure("consumeStreamTextOutput: fullStream failed", e)
-    throw e
+    if (e instanceof ModelStreamError || isAbortError(e)) throw e
+    throw new ModelStreamError(`模型流中断：${formatPlanCrashMessage(e)}`, acc)
+  } finally {
+    options?.onStreamComplete?.({ ttftMs })
   }
 
   if (!acc.trim()) {
@@ -141,20 +148,25 @@ export async function consumeStreamTextOutput(
         acc = fallback
         onAccumulated(acc)
       }
-    } catch {
-      // ignore
+    } catch (e) {
+      throw new ModelStreamError(`模型生成失败：${formatPlanCrashMessage(e)}`, acc)
     }
   }
 
-  try {
-    await streamed.consumeStream()
-  } catch {
-    // stream already consumed
-  }
-
-  options?.onStreamComplete?.({ ttftMs })
+  if (!acc.trim()) throw new ModelStreamError("模型未返回可显示的文本内容。", acc)
 
   return acc
+}
+
+export class ModelStreamError extends Error {
+  constructor(message: string, readonly partialText: string) {
+    super(message)
+    this.name = "ModelStreamError"
+  }
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && error.name === "AbortError"
 }
 
 export async function readSourceText(sourceApiBase: string, path: string, signal?: AbortSignal) {
@@ -389,7 +401,9 @@ export function clampTextByChars(text: string, limit: number | undefined) {
   const lim = typeof limit === "number" && Number.isFinite(limit) ? Math.max(0, Math.floor(limit)) : 0
   if (!lim) return text
   if (text.length <= lim) return text
-  return text.slice(0, lim) + "\n\n[...truncated by contextLimit...]"
+  const marker = "\n\n[...truncated by contextLimit...]"
+  if (lim <= marker.length) return text.slice(0, lim)
+  return text.slice(0, lim - marker.length) + marker
 }
 
 export function buildChatHistoryForExecutor(
@@ -516,10 +530,11 @@ export async function rewriteResearchSearchQuery(
         deps.inference?.contextLimit
       ).slice(-8)
 
-      const { text } = await generateText({
+      const generated = await generateText({
         model,
         ...llmCallSettings(deps.signal),
         temperature: 0.1,
+        maxOutputTokens: buildReasoningOutputTokenBudget(256),
         system: [
           "你是学术检索 query 改写器（指代消解 + 中英转换）。",
           "结合对话历史，将用户口语中文或模糊短句改写为适合 Tavily/arXiv 的纯英文学术关键词。",
@@ -540,6 +555,8 @@ export async function rewriteResearchSearchQuery(
           },
         ],
       })
+      const text = generated.text
+      recordLlmUsageAsync(deps, "deepseek-chat", generated.usage, undefined, "query-rewrite")
 
       const rewritten = text
         .trim()
@@ -581,7 +598,7 @@ export function serializeSubtaskForReasoning(r: { id: string; ok: boolean; summa
 
   if (typeof rec["provider"] === "string") {
     if (Array.isArray(rec["results"]) && rec["results"].length > 0) {
-      return { ...base, ...serializeResearchOutputForReasoning(rec) }
+      return { ...base, ...serializeResearchOutputForReasoning(rec, { includeCitationDetails: false }) }
     }
     return {
       ...base,
@@ -650,6 +667,7 @@ export async function generatePlanTextWithStructuredFallback(input: {
   systemPlain: string
   messages: LlmHistoryMessage[]
   temperature: number
+  maxOutputTokens: number
   signal?: AbortSignal
 }): Promise<{ gen: Awaited<ReturnType<typeof generateText>>; usesStructuredJson: boolean }> {
   const llmOpts = llmCallSettings(input.signal)
@@ -659,6 +677,7 @@ export async function generatePlanTextWithStructuredFallback(input: {
       system: input.systemStructured,
       messages: input.messages,
       temperature: input.temperature,
+      maxOutputTokens: input.maxOutputTokens,
       ...llmOpts,
       output: Output.json({
         name: "scholarkernel_workflow_plan",
@@ -675,6 +694,7 @@ export async function generatePlanTextWithStructuredFallback(input: {
         system: input.systemPlain,
         messages: input.messages,
         temperature: input.temperature,
+        maxOutputTokens: input.maxOutputTokens,
         ...llmOpts,
       })
       return { gen, usesStructuredJson: false }
