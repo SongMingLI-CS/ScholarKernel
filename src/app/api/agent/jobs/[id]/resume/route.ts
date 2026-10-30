@@ -81,6 +81,16 @@ export async function POST(req: Request, ctx: RouteCtx) {
   const { id } = await ctx.params
   const job = await getAgentJobForUser(id, userId)
   if (!job) return jsonError("Not found", 404)
+  if (job.executionMode === "durable") {
+    try {
+      await assertQuotaAvailable(userId)
+      const { retryDurableJob } = await import("@/lib/agent/durable-jobs")
+      return jsonOk(await retryDurableJob(userId, job.id), { status: 202 })
+    } catch (error) {
+      if (error instanceof QuotaExceededError) return jsonQuotaExceeded(error.message)
+      return jsonError("Job cannot be retried or attempt limit reached", 409)
+    }
+  }
   if (job.status !== "cancelled" && job.status !== "error" && job.status !== "partial") {
     return jsonError("Only cancelled, failed, or partial jobs can be resumed", 409)
   }
@@ -185,7 +195,7 @@ export async function POST(req: Request, ctx: RouteCtx) {
     await persistenceQueue
     if (persistenceError) throw persistenceError
     jobCheckpoint = { ...jobCheckpoint, phase: result.status, nodes: result.nodes, sources: result.sources }
-    const completed = await completeAgentJob(job.id, result)
+    const completed = await completeAgentJob(job.id, result, jobCheckpoint)
     return jsonOk(completed, { status: result.status === "error" ? 500 : 200 })
   } catch (error) {
     await persistenceQueue.catch(() => undefined)

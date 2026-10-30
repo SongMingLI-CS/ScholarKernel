@@ -654,6 +654,8 @@ export const useAgentStore = create<AgentStore>()(
           set((s) => ({ ...s, chat: { ...s.chat, messages: [...s.chat.messages, m] } }))
           const convId = get().conversations.currentId
           if (!convId || m.role === "system") return
+          // Durable Worker is the authoritative writer of assistant outputs.
+          if (m.role === "assistant" && process.env.NEXT_PUBLIC_AGENT_EXECUTION === "server" && !get().settings.behavior.localOnly) return
           void appendMessage(convId, chatMessageToCreateBody(m)).catch((e) =>
             console.error("[persist message]", e)
           )
@@ -669,6 +671,8 @@ export const useAgentStore = create<AgentStore>()(
         persistChatMessage: (m) => {
           const convId = get().conversations.currentId
           if (!convId || m.role === "system") return
+          // Durable Worker is the authoritative writer of assistant outputs.
+          if (m.role === "assistant" && process.env.NEXT_PUBLIC_AGENT_EXECUTION === "server" && !get().settings.behavior.localOnly) return
 
           const run = () => {
             void appendMessage(convId, chatMessageToCreateBody(m)).catch((e) =>

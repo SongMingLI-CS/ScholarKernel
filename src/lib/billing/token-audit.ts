@@ -9,11 +9,13 @@ export type { RecordTokenUsageInput } from "./token-usage-bridge"
 export { extractUsageCounts } from "./token-usage-bridge"
 
 export async function ensureUserBilling(userId: string) {
-  return prisma.userBilling.upsert({
-    where: { userId },
-    create: { userId, tokenQuota: DEFAULT_FREE_TOKEN_QUOTA, tokenUsed: 0, totalSpent: 0 },
-    update: {},
+  await prisma.userBilling.createMany({
+    data: [{ userId, tokenQuota: DEFAULT_FREE_TOKEN_QUOTA, tokenUsed: 0, totalSpent: 0 }],
+    skipDuplicates: true,
   })
+  const billing = await prisma.userBilling.findUnique({ where: { userId } })
+  if (!billing) throw new Error("Could not initialize user billing")
+  return billing
 }
 
 export async function recordTokenUsage(input: RecordTokenUsageInput): Promise<void> {
@@ -49,10 +51,9 @@ export async function recordTokenUsage(input: RecordTokenUsageInput): Promise<vo
 }
 
 async function ensureUserBillingInTx(tx: Prisma.TransactionClient, userId: string) {
-  await tx.userBilling.upsert({
-    where: { userId },
-    create: { userId, tokenQuota: DEFAULT_FREE_TOKEN_QUOTA, tokenUsed: 0, totalSpent: 0 },
-    update: {},
+  await tx.userBilling.createMany({
+    data: [{ userId, tokenQuota: DEFAULT_FREE_TOKEN_QUOTA, tokenUsed: 0, totalSpent: 0 }],
+    skipDuplicates: true,
   })
 }
 
@@ -64,8 +65,11 @@ export function recordTokenUsageAsync(input: RecordTokenUsageInput): void {
 }
 
 export function createTokenUsageRecorder(userId: string, jobId?: string) {
+  const pending: Promise<void>[] = []
   const record = (input: Omit<RecordTokenUsageInput, "userId" | "jobId">) => {
-    recordTokenUsageAsync({ userId, jobId, ...input })
+    const write = recordTokenUsage({ userId, jobId, ...input })
+    pending.push(write)
+    void write.catch(() => {}) // flush propagates failures before Job completion.
   }
-  return { record }
+  return { record, flush: () => Promise.all(pending).then(() => undefined) }
 }

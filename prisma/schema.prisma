@@ -114,6 +114,9 @@ enum AgentJobStatus {
   partial
   error
   cancelled
+  waiting_for_input
+  completed
+  failed
 }
 
 model AgentJob {
@@ -132,8 +135,34 @@ model AgentJob {
   createdAt    DateTime       @default(now())
   updatedAt    DateTime       @updatedAt
   interventions AgentIntervention[]
+  events       AgentJobEvent[]
+  executionMode String @default("legacy")
+  workflowVersion Int @default(1)
+  runConfig    Json?
+  conversationId String?
+  assistantMessageId String?
+  attempt      Int @default(0)
+  maxAttempts  Int @default(3)
+  leaseOwner   String?
+  leaseExpiresAt DateTime?
+  cancelRequested Boolean @default(false)
+  eventSequence Int @default(0)
+  completedAt  DateTime?
 
   @@index([userId, status, updatedAt])
+  @@index([executionMode, status, leaseExpiresAt, createdAt])
+}
+
+model AgentJobEvent {
+  id        String @id @default(cuid())
+  jobId     String
+  job       AgentJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  sequence  Int
+  type      String
+  payload   Json
+  createdAt DateTime @default(now())
+
+  @@unique([jobId, sequence])
 }
 
 model AgentIntervention {

@@ -110,3 +110,18 @@ Next.js 16 · React 19 · Prisma · Zustand · Vercel AI SDK · Tailwind 4
 独立部署不设置此变量。不要删除 PostgreSQL 卷；备份同时保存数据库和 `ENCRYPTION_SECRET`。
 
 若服务器连接 Debian 官方源缓慢，可设置 `DEBIAN_MIRROR=http://mirrors.aliyun.com` 再构建；npm 下载缓慢时可设置 `NPM_REGISTRY=https://registry.npmmirror.com`。
+
+## ScholarKernel 2.0：服务端 Job（可选）
+
+先应用增量迁移，再同时启动 Web 与独立 Worker：
+
+```bash
+npm run db:migrate
+# 两个进程使用相同的隔离/开发数据库及加密配置
+AGENT_DURABLE_JOBS=1 NEXT_PUBLIC_AGENT_EXECUTION=server npm run dev
+AGENT_DURABLE_JOBS=1 npm run worker
+```
+
+生产构建时也必须设置 `NEXT_PUBLIC_AGENT_EXECUTION=server`。不设置该开关时保留旧浏览器执行路径；开启后普通聊天和科研工作流创建持久化 Job，SSE 仅观察，刷新不会重复启动。仅有 Web 进程不会消费队列。详情、状态转换、恢复和已知限制见 [Phase 1 说明](docs/upgrade/phase1-jobs.md)。公开部署前先完成 [数据边界待办](docs/upgrade/phase0-boundaries.md)。
+
+新增测试入口 `npm run test:upgrade` 默认跳过真实数据库集成测试。使用全新、本机隔离的 `127.0.0.1:55446/scholar_upgrade` 数据库并设置 `SCHOLAR_UPGRADE_TEST_DATABASE=1` 才执行持久化回归；不要指向生产数据库。

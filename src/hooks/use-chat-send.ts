@@ -1,6 +1,9 @@
 "use client"
 
 import { appPath } from "@/lib/app-path"
+import { runDurableAgent, observeDurableJob, cancelDurableJob, serverJobsEnabled, type JobSnapshot } from "@/lib/agent/job-client"
+import { apiFetch } from "@/lib/api-fetch"
+import type { AgentExecutorHooks } from "@/lib/agent/executor-types"
 
 import { useCallback, useEffect, useRef, useState, type MutableRefObject } from "react"
 import { type ProviderConfig } from "@/lib/ai-gateway"
@@ -58,6 +61,9 @@ export function useChatSend({
   const [retryState, setRetryState] = useState<null | { text: string; error: string; kind?: "replan" }>(null)
   const [planHttpTerminalError, setPlanHttpTerminalError] = useState<string | null>(null)
 
+  const activeJobRef = useRef<string | null>(null)
+  const currentConversationId = useAgentStore(s => s.conversations.currentId)
+  const conversationLoading = useAgentStore(s => s.conversations.loading)
   const abortRef = useRef<AbortController | null>(null)
   const metricsTimerRef = useRef<number | null>(null)
   const streamAssistantTextLenRef = useRef(0)
@@ -73,9 +79,44 @@ export function useChatSend({
     }
   }, [])
 
+  useEffect(() => {
+    if (!serverJobsEnabled() || !currentConversationId || conversationLoading) return
+    const observation = new AbortController()
+    void apiFetch<JobSnapshot[]>(`/api/agent/jobs?conversationId=${encodeURIComponent(currentConversationId)}`).then(async jobs => {
+      if (observation.signal.aborted || activeJobRef.current) return
+      const job = jobs[0]
+      if (!job || !["pending", "running", "waiting_for_input"].includes(job.status)) return
+      activeJobRef.current = job.id
+      abortRef.current = observation
+      lastAssistantIdRef.current = job.assistantMessageId ?? null
+      setStreaming(true)
+      setTopologyOpen(true)
+      const store = useAgentStore.getState()
+      if (job.assistantMessageId && !store.chat.messages.some(m => m.id === job.assistantMessageId)) store.actions.pushChatMessage({ id: job.assistantMessageId, role: "assistant", content: "" })
+      const patchText = (text: string) => { if (job.assistantMessageId) useAgentStore.getState().actions.patchChatMessage(job.assistantMessageId, { content: text }) }
+      try {
+        const result = await observeDurableJob(job.id, {
+          onWorkflowPlanned: nodes => useAgentStore.getState().actions.setWorkflowNodes(nodes.map(n => ({ ...n, title: n.title ?? n.type, logs: n.logs ?? [] }))),
+          onWorkflowTopologyPruned: nodes => useAgentStore.getState().actions.setWorkflowNodes(nodes.map(n => ({ ...n, title: n.title ?? n.type, logs: n.logs ?? [] }))),
+          onNodePatch: (id, patch) => useAgentStore.getState().actions.patchWorkflowNode(id, patch),
+          onProgress: progress => useAgentStore.getState().actions.applyNodeProgress(progress),
+          onDirectChatStream: patchText,
+          onInterventionPending: event => useAgentStore.getState().actions.setInterventionPending(event),
+        }, observation.signal)
+        patchText(result.final)
+      } catch (error) {
+        if (!observation.signal.aborted) patchText(formatUserFacingErrorMessage(error, useAgentStore.getState().settings.lang))
+      } finally {
+        if (activeJobRef.current === job.id) { activeJobRef.current = null; setStreaming(false); useAgentStore.getState().actions.clearInterventionPending() }
+      }
+    }).catch(() => {})
+    return () => { observation.abort() }
+  }, [currentConversationId, conversationLoading, setTopologyOpen])
+
   const stopGeneration = useCallback(() => {
     if (!streaming) return
     userStoppedRef.current = true
+    if (activeJobRef.current) void cancelDurableJob(activeJobRef.current).catch(() => pushToast({ messageKey: "intervention.failed", detail: "取消请求未保存，请刷新任务状态后重试。", variant: "error", ttlMs: 6000 }))
     abortRef.current?.abort()
     abortRef.current = null
 
@@ -134,7 +175,7 @@ export function useChatSend({
 
       const effectiveKeys = runtimeKeys
       const needKey = !localOnly && sendProvider.providerId !== "ollama"
-      if (needKey && !useAgentStore.getState().actions.hasRuntimeKeyForProvider(sendProvider.providerId)) {
+      if (needKey && !serverJobsEnabled() && !useAgentStore.getState().actions.hasRuntimeKeyForProvider(sendProvider.providerId)) {
         useAgentStore.getState().actions.pushToast({ messageKey: "gateway.toast.missingKey", variant: "error", ttlMs: 5200 })
         useAgentStore.getState().actions.setActivePanel("keys")
         return
@@ -142,7 +183,7 @@ export function useChatSend({
 
       const k = connKey(sendProvider.providerId, sendProvider.baseUrl, sendProvider.model)
       const conn = connectivity[k]
-      if (conn?.health === "offline") {
+      if (!serverJobsEnabled() && conn?.health === "offline") {
         useAgentStore.getState().actions.pushToast({
           messageKey: "conn.toast.offline.gotoModels",
           detail: typeof conn.errorCode === "number" ? `(${conn.errorCode})` : conn.errorCode ? `(${conn.errorCode})` : "",
@@ -217,35 +258,7 @@ export function useChatSend({
       let errMsg: string | undefined
 
       const runOnce = async (p: ProviderConfig, agentUserInput: string, planOpts?: { planRetryMessage?: string }) => {
-        const { AgentExecutor } = await loadAgentExecutor()
-        const executor = new AgentExecutor(
-          {
-            activeProvider: { providerId: p.providerId as ActiveProviderId, model: p.model, baseUrl: p.baseUrl },
-            interventionSessionId: runId,
-            inference: {
-              temperature: useAgentStore.getState().settings.inference.temperature,
-              maxTokens: useAgentStore.getState().settings.inference.maxTokens,
-              contextLimit: useAgentStore.getState().settings.inference.contextLimit,
-            },
-            runtimeKeys: {
-              openai: effectiveKeys?.openai,
-              anthropic: effectiveKeys?.anthropic,
-              google: effectiveKeys?.google,
-              deepseek: effectiveKeys?.deepseek,
-              tavily: effectiveKeys?.tavily,
-              serper: effectiveKeys?.serper,
-            },
-            getRuntimeKeys: () => useAgentStore.getState().actions.getRuntimeKeys(),
-            search: {
-              tavilyApiKey: runtimeKeys?.tavily,
-              serperApiKey: runtimeKeys?.serper,
-            },
-            sourceApiBase: typeof window !== "undefined" ? window.location.origin + appPath("/").replace(/\/$/, "") : undefined,
-            signal: ctrl.signal,
-            localOnly: localOnly || undefined,
-            getChatHistory: () => buildChatHistoryForExecutor(useAgentStore.getState().chat.messages),
-          },
-          {
+        const hooks: AgentExecutorHooks = {
             onWorkflowPlanned: (nodes) => {
               const store = useAgentStore.getState()
               store.actions.setWorkflowNodes(
@@ -358,6 +371,48 @@ export function useChatSend({
               store.actions.patchChatMessage(aid, { sources })
             },
           }
+        if (serverJobsEnabled() && !localOnly) {
+          // Credentials use the existing encrypted settings service, never Job JSON.
+          if (effectiveKeys) await apiFetch("/api/settings", { method: "PATCH", body: JSON.stringify({ runtimeKeys: effectiveKeys }) })
+          return runDurableAgent({
+            userInput: agentUserInput,
+            provider: { providerId: p.providerId as ActiveProviderId, model: p.model, baseUrl: p.baseUrl },
+            chatHistory: buildChatHistoryForExecutor(useAgentStore.getState().chat.messages).slice(-40),
+            inference: useAgentStore.getState().settings.inference,
+            conversationId: useAgentStore.getState().conversations.currentId ?? undefined,
+            assistantMessageId: assistantId,
+            planRetryMessage: planOpts?.planRetryMessage,
+          }, hooks, ctrl.signal, id => { activeJobRef.current = id })
+        }
+        const { AgentExecutor } = await loadAgentExecutor()
+        const executor = new AgentExecutor(
+          {
+            activeProvider: { providerId: p.providerId as ActiveProviderId, model: p.model, baseUrl: p.baseUrl },
+            interventionSessionId: runId,
+            inference: {
+              temperature: useAgentStore.getState().settings.inference.temperature,
+              maxTokens: useAgentStore.getState().settings.inference.maxTokens,
+              contextLimit: useAgentStore.getState().settings.inference.contextLimit,
+            },
+            runtimeKeys: {
+              openai: effectiveKeys?.openai,
+              anthropic: effectiveKeys?.anthropic,
+              google: effectiveKeys?.google,
+              deepseek: effectiveKeys?.deepseek,
+              tavily: effectiveKeys?.tavily,
+              serper: effectiveKeys?.serper,
+            },
+            getRuntimeKeys: () => useAgentStore.getState().actions.getRuntimeKeys(),
+            search: {
+              tavilyApiKey: runtimeKeys?.tavily,
+              serperApiKey: runtimeKeys?.serper,
+            },
+            sourceApiBase: typeof window !== "undefined" ? window.location.origin + appPath("/").replace(/\/$/, "") : undefined,
+            signal: ctrl.signal,
+            localOnly: localOnly || undefined,
+            getChatHistory: () => buildChatHistoryForExecutor(useAgentStore.getState().chat.messages),
+          },
+          hooks
         )
 
         useAgentStore.getState().actions.patchTopologyNodes({ edge: "done", route: "running", cloud: "idle", sink: "idle" })
@@ -470,6 +525,7 @@ export function useChatSend({
         setStreaming(false)
         abortRef.current = null
         activeRunIdRef.current = null
+        activeJobRef.current = null
       }
     },
     [connectivity, followBottomRef, input, lockToBottomOnce, maybeAutoTitle, provider, runtimeKeys, setInput, setTopologyOpen, streaming]

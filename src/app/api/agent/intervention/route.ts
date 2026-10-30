@@ -31,6 +31,6 @@ export async function GET(req: Request) {
   const job = await prisma.agentJob.findFirst({ where: { id: jobId, userId } })
   if (!job) return jsonError("Job not found", 404)
   const checkpoint = job.checkpoint as { humanInterventionPending?: { nodeId: string; reason: string; at: number } } | null
-  const pending = job.status === "running" ? checkpoint?.humanInterventionPending : null
+  const pending = job.status === "running" || job.status === "waiting_for_input" ? checkpoint?.humanInterventionPending : null
   return jsonOk(pending ? { pending: true, nodeId: pending.nodeId, reason: pending.reason, createdAt: pending.at } : { pending: false })
 }

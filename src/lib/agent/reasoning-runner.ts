@@ -209,11 +209,12 @@ export async function executeReasoningNode(ctx: ReasoningNodeContext): Promise<S
     deps.signal,
     {
       onStreamComplete: ({ ttftMs }) => {
-        void Promise.resolve(streamed.usage)
+        const usageWrite = Promise.resolve(streamed.usage)
           .then((usage) => {
             recordLlmUsageAsync(deps, normalizedModel, usage, ttftMs, "reasoning")
           })
           .catch((error: unknown) => logLlmCallFailure(`run: node ${n.id} usage unavailable`, error))
+        deps.trackUsageWrite?.(usageWrite)
       },
     }
   )

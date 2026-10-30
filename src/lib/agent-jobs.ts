@@ -1,3 +1,4 @@
+import { logDiagnosticError } from "@/lib/diagnostics"
 import { prisma } from "@/lib/prisma"
 import { serializeAgentJobError } from "@/lib/agent-job-errors"
 import {
@@ -87,7 +88,8 @@ export async function updateAgentJobPeerReviewCheckpoint(
 
 export async function completeAgentJob(
   id: string,
-  result: { final: string; nodes: unknown[]; sources: unknown[]; status?: "done" | "partial" | "error" }
+  result: { final: string; nodes: unknown[]; sources: unknown[]; status?: "done" | "partial" | "error" },
+  checkpoint?: AgentJobCheckpoint
 ) {
   const status = result.status ?? "done"
   return prisma.agentJob.update({
@@ -95,7 +97,7 @@ export async function completeAgentJob(
     data: {
       status,
       result: result as Prisma.InputJsonValue,
-      checkpoint: { phase: status, nodes: result.nodes, sources: result.sources } as Prisma.InputJsonValue,
+      checkpoint: { ...checkpoint, phase: status, nodes: result.nodes, sources: result.sources } as Prisma.InputJsonValue,
     },
   })
 }
@@ -158,24 +160,7 @@ export function persistAgentJobError(userId: string, error: unknown, ctx: AgentJ
         })
         return
       }
-    }
-
-    const active = await prisma.agentJob.findFirst({
-      where: { userId, status: { in: ["pending", "running"] } },
-      orderBy: { updatedAt: "desc" },
-    })
-    if (active) {
-      await prisma.agentJob.update({
-        where: { id: active.id },
-        data: {
-          status: "error",
-          error: errorMessage,
-          errorMessage,
-          errorStack: errorStack || null,
-          checkpoint: { phase: "error" } as Prisma.InputJsonValue,
-        },
-      })
-      return
+      return // A specified Job must never fall back to another active task.
     }
 
     if (ctx.userInput?.trim()) {
@@ -195,7 +180,7 @@ export function persistAgentJobError(userId: string, error: unknown, ctx: AgentJ
   }
 
   return write().catch((e) => {
-    console.error("[persistAgentJobError]", e)
+    logDiagnosticError("[persistAgentJobError]", e)
   })
 }
 

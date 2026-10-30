@@ -1,6 +1,7 @@
 "use client"
 
 import { appPath } from "@/lib/app-path"
+import { serverJobsEnabled } from "@/lib/agent/job-client"
 import { resolveHumanInterventionSession } from "@/lib/agent/human-intervention-gate"
 
 import { memo, useCallback, useState } from "react"
@@ -22,7 +23,6 @@ export const HumanInterventionPanel = memo(function HumanInterventionPanel({
 }: HumanInterventionPanelProps) {
   const t = useT()
   const sessionId = useAgentStore((s) => s.intervention.sessionId)
-  const wfNodes = useAgentStore((s) => s.workflow.nodes)
   const setWorkflowNodes = useAgentStore((s) => s.actions.setWorkflowNodes)
   const clearIntervention = useAgentStore((s) => s.actions.clearInterventionPending)
   const pushToast = useAgentStore((s) => s.actions.pushToast)
@@ -47,7 +47,7 @@ export const HumanInterventionPanel = memo(function HumanInterventionPanel({
           action === "approve"
             ? { action: "approve" as const }
             : { action: "redirect" as const, instruction: instruction.trim() }
-        const localResolution = resolveHumanInterventionSession(sessionId, decision)
+        const localResolution = serverJobsEnabled() && !useAgentStore.getState().settings.behavior.localOnly ? { ok: false } : resolveHumanInterventionSession(sessionId, decision)
         if (localResolution.ok) {
           clearIntervention()
           return
@@ -61,12 +61,11 @@ export const HumanInterventionPanel = memo(function HumanInterventionPanel({
             nodeId,
             action,
             instruction: action === "redirect" ? instruction.trim() : undefined,
-            workflowNodes: wfNodes,
           }),
         })
         const data = (await res.json()) as {
           ok?: boolean
-          prunedNodes?: typeof wfNodes | null
+          prunedNodes?: import("@/store/useAgentStore").WorkflowNode[] | null
           error?: string
         }
         if (!res.ok) {
@@ -83,7 +82,7 @@ export const HumanInterventionPanel = memo(function HumanInterventionPanel({
         setSubmitting(false)
       }
     },
-    [clearIntervention, instruction, nodeId, pushToast, sessionId, setWorkflowNodes, wfNodes]
+    [clearIntervention, instruction, nodeId, pushToast, sessionId, setWorkflowNodes]
   )
 
   return (

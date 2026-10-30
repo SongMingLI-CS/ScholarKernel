@@ -55,8 +55,11 @@ vi.mock("@/lib/agent-jobs", () => ({
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     userBilling: {
-      upsert: vi.fn(async ({ where }: { where: { userId: string }; create?: { userId: string } }) => {
-        getState(where.userId)
+      createMany: vi.fn(async ({ data }: { data: Array<{ userId: string }> }) => {
+        data.forEach(({ userId }) => getState(userId))
+        return { count: data.length }
+      }),
+      findUnique: vi.fn(async ({ where }: { where: { userId: string } }) => {
         const s = getState(where.userId)
         return {
           userId: where.userId,
@@ -74,14 +77,14 @@ vi.mock("@/lib/prisma", () => ({
         return { id: `audit-${s.auditCount}`, ...data, createdAt: new Date() }
       }),
       findMany: vi.fn(async () => []),
+      groupBy: vi.fn(async () => []),
     },
     $transaction: vi.fn(async (cb: (tx: unknown) => Promise<unknown>) => {
       const tx = {
         userBilling: {
-          upsert: vi.fn(async ({ where }: { where: { userId: string } }) => {
-            getState(where.userId)
-            const s = getState(where.userId)
-            return { userId: where.userId, ...s, updatedAt: new Date() }
+          createMany: vi.fn(async ({ data }: { data: Array<{ userId: string }> }) => {
+            data.forEach(({ userId }) => getState(userId))
+            return { count: data.length }
           }),
           update: vi.fn(
             async ({

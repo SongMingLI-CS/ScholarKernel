@@ -37,10 +37,14 @@ export type AgentExecutorDeps = {
   userId?: string
   jobId?: string
   /** 异步写入 Token 审计；由 agent-server-run 注入 */
+  trackUsageWrite?: (write: Promise<unknown>) => void
   recordTokenUsage?: (input: RecordTokenUsageInput) => void
   /** 人类介入会话键（客户端 runId 或服务端 jobId） */
   interventionSessionId?: string
   getInterventionDecision?: (nodeId: string) => Promise<HumanInterventionDecision | null>
+  suspendForIntervention?: boolean
+  /** Worker drains durable writes before another node can start. */
+  flushCheckpoint?: () => Promise<void>
   peerReviewCheckpoint?: PeerReviewCheckpointData | null
   onPeerReviewCheckpoint?: (
     patch: Partial<PeerReviewCheckpointData> & { markComplete?: PeerReviewCheckpointData["completedStages"][number] }

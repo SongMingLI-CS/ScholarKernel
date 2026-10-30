@@ -1,4 +1,5 @@
 import { streamText } from "ai"
+import { JobSuspended } from "@/lib/agent/job-signals"
 import {
   AREA_CHAIR_PERSONA,
   buildPeerReviewCanvasOutput,
@@ -168,11 +169,12 @@ async function defaultGenerateReviewStream(
     deps.signal,
     {
       onStreamComplete: ({ ttftMs }) => {
-        void Promise.resolve(streamed.usage)
+        const usageWrite = Promise.resolve(streamed.usage)
           .then((usage) => {
             recordLlmUsageAsync(deps, modelUsed, usage, ttftMs, personaId)
           })
           .catch((error: unknown) => logLlmCallFailure(`peer review ${personaId}: usage unavailable`, error))
+        deps.trackUsageWrite?.(usageWrite)
       },
     }
   )
@@ -404,22 +406,25 @@ export async function executePeerReviewGroup(input: ExecutePeerReviewGroupInput)
 
     const waitFn = input.waitForHumanIntervention ?? waitForHumanIntervention
     const savedDecision = deps.getInterventionDecision ? await deps.getInterventionDecision(r3Node.id) : null
+    if (!savedDecision) {
+      hooks.onNodePatch?.(r3Node.id, {
+        status: "pending_approval",
+        metadata: { interventionReason: reason, personaId: "area_chair" },
+      })
+      if (deps.suspendForIntervention) {
+        hooks.onInterventionPending?.({ nodeId: r3Node.id, status: "pending_approval", reason, sessionId })
+        await deps.flushCheckpoint?.()
+        throw new JobSuspended()
+      }
+    }
     const pendingDecision = savedDecision ? Promise.resolve(savedDecision) : waitFn(
       sessionId, r3Node.id, reason, deps.signal,
       deps.userId && deps.jobId ? { userId: deps.userId, jobId: deps.jobId } : undefined
     )
-
-    hooks.onNodePatch?.(r3Node.id, {
-      status: "pending_approval",
-      metadata: { interventionReason: reason, personaId: "area_chair" },
-    })
-    hooks.onInterventionPending?.({
-      nodeId: r3Node.id,
-      status: "pending_approval",
-      reason,
-      sessionId,
-    })
-    hooks.onNodeLog?.(r3Node.id, `【Human-in-the-Loop】断点挂起：${reason}`)
+    if (!savedDecision) {
+      hooks.onInterventionPending?.({ nodeId: r3Node.id, status: "pending_approval", reason, sessionId })
+      hooks.onNodeLog?.(r3Node.id, `【Human-in-the-Loop】断点挂起：${reason}`)
+    }
 
     let decision: HumanInterventionDecision
     try {

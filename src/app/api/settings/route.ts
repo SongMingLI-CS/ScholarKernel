@@ -44,11 +44,13 @@ function encryptRuntimeKeys(keys: RuntimeKeys | null): string | null {
 }
 
 async function getOrCreateSettings(userId: string) {
-  return prisma.userSetting.upsert({
-    where: { userId },
-    create: { userId, theme: "dark" },
-    update: {},
+  await prisma.userSetting.createMany({
+    data: [{ userId, theme: "dark" }],
+    skipDuplicates: true,
   })
+  const settings = await prisma.userSetting.findUnique({ where: { userId } })
+  if (!settings) throw new Error("Could not initialize user settings")
+  return settings
 }
 
 function toSettingsResponse(row: {

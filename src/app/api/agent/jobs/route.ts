@@ -20,6 +20,7 @@ import type { ActiveProviderConfig } from "@/lib/agent/planner"
 import type { AgentExecutorDeps } from "@/lib/agent/executor-types"
 
 type AgentJobBody = {
+  executionMode?: string
   userInput?: string
   provider?: ActiveProviderConfig
   chatHistory?: import("@/lib/agent/planner").ChatHistoryEntry[]
@@ -68,6 +69,11 @@ export async function POST(req: Request) {
   } catch (e) {
     if (e instanceof QuotaExceededError) return jsonQuotaExceeded(e.message)
     throw e
+  }
+
+  if (body.executionMode === "durable") {
+    const { createDurableJobResponse } = await import("@/lib/agent/durable-job-api")
+    return createDurableJobResponse(userId, body)
   }
 
   const job = await createAgentJob(userId, {
@@ -185,7 +191,7 @@ export async function POST(req: Request) {
       nodes: result.nodes,
       sources: result.sources,
     }
-    const done = await completeAgentJob(job.id, result)
+    const done = await completeAgentJob(job.id, result, jobCheckpoint)
     return jsonOk(done, { status: result.status === "error" ? 500 : 200 })
   } catch (e) {
     await persistenceQueue.catch(() => undefined)
@@ -198,4 +204,17 @@ export async function POST(req: Request) {
     logDiagnosticError("[POST /api/agent/jobs]", e)
     return jsonOk(failed, { status: cancelled ? 200 : 500 })
   }
+}
+
+export async function GET(req: Request) {
+  const userId = await resolveUserIdFromRequest(req)
+  if (!userId) return jsonError("Unauthorized", 401)
+  const { prisma } = await import("@/lib/prisma")
+  const conversationId = new URL(req.url).searchParams.get("conversationId")
+  const jobs = await prisma.agentJob.findMany({
+    where: { userId, executionMode: "durable", ...(conversationId ? { conversationId } : {}) },
+    orderBy: { createdAt: "desc" }, take: 20,
+    select: { id: true, status: true, conversationId: true, assistantMessageId: true, checkpoint: true, result: true, errorMessage: true, eventSequence: true, createdAt: true, updatedAt: true },
+  })
+  return jsonOk(jobs)
 }

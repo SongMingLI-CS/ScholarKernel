@@ -96,6 +96,27 @@ describe("executePeerReviewGroup checkpoint resume", () => {
   })
 })
 
+describe("durable peer review intervention", () => {
+  it("suspends after completed reviews and consumes a saved approval without prompting again", async () => {
+    const nodes = buildPeerReviewWorkflowNodes()
+    const checkpoint = { version: 1 as const, subject: "Fixture", methodologyReview: "评分：2/10", innovationReview: "评分：9/10", completedStages: ["r1", "r2"] as Array<"r1" | "r2"> }
+    const pending = vi.fn()
+    const freshReview = vi.fn(async () => "## Summary\nApproved fixture")
+    const base = {
+      groupNodes: nodes, userInput: "Review fixture", checkpoint,
+      hooks: { onInterventionPending: pending },
+      generateReview: freshReview, generateDebate: async () => "Debate fixture",
+    }
+    await expect(executePeerReviewGroup({ ...base, deps: { activeProvider: { providerId: "ollama", model: "fixture" }, interventionSessionId: "durable-fixture", suspendForIntervention: true } })).rejects.toMatchObject({ name: "JobSuspended" })
+    expect(pending).toHaveBeenCalledOnce()
+    expect(freshReview).not.toHaveBeenCalled()
+    pending.mockClear()
+    await executePeerReviewGroup({ ...base, deps: { activeProvider: { providerId: "ollama", model: "fixture" }, interventionSessionId: "durable-fixture", suspendForIntervention: true, getInterventionDecision: async () => ({ action: "approve" }) } })
+    expect(pending).not.toHaveBeenCalled()
+    expect(freshReview).toHaveBeenCalledTimes(1)
+  })
+})
+
 describe("executePeerReviewGroup stream isolation", () => {
   it("emits onProgress with distinct streamId for parallel reviewers", async () => {
     const nodes = buildPeerReviewWorkflowNodes()

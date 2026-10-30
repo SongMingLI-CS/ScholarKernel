@@ -24,6 +24,8 @@ export type AgentRunInput = {
   sourceApiBase?: string
   signal?: AbortSignal
   resumeCheckpoint?: AgentExecutorDeps["resumeCheckpoint"]
+  suspendForIntervention?: boolean
+  flushCheckpoint?: AgentExecutorDeps["flushCheckpoint"]
 }
 
 export function mergeRuntimeKeysForServer(
@@ -48,6 +50,7 @@ export async function runAgentOnServer(
   const runtimeKeys = mergeRuntimeKeysForServer(input.runtimeKeys, envKeys)
   const billingRecorder = input.userId ? createTokenUsageRecorder(input.userId, input.jobId) : null
 
+  const usageWrites: Promise<unknown>[] = []
   const executor = new AgentExecutor(
     {
       localFileTool: createFileTool(createOwnedDocumentReader(input.userId)),
@@ -55,6 +58,7 @@ export async function runAgentOnServer(
       userId: input.userId,
       activeProvider: input.activeProvider,
       jobId: input.jobId,
+      trackUsageWrite: write => { usageWrites.push(write) },
       recordTokenUsage: billingRecorder
         ? (payload) => billingRecorder.record(payload)
         : undefined,
@@ -75,9 +79,16 @@ export async function runAgentOnServer(
       signal: input.signal,
       localOnly: input.localOnly,
       resumeCheckpoint: input.resumeCheckpoint,
+      suspendForIntervention: input.suspendForIntervention,
+      flushCheckpoint: input.flushCheckpoint,
     },
     hooks
   )
 
-  return executor.run(input.userInput, input.planRetryMessage ? { planRetryMessage: input.planRetryMessage } : undefined)
+  try {
+    return await executor.run(input.userInput, input.planRetryMessage ? { planRetryMessage: input.planRetryMessage } : undefined)
+  } finally {
+    await Promise.all(usageWrites)
+    await billingRecorder?.flush()
+  }
 }

@@ -1,4 +1,5 @@
 import { logDiagnosticError } from "@/lib/diagnostics"
+import { JobSuspended } from "@/lib/agent/job-signals"
 import { generateText, tool, zodSchema, type ToolSet } from "ai"
 import { createAnthropic } from "@ai-sdk/anthropic"
 import { createOpenAI } from "@ai-sdk/openai"
@@ -644,17 +645,20 @@ export class AgentExecutor {
     const results: Array<{ id: string; ok: boolean; summary: string; output?: unknown }> = (checkpoint?.partialResults ?? [])
       .filter((result) => completedNodeIds.has(result.id))
     let sources: AcademicSearchHit[] = checkpoint?.sources ?? []
-    let citationsMarkdown = ""
+    let citationsMarkdown = sources.length ? synthesizeCitationsMarkdown(sources).markdown : ""
 
     for (let ni = 0; ni < nodes.length; ni++) {
+      await this.deps.flushCheckpoint?.()
       const n = nodes[ni]!
-      if (n.status === "done") continue
+      const unfinishedPeerGroup = n.type === "peer_review" && isPeerReviewGroupStart(nodes, ni) && collectPeerReviewGroup(nodes, ni).some(node => node.status !== "done")
+      if (n.status === "done" && !unfinishedPeerGroup) continue
       if (this.deps.signal?.aborted) {
         this.markWorkflowCancelled(nodes)
         throw new AgentRunCancelledError()
       }
       this.hooks.onNodeLog?.(n.id, `进入节点：${n.id}`)
       execHooks.onNodePatch?.(n.id, { status: "running" })
+      await this.deps.flushCheckpoint?.()
       execHooks.onNodeLog?.(n.id, `开始执行：${n.type} · ${n.provider}`)
       const nodeStartedAt = performance.now()
 
@@ -885,6 +889,7 @@ export class AgentExecutor {
         results.push(reasoningResult)
         continue
       } catch (e) {
+        if (e instanceof JobSuspended) throw e
         if (this.deps.signal?.aborted || isAbortError(e) || isAgentCancellationError(e)) {
           this.markWorkflowCancelled(nodes, n.id)
           throw new AgentRunCancelledError()
@@ -962,6 +967,7 @@ export class AgentExecutor {
       }
     }
 
+    await this.deps.flushCheckpoint?.()
     if (this.deps.signal?.aborted) {
       this.markWorkflowCancelled(nodes)
       throw new AgentRunCancelledError()
