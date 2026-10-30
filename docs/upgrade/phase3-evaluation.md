@@ -5,6 +5,7 @@
 本阶段在独立 Python 研究工程 `../ScholarKernel-reranker` 中实现冻结数据集上的检索评测，不把评测依赖并入 Next.js 应用。
 
 - 数据集：Allen Institute for AI 发布的 SciFact。固定 archive SHA-256 为 `11c621288d41ac144d29b13b0f8503b3820b7d6e8b1f6ff24dff335c196d76be`；S3 对象版本和逐文件哈希见研究工程的 `data/manifest.json`。
+- 来源与许可：见 [SciFact 官方仓库](https://github.com/allenai/scifact) 和[官方许可证说明](https://github.com/allenai/scifact/blob/master/LICENSE.md)。实验模型卡：[all-MiniLM-L6-v2](https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2)、[ms-marco-MiniLM-L6-v2 Cross-Encoder](https://huggingface.co/cross-encoder/ms-marco-MiniLM-L6-v2)；实际 revision 固定在 manifest/指标文件中。
 - 语料：5,183 篇英文科学文献摘要。查询采用官方 `claims_dev` 300 条，其中 188 条带有可用 evidence 标注，112 条无公开相关性标注。
 - 训练与验证：检索基线只用 dev 查询；后续 reranker 训练只用官方 train 查询。train/dev 之间发现两组规范化 claim 文本完全重复，微调阶段将对应 train 行排除，避免相同查询泄漏。
 - 相关性：官方 `SUPPORT` 和 `CONTRADICT` evidence 都表示该文档是 claim 的标注证据；指标不评估 claim 真伪。
