@@ -21,6 +21,7 @@ services:
         NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmjs.org}
         DEBIAN_MIRROR: ${DEBIAN_MIRROR:-http://deb.debian.org}
         NEXT_PUBLIC_BASE_PATH: ${NEXT_PUBLIC_BASE_PATH:-}
+        NEXT_PUBLIC_AGENT_EXECUTION: ${NEXT_PUBLIC_AGENT_EXECUTION:-}
     ports:
       - "127.0.0.1:3001:3000"
     env_file:
@@ -46,6 +47,7 @@ services:
         NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmjs.org}
         DEBIAN_MIRROR: ${DEBIAN_MIRROR:-http://deb.debian.org}
         NEXT_PUBLIC_BASE_PATH: ${NEXT_PUBLIC_BASE_PATH:-}
+        NEXT_PUBLIC_AGENT_EXECUTION: ${NEXT_PUBLIC_AGENT_EXECUTION:-}
     command: ["npm", "run", "worker"]
     env_file:
       - .env

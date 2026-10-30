@@ -9,7 +9,7 @@
 
 ## 隔离迁移验证
 
-测试环境为本地新建 UTF-8 PostgreSQL 集群和新数据库 `scholar_upgrade`，监听 `127.0.0.1:55446`。没有连接开发、共享或生产数据库，没有删除或重置数据库。
+测试环境为本地新建 UTF-8 PostgreSQL 18.6 集群和新数据库 `scholar_upgrade`，监听 `127.0.0.1:55446`。CI/Compose 配置为 PostgreSQL 16，本机结果不等于该版本的远端验证。没有连接开发、共享或生产数据库，没有删除或重置数据库。
 
 实际运行：
 
@@ -31,7 +31,7 @@ flowchart LR
   Worker -. 可选 .-> Rank[Reranker 服务]
 ```
 
-Docker Compose 默认只运行 PostgreSQL 和 Next.js；原配置没有启动 Agent Worker，因此 durable Job 在该部署方式下可能一直待处理。已加入 `durable-agent` profile 下的独立 Worker 服务。它复用应用镜像，等待数据库健康以及 Web 完成迁移并健康后启动。要启用 durable 模式，需在 `.env` 设置 `AGENT_DURABLE_JOBS=1` 和构建时变量 `NEXT_PUBLIC_AGENT_EXECUTION=server`，使用 `docker compose --profile durable-agent up --build -d`。
+Docker Compose 默认只运行 PostgreSQL 和 Next.js；原配置没有启动 Agent Worker，因此 durable Job 在该部署方式下可能一直待处理。已加入 `durable-agent` profile 下的独立 Worker 服务。它复用应用镜像，等待数据库健康以及 Web 完成迁移并健康后启动。镜像 runner 补入 Worker 所需的 `scripts/`、`src/`、`tsconfig.json`；Compose 将 `NEXT_PUBLIC_AGENT_EXECUTION` 通过 build args 传入 Next 构建阶段。要启用 durable 模式，需在 `.env` 设置 `AGENT_DURABLE_JOBS=1` 和构建时变量 `NEXT_PUBLIC_AGENT_EXECUTION=server`，使用 `docker compose --profile durable-agent up --build -d`。
 
 Web 与 Worker 都连接同一个 PostgreSQL。Worker 执行 `/api/agent/jobs` 创建的持久任务，并通过事件表供 SSE API 续读。实际部署时模型凭据需由服务端环境或加密的用户设置提供。可选 Embedding/Reranker 未被 Compose 管理；若将服务运行在宿主机，容器中不能把 `127.0.0.1` 当作宿主机地址，应改用网络可达的服务地址。
 
@@ -41,5 +41,5 @@ Web 与 Worker 都连接同一个 PostgreSQL。Worker 执行 `/api/agent/jobs` �
 
 - 未运行 GitHub Actions；基线没有 Actions run，远端只报告 Vercel 成功。
 - 未运行完整 `npm run test:upgrade` 或整套 CI。该白名单包含 `boundaries.integration.test.ts`，本轮明确排除权限/安全验证；只运行普通 Job、文档索引和 Mock 聊天的隔离数据库集成用例。
-- `docker compose --env-file .env.example config --no-env-resolution -q` 本地配置解析通过；未构建/启动 Docker 镜像，也未调用外部模型、部署或访问生产服务。
+- `docker compose --env-file .env.example config --no-env-resolution -q` 本地配置解析通过；Docker daemon 不可用，因此未构建/启动 Docker 镜像。通过本机临时目录模拟 runner 文件布局验证 Worker 启动与正常停止，不替代镜像验收；没有调用外部模型、部署或访问生产服务。
 - PostgreSQL 的新测试集群和数据库保留在仓库 `node_modules/.cache/phase5-pg-utf8/` 与本机测试服务中；测试结束会停止服务，不删除数据目录。

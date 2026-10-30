@@ -9,6 +9,8 @@ RUN --mount=type=cache,target=/root/.npm npm ci --ignore-scripts --registry=$NPM
 COPY . .
 ARG NEXT_PUBLIC_BASE_PATH=""
 ENV NEXT_PUBLIC_BASE_PATH=$NEXT_PUBLIC_BASE_PATH
+ARG NEXT_PUBLIC_AGENT_EXECUTION=""
+ENV NEXT_PUBLIC_AGENT_EXECUTION=$NEXT_PUBLIC_AGENT_EXECUTION
 ENV DATABASE_URL="postgresql://build:build@localhost:5432/build"
 ENV ENCRYPTION_SECRET="build-only-placeholder-not-used-at-runtime"
 ENV NODE_OPTIONS="--max-old-space-size=1024"
@@ -29,6 +31,9 @@ COPY --from=builder --chown=node:node /app/public ./public
 COPY --from=builder --chown=node:node /app/prisma ./prisma
 COPY --from=builder --chown=node:node /app/prisma.config.ts ./
 COPY --from=builder --chown=node:node /app/generated ./generated
+COPY --from=builder --chown=node:node /app/scripts ./scripts
+COPY --from=builder --chown=node:node /app/src ./src
+COPY --from=builder --chown=node:node /app/tsconfig.json ./tsconfig.json
 USER node
 EXPOSE 3000
 CMD ["sh", "-c", "npm run db:migrate && npm start -- --hostname 0.0.0.0"]
