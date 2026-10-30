@@ -10,7 +10,7 @@ Dense 查询 embedding 每次请求只生成一次；缺少或版本过期的 ch
 
 ## 合成容量测量
 
-在本机隔离 PostgreSQL `127.0.0.1:55446/scholar_upgrade`、Node v22.22.2、macOS arm64 上，以真实 chunk 构建/插入路径及真实 BM25 检索运行 100、1,000、5,000 条合成 chunk。每个规模执行 5 次查询；不配置 embedding 或 reranker 服务。索引时间含 chunk 行生成与数据库批量写入。下表为本次最终隔离集成测试输出，数字只代表此机器、此数据库和此合成数据：
+在本机隔离 PostgreSQL 18.6（`127.0.0.1:55446/scholar_upgrade`）、Node v22.22.2、macOS arm64 上，以真实 chunk 构建/插入路径及真实 BM25 检索运行 100、1,000、5,000 条合成 chunk。每个规模执行 5 次查询；不配置 embedding 或 reranker 服务。索引时间含 chunk 行生成与数据库批量写入。下表为本次最终隔离集成测试输出，数字只代表此机器、此数据库和此合成数据：
 
 | Chunk 数 | 构建+插入 ms | 查询 p50 ms | 查询 p95 ms | 采样 RSS 增量 p95 |
 |---:|---:|---:|---:|---:|

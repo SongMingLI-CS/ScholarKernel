@@ -29,7 +29,7 @@ flowchart LR
 
 - **Agent**：Planner 生成受类型约束的节点计划，Executor 依依赖顺序执行；Job API/Worker 保存检查点、事件、取消与恢复状态。重试是至少一次，未提交 checkpoint 前的模型调用可能重复。客户端执行路径尚未完全迁移到 durable job。
 - **文档**：PDF.js 提取文本和页面几何，Academic Chunker 写入章节、页码、稳定 ID 与内容 hash。只有可确认来源的页码才写入；没有文字层时当前无 OCR。
-- **检索**：本地文档 chunk 先做 BM25；显式配置本地 embedding 时加 Dense cosine 和 RRF。JSON vector 存 PostgreSQL，应用层每次最多读取 1,000 chunks，尚未使用 pgvector。可选 local/cross-encoder rerank 服务失败后回退可用检索顺序/词项排序。
+- **检索**：本地文档 chunk 先做 BM25；显式配置本地 embedding 时加 Dense cosine 和 RRF。JSON vector 存 PostgreSQL，尚未使用 pgvector。当前检索按 256 行 keyset 分页扫描全语料两遍，移除了每次最多读取 1,000 chunks 的旧上限；应用仍逐行计算 Dense，查询耗时随语料线性增长。可选 local/cross-encoder rerank 服务失败后回退可用检索顺序/词项排序。
 - **研究工程**：同级 `../ScholarKernel-reranker` 是独立 Python/PyTorch repo，管理 SciFact 冻结数据、评测、训练与本机推理 API。它不是主应用默认依赖。checkpoint 文件不在 Git 中，hash 保存在训练结果与 Phase 4 报告。
 - **预算与用量**：Agent 输出预算传给模型 SDK；输入 context 上限按字符裁剪而非 tokenizer 精确计数。用量依赖 Provider 返回值；展示成本为静态费率估算，不代表账单。
 

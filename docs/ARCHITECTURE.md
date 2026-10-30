@@ -6,7 +6,11 @@ ScholarKernel 是一个基于 Next.js App Router 的学术研究 Agent 原型。
 
 ```mermaid
 flowchart LR
-  UI[Chat UI] --> Planner[Planner]
+  UI[Chat UI] -. 兼容浏览器路径 .-> Planner[Planner]
+  UI --> JobAPI[Durable Job API]
+  JobAPI --> DB
+  Worker[独立 Worker] --> DB
+  Worker --> Executor
   Planner --> DAG[Workflow nodes]
   DAG --> Executor[AgentExecutor]
   Executor --> Search[Academic search]
@@ -42,7 +46,7 @@ flowchart LR
 - `src/lib/document/column-reorder.ts` 只在存在坐标时进行栏顺序处理。只有纯文本而没有版面坐标时保留原有顺序。
 - `src/lib/document/academic-semantic-chunker.ts` 按学术章节标题和段落切块，记录来源章节。页码仅从解析器观测到的页面块写入；无法映射时不赋默认页码。
 - `src/lib/document/document-chunk-index.ts` 为保存文档写入稳定 `DocumentChunk` ID、章节、可选页码、内容 hash 和 parser version。可选 embedding 由显式配置的本地 HTTP 服务生成，向量和 revision 存在 PostgreSQL JSON 字段。
-- `src/lib/document/search-conversation-chunks.ts` 组合 BM25 与可选 Dense cosine 召回，通过 RRF 汇合并保留来源映射。每次查询最多加载 1,000 个分块，不使用 pgvector；Dense 和本地 reranker 都需显式配置，异常可降级。
+- `src/lib/document/search-conversation-chunks.ts` 以每页 256 行 keyset 分页扫描完整会话 chunk 集，分两遍计算全语料 BM25 统计/排序，并逐页计算可选 Dense cosine，再以 RRF 汇合和保留来源映射。没有固定 1,000 chunk 截断，也不使用 pgvector；Dense 和本地 reranker 都需显式配置，异常可降级。查询耗时仍随语料线性增长，容量仅验证至 5,000 个合成 chunk。
 - `src/lib/tools/academic-search-strategy.ts` 负责搜索 query 扩写、来源合并、URL 去重和全局引用编号。
 - `src/lib/document/rerank-gateway.ts` 支持显式本地或已有外部 Reranker；响应无效或服务不可用时回退到词项排序，并对中文使用字符 bigram。词项回退是规则排序。
 
@@ -72,6 +76,6 @@ PDF.js 可以提取含文本层的 PDF。扫描版或只有页面图像的 PDF �
 
 - PDF 页面图像 OCR、图表理解、精确版面重建和自动评测语料不在当前实现中。
 - `contextLimit` 不是硬性模型 Token 窗口限制；不同供应商的最大上下文、计费和重试行为仍可能不同。
-- 服务端 Job 有恢复入口，但系统没有自动侦测并接管所有进程崩溃后遗留的 `running` Job。
+- Durable Worker 可在 lease 过期且未超过最大 attempt 时重新认领任务；旧浏览器/兼容执行路径不具备同等的进程重启恢复保证。
 - 普通 CI 使用 Mock 和本地服务；没有使用真实用户数据或真实模型 API。
 - SciFact dev 有检索评测，但没有独立 test split，也不是用户上传文档或生成答案评测；Agent 单/多智能体对照没有执行。项目包含一个本地微调 Cross-Encoder 研究 checkpoint，但不代表生产模型或统计显著的普适提升。

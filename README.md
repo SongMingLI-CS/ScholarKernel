@@ -51,7 +51,7 @@ npm run lint       # ESLint
 npm run build      # prisma generate + next build
 ```
 
-`npm test` 运行 Vitest 全部测试；`test:quality` 是 CI 使用的普通功能测试集合。端到端测试覆盖健康接口和聊天输入框草稿交互，不发送模型请求。运行模型相关功能仍需在设置中提供对应供应商密钥。
+`npm test` 运行 Vitest 全部测试；`test:quality` 是 CI 使用的普通功能测试集合。Playwright 覆盖健康接口、聊天输入框草稿，以及真实 Next Route/Worker + 本机 Mock 模型闭环；测试不会访问外部模型 API。需要浏览器用例时，先安装 Playwright Chromium，或在已有 Chrome 的本机设置 `PLAYWRIGHT_CHANNEL=chrome`。运行实际模型功能仍需在设置中提供对应供应商密钥。
 
 ## 文献解析与 RAG 范围
 
@@ -61,11 +61,11 @@ npm run build      # prisma generate + next build
 - `contextLimit` 是字符数上限，不是精确 Token 计数。模型输出上限按设置传给 AI SDK，但供应商仍可能另有限制。
 - 用量日志记录供应商返回的 Token 数；成本由仓库中的静态价格表估算，不等同供应商账单。
 
-架构和工程边界见 [架构说明](docs/ARCHITECTURE.md)。面试讲解建议结合 [面试指南](docs/INTERVIEW_GUIDE.md) 和 [最终工程修复报告](docs/audit/final-engineering-remediation.md)。
+架构和工程边界见 [架构说明](docs/ARCHITECTURE.md)。Phase 5 的验收矩阵、复现命令、限制和面试材料集中在 [最终验收报告](docs/acceptance/FINAL_REPORT.md)、[复现指南](docs/acceptance/REPRODUCTION.md)、[已知限制](docs/acceptance/KNOWN_LIMITATIONS.md) 与 [验收面试指南](docs/acceptance/INTERVIEW_GUIDE.md)。此前阶段资料见 [升级报告](docs/audit/final-engineering-remediation.md)。
 
 ## Academic Retrieval 评测与本地模型
 
-主应用支持显式配置的本地 Embedding 与 Cross-Encoder 接口；未配置本地模型时继续使用 BM25。一个独立的 PyTorch 研究工程位于本地同级目录 `../ScholarKernel-reranker`，它冻结了 SciFact 数据、比较 BM25/Dense/Hybrid/预训练 reranker，并训练一个小型 SciFact reranker。实验指标、原始预测、训练参数和许可记录见 `docs/upgrade/phase3-evaluation.md`、`docs/upgrade/phase4-reranker.md`。
+主应用支持显式配置的本地 Embedding 与 Cross-Encoder 接口；未配置本地模型时继续使用 BM25。文档检索以 256 条分页扫描完整会话，不再在 1,000 条截断；仍要全量两次扫描，实际合成测量只到 5,000 chunks。一个独立的 PyTorch 研究工程位于本地同级目录 `../ScholarKernel-reranker`，它冻结了 SciFact 数据、比较 BM25/Dense/Hybrid/预训练 reranker，并训练一个小型 SciFact reranker。独立指标复算及限制见 `docs/acceptance/04-ml-reproducibility.md`。
 
 研究工程是独立 Git 仓库，不作为本项目子模块或源码依赖；权重与缓存未提交，需要按该仓库 README 下载/训练后才能启动本地 HTTP 服务。本地模型实测只验证了合成文档接线与公开 SciFact benchmark，不能据此宣称 ScholarKernel 用户文档或生成答案质量提升。限制见 [AI Evaluation 记录](docs/upgrade/AI_EVALUATION.md)。
 
