@@ -1,6 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
-import { getBM25Parameters, lexicalRerankScores, rerankAcademicHits, rerankWithLocalService } from "@/lib/document/rerank-gateway"
+import {
+  addBM25CorpusBatch,
+  createBM25CorpusStatistics,
+  getBM25Parameters,
+  lexicalRerankScores,
+  lexicalRerankScoresAgainstCorpus,
+  rerankAcademicHits,
+  rerankWithLocalService,
+} from "@/lib/document/rerank-gateway"
 import type { AcademicSearchHit } from "@/lib/tools/search-tool"
 
 describe("rerankAcademicHits", () => {
@@ -44,6 +52,25 @@ describe("rerankAcademicHits", () => {
     ])
     expect(scores[0]?.score).toBeGreaterThan(scores[1]?.score ?? 0)
     expect(scores[1]?.score).toBe(0)
+  })
+
+  it("keeps corpus-wide BM25 statistics unchanged across bounded pages", () => {
+    const query = "跨学科检索质量"
+    const docs = [
+      "跨学科研究检索质量评估与语义证据",
+      "跨学科研究的另一种检索质量比较",
+      "材料科学的实验结果与误差分析",
+      "检索质量和语义证据的相关性研究",
+    ]
+    const expected = lexicalRerankScores(query, docs)
+    const corpus = createBM25CorpusStatistics()
+    addBM25CorpusBatch(corpus, query, docs.slice(0, 2))
+    addBM25CorpusBatch(corpus, query, docs.slice(2))
+    const firstPage = lexicalRerankScoresAgainstCorpus(query, docs.slice(0, 2), corpus)
+    const secondPage = lexicalRerankScoresAgainstCorpus(query, docs.slice(2), corpus)
+
+    expect(firstPage.map((row) => row.score)).toEqual(expected.slice(0, 2).map((row) => row.score))
+    expect(secondPage.map((row) => row.score)).toEqual(expected.slice(2).map((row) => row.score))
   })
 
   it("uses explicit and environment BM25 k1/b values within supported bounds", () => {

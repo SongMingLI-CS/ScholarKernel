@@ -41,6 +41,61 @@ function tokenize(text: string): string[] {
   return tokens
 }
 
+export type BM25CorpusStatistics = {
+  documentCount: number
+  totalTokenCount: number
+  documentFrequency: Map<string, number>
+}
+
+export function createBM25CorpusStatistics(): BM25CorpusStatistics {
+  return { documentCount: 0, totalTokenCount: 0, documentFrequency: new Map() }
+}
+
+/** Adds one bounded page to corpus-wide BM25 statistics for the supplied query. */
+export function addBM25CorpusBatch(stats: BM25CorpusStatistics, query: string, docs: string[]) {
+  const queryTerms = new Set(tokenize(query))
+  for (const doc of docs) {
+    const tokens = tokenize(doc)
+    stats.documentCount++
+    stats.totalTokenCount += tokens.length
+    const seen = new Set(tokens)
+    for (const term of queryTerms) {
+      if (seen.has(term)) stats.documentFrequency.set(term, (stats.documentFrequency.get(term) ?? 0) + 1)
+    }
+  }
+}
+
+/** Scores a page with corpus-wide BM25 statistics so paging does not alter IDF or average length. */
+export function lexicalRerankScoresAgainstCorpus(
+  query: string,
+  docs: string[],
+  corpus: BM25CorpusStatistics,
+  options: BM25Parameters = {}
+): RerankScore[] {
+  const qTokens = tokenize(query)
+  const docTokens = docs.map((doc) => tokenize(doc))
+  const N = corpus.documentCount
+  const avgLen = corpus.totalTokenCount / Math.max(N, 1)
+  const { k1, b } = getBM25Parameters(options)
+
+  return docTokens.map((tokens, index) => {
+    const tf = new Map<string, number>()
+    for (const token of tokens) tf.set(token, (tf.get(token) ?? 0) + 1)
+    const dl = tokens.length
+    let score = 0
+    for (const term of qTokens) {
+      const freq = tf.get(term) ?? 0
+      if (!freq) continue
+      const df = corpus.documentFrequency.get(term) ?? 0
+      const idf = Math.log(1 + (N - df + 0.5) / (df + 0.5))
+      const numerator = freq * (k1 + 1)
+      const denominator = freq + k1 * (1 - b + (b * dl) / Math.max(avgLen, 1))
+      score += idf * (numerator / denominator)
+    }
+    return { index, score }
+  })
+}
+
 function normalizeScores(
   rows: Array<{ index: number; score: number }>,
   documentCount: number
@@ -74,34 +129,9 @@ export function getBM25Parameters(overrides: BM25Parameters = {}): Required<BM25
 
 /** BM25 scoring with Chinese adjacent-character bigrams and configurable k1/b. */
 export function lexicalRerankScores(query: string, docs: string[], options: BM25Parameters = {}): RerankScore[] {
-  const qTokens = tokenize(query)
-  const docTokens = docs.map((d) => tokenize(d))
-  const N = docs.length
-  const avgLen = docTokens.reduce((s, t) => s + t.length, 0) / Math.max(N, 1)
-  const { k1, b } = getBM25Parameters(options)
-
-  const df = new Map<string, number>()
-  for (const tokens of docTokens) {
-    const seen = new Set(tokens)
-    for (const t of seen) df.set(t, (df.get(t) ?? 0) + 1)
-  }
-
-  return docTokens.map((tokens, index) => {
-    const tf = new Map<string, number>()
-    for (const t of tokens) tf.set(t, (tf.get(t) ?? 0) + 1)
-    const dl = tokens.length
-
-    let score = 0
-    for (const qt of qTokens) {
-      const freq = tf.get(qt) ?? 0
-      if (!freq) continue
-      const idf = Math.log(1 + (N - (df.get(qt) ?? 0) + 0.5) / ((df.get(qt) ?? 0) + 0.5))
-      const num = freq * (k1 + 1)
-      const den = freq + k1 * (1 - b + (b * dl) / Math.max(avgLen, 1))
-      score += idf * (num / den)
-    }
-    return { index, score }
-  })
+  const corpus = createBM25CorpusStatistics()
+  addBM25CorpusBatch(corpus, query, docs)
+  return lexicalRerankScoresAgainstCorpus(query, docs, corpus, options)
 }
 
 async function cohereRerank(query: string, docs: string[]): Promise<RerankScore[] | null> {
