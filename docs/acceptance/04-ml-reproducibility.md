@@ -16,7 +16,7 @@ python3 scripts/acceptance/recompute_scifact_evaluation.py /path/to/ScholarKerne
 python3 scripts/acceptance/recompute_scifact_evaluation.py ../ScholarKernel-reranker
 ```
 
-复算结果：五套排序的 300 条逐 query 指标没有不一致；五份 metrics.json 中五项聚合指标与复算值的绝对差全部为 0。训练报告标记 188 条有标注 query、112 条无标注 query；复算也得到同样数量。代码将 `SUPPORT` 和 `CONTRADICT` 标注文档都作为证据检索正例，对 188 条 eligible query 做宏平均；112 条无公开证据标注的 query 不作为零召回计分。该任务衡量证据文档排序，不是 claim 真伪分类或答案忠实度。
+复算直接使用原始官方 dev claim/evidence 生成 qrels，并逐项核对预测中的 claim/qrels、query 完整性、排名去重和 corpus 文档 ID；五个系统均无缺失/重复 query、无重复排名文档、无未知文档、无 claim/qrel 不一致。五套排序的 300 条逐 query 指标没有不一致；五份 metrics.json 中五项聚合指标与复算值的绝对差全部为 0。训练报告标记 188 条有标注 query、112 条无标注 query；复算也得到同样数量。代码将 `SUPPORT` 和 `CONTRADICT` 标注文档都作为证据检索正例，对 188 条 eligible query 做宏平均；112 条无公开证据标注的 query 不作为零召回计分。该任务衡量证据文档排序，不是 claim 真伪分类或答案忠实度。
 
 | 检索方法 | nDCG@10 | Recall@10 | MRR@10 |
 |---|---:|---:|---:|

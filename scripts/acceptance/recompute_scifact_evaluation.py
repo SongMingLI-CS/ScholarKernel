@@ -77,6 +77,15 @@ def normalized_claim(text: str) -> str:
     return text.strip().casefold()
 
 
+def official_qrels(query: dict[str, Any]) -> dict[str, int]:
+    return {
+        str(document_id): 1
+        for document_id, annotations in (query.get("evidence") or {}).items()
+        if isinstance(annotations, list)
+        and any(isinstance(item, dict) and item.get("label") in {"SUPPORT", "CONTRADICT"} for item in annotations)
+    }
+
+
 def char_fivegrams(text: str) -> set[str]:
     tokens = re.findall(r"[a-z0-9]+", " ".join(text.strip().casefold().split()))
     normalized = " ".join(tokens)
@@ -143,6 +152,9 @@ def main() -> None:
 
     train = read_jsonl(train_path)
     dev = read_jsonl(dev_path)
+    dev_by_id = {str(row["id"]): row for row in dev}
+    corpus_rows = read_jsonl(corpus)
+    corpus_ids = {str(row["doc_id"]) for row in corpus_rows}
     dev_normalized = {normalized_claim(str(row["claim"])) for row in dev}
     exact_pairs = sum(normalized_claim(str(row["claim"])) in dev_normalized for row in train)
     retained_train = [row for row in train if normalized_claim(str(row["claim"])) not in dev_normalized]
@@ -170,16 +182,36 @@ def main() -> None:
         "hybrid-rerank-finetuned": fine / "hybrid-rerank-finetuned.jsonl",
     }
     systems: dict[str, dict[str, dict[str, Any]]] = {}
+    fresh_scores: dict[str, dict[str, dict[str, Any]]] = {}
     recomputed: dict[str, Any] = {}
     summary_differences: dict[str, Any] = {}
     for name, path in system_paths.items():
         rows = read_jsonl(path)
         systems[name] = {str(row["query_id"]): row for row in rows}
+        fresh_scores[name] = {}
+        dataset_checks = {
+            "duplicate_query_rows": len(rows) - len(systems[name]),
+            "unknown_query_ids": len(set(systems[name]) - set(dev_by_id)),
+            "missing_query_ids": len(set(dev_by_id) - set(systems[name])),
+            "claim_mismatches": 0,
+            "qrel_mismatches": 0,
+            "duplicate_ranked_document_rows": 0,
+            "unknown_ranked_documents": 0,
+        }
         scored_rows: list[dict[str, Any]] = []
         mismatches = 0
         for row in rows:
-            qrels = {str(key): int(value) for key, value in row["qrels"].items()}
-            score = score_query([str(hit["doc_id"]) for hit in row["ranking"]], qrels)
+            query_id = str(row["query_id"])
+            original = dev_by_id.get(query_id, {})
+            qrels = official_qrels(original)
+            stored_qrels = {str(key): int(value) for key, value in row["qrels"].items()}
+            dataset_checks["claim_mismatches"] += row.get("claim") != original.get("claim")
+            dataset_checks["qrel_mismatches"] += stored_qrels != qrels
+            ranked_ids = [str(hit["doc_id"]) for hit in row["ranking"]]
+            dataset_checks["duplicate_ranked_document_rows"] += len(ranked_ids) != len(set(ranked_ids))
+            dataset_checks["unknown_ranked_documents"] += sum(doc_id not in corpus_ids for doc_id in ranked_ids)
+            score = score_query(ranked_ids, qrels)
+            fresh_scores[name][query_id] = score
             scored_rows.append(score)
             for key, value in score.items():
                 if row["metrics"].get(key) != value and not (
@@ -189,7 +221,7 @@ def main() -> None:
                 ):
                     mismatches += 1
         actual = summarize(scored_rows)
-        recomputed[name] = {"rows": len(rows), "metrics": actual, "per_query_metric_mismatches": mismatches}
+        recomputed[name] = {"rows": len(rows), "metrics": actual, "per_query_metric_mismatches": mismatches, "official_data_checks": dataset_checks}
         summary_path = base / "metrics.json" if name != "hybrid-rerank-finetuned" else fine / "metrics.json"
         reported = read_json(summary_path)["systems"][name]
         summary_differences[name] = {
@@ -205,10 +237,10 @@ def main() -> None:
         for query_id in shared_ids
     )
     reranker_pool_diff = sum(pretrained_sets[query_id] != finetuned_sets[query_id] for query_id in shared_ids)
-    eligible_ids = [query_id for query_id in sorted(shared_ids) if systems["hybrid-rerank"][query_id]["metrics"].get("eligible")]
+    eligible_ids = [query_id for query_id in sorted(shared_ids) if fresh_scores["hybrid-rerank"][query_id].get("eligible")]
     differences = {
-        query_id: float(systems["hybrid-rerank-finetuned"][query_id]["metrics"]["nDCG@10"])
-        - float(systems["hybrid-rerank"][query_id]["metrics"]["nDCG@10"])
+        query_id: float(fresh_scores["hybrid-rerank-finetuned"][query_id]["nDCG@10"])
+        - float(fresh_scores["hybrid-rerank"][query_id]["nDCG@10"])
         for query_id in eligible_ids
     }
 
@@ -217,7 +249,7 @@ def main() -> None:
         "dataset": {
             "archive_sha256_matches_manifest": sha256(archive) == manifest["archive_sha256"],
             "processed_file_hashes_match_manifest": processed_hashes,
-            "corpus_documents": len(read_jsonl(corpus)),
+            "corpus_documents": len(corpus_rows),
         },
         "split": {
             "train_claim_count": len(train),
