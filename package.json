@@ -25,7 +25,7 @@
     "db:migrate:dev": "prisma migrate dev",
     "postinstall": "prisma generate",
     "worker": "tsx scripts/agent-worker.ts",
-    "test:upgrade": "vitest run --no-file-parallelism src/lib/__tests__/document-service.test.ts src/lib/__tests__/document-index.integration.test.ts src/lib/__tests__/owned-messages.test.ts src/lib/__tests__/intervention-service.test.ts src/lib/__tests__/diagnostics.test.ts src/lib/__tests__/boundaries.integration.test.ts src/lib/__tests__/durable-jobs.integration.test.ts src/lib/__tests__/server-chat.integration.test.ts src/lib/__tests__/job-client.test.ts src/lib/__tests__/peer-job-resume.test.ts"
+    "test:upgrade": "vitest run --no-file-parallelism src/lib/__tests__/document-service.test.ts src/lib/__tests__/document-index.integration.test.ts src/lib/__tests__/owned-messages.test.ts src/lib/__tests__/intervention-service.test.ts src/lib/__tests__/diagnostics.test.ts src/lib/__tests__/boundaries.integration.test.ts src/lib/__tests__/durable-jobs.integration.test.ts src/lib/__tests__/agent-runtime.integration.test.ts src/lib/__tests__/server-chat.integration.test.ts src/lib/__tests__/job-client.test.ts src/lib/__tests__/peer-job-resume.test.ts"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^3.0.71",
