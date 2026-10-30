@@ -4,10 +4,20 @@ export type CitationSource = {
   url: string
   snippet?: string
   publishedAt?: string
+  sourceKind?: "web" | "local_document"
+  documentId?: string
+  chunkId?: string
+  pageNumber?: number
+  retrievalScore?: number
+  denseScore?: number
+  fusionScore?: number
+  rerankScore?: number
+  retrieverModel?: string
+  rerankerModel?: string
 }
 
 export function collectCitationSources(
-  hits: Array<{ title: string; url: string; snippet?: string; publishedAt?: string; source_id?: string }>
+  hits: CitationSource[]
 ): CitationSource[] {
   const seen = new Set<string>()
   const out: CitationSource[] = []
@@ -24,6 +34,16 @@ export function collectCitationSources(
       url,
       ...(h.snippet ? { snippet: h.snippet } : {}),
       ...(h.publishedAt ? { publishedAt: h.publishedAt } : {}),
+      ...(h.sourceKind ? { sourceKind: h.sourceKind } : {}),
+      ...(h.documentId ? { documentId: h.documentId } : {}),
+      ...(h.chunkId ? { chunkId: h.chunkId } : {}),
+      ...(h.pageNumber ? { pageNumber: h.pageNumber } : {}),
+      ...(h.retrievalScore !== undefined ? { retrievalScore: h.retrievalScore } : {}),
+      ...(h.denseScore !== undefined ? { denseScore: h.denseScore } : {}),
+      ...(h.fusionScore !== undefined ? { fusionScore: h.fusionScore } : {}),
+      ...(h.rerankScore !== undefined ? { rerankScore: h.rerankScore } : {}),
+      ...(h.retrieverModel ? { retrieverModel: h.retrieverModel } : {}),
+      ...(h.rerankerModel ? { rerankerModel: h.rerankerModel } : {}),
     })
   }
   return out

@@ -26,6 +26,16 @@ export type AcademicSearchHit = {
   snippet?: string
   publishedAt?: string
   source?: string
+  sourceKind?: "web" | "local_document"
+  documentId?: string
+  chunkId?: string
+  pageNumber?: number
+  retrievalScore?: number
+  denseScore?: number
+  fusionScore?: number
+  rerankScore?: number
+  retrieverModel?: string
+  rerankerModel?: string
 }
 
 export type AcademicSearchResponse = {
@@ -444,7 +454,8 @@ export function synthesizeCitationsMarkdown(results: AcademicSearchHit[], title 
     const year = yearMatch ? ` (${yearMatch[0]})` : r.publishedAt ? ` (${r.publishedAt})` : ""
     const label = r.title.replace(/([\\[\]])/g, "\\$1")
     const url = /^https?:\/\//i.test(r.url) ? r.url.replace(/\(/g, "%28").replace(/\)/g, "%29") : ""
-    return `- [${sid}] ${url ? `[${label}](${url})` : label}${year}`
+    const page = Number.isInteger(r.pageNumber) && (r.pageNumber ?? 0) > 0 ? ` (p.${r.pageNumber})` : ""
+    return `- [${sid}] ${url ? `[${label}](${url})` : label}${year}${page}`
   })
   return {
     count: results.length,

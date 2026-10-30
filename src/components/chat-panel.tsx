@@ -26,7 +26,8 @@ import {
 import { collectSourcesFromMessages, exportSourcesAsBibTeX, exportSourcesAsRIS } from "@/lib/citation-export"
 import { gatherExportMetadataFromStore } from "@/lib/export-metadata"
 import { downloadConversationAsDocx, downloadConversationAsPdf } from "@/lib/export-utils"
-import { formatFileAttachmentBlock, readBrowserFileAsText } from "@/lib/browser-file"
+import { formatFileAttachmentBlock, readBrowserDocumentContent, readBrowserFileAsText } from "@/lib/browser-file"
+import { apiFetch } from "@/lib/api-fetch"
 import { connKey, looksLikeWorkflowPlanJson } from "@/lib/chat-bubble-utils"
 import { bubbleContentToPlainText } from "@/lib/scholar-canvas"
 import { learningDraftKey } from "@/lib/learning-studio"
@@ -61,7 +62,7 @@ const SourcesFoldout = memo(function SourcesFoldout({
   showText,
   hideText,
 }: {
-  sources?: Array<{ title: string; url: string; snippet?: string; publishedAt?: string }>
+  sources?: Array<{ title: string; url: string; snippet?: string; publishedAt?: string; sourceKind?: "web" | "local_document"; pageNumber?: number }>
   title: string
   showText: string
   hideText: string
@@ -88,18 +89,23 @@ const SourcesFoldout = memo(function SourcesFoldout({
             const sid = (s as unknown as { source_id?: string }).source_id ?? String(idx + 1)
             const yearMatch = s.publishedAt?.match(/\b(19|20)\d{2}\b/)
             const year = yearMatch ? ` (${yearMatch[0]})` : s.publishedAt ? ` (${s.publishedAt})` : ""
+            const page = s.pageNumber ? ` (p.${s.pageNumber})` : ""
             return (
               <li key={`${s.url}-${idx}`} className="text-[12px] leading-snug text-foreground/90">
                 <span className="mr-1.5 font-mono text-[11px] text-sidebar-primary/80">[{sid}]</span>
-                <a
-                  className="text-foreground/95 underline decoration-border/60 underline-offset-2 transition-colors hover:text-sky-300 hover:decoration-sky-400/50"
-                  href={s.url}
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  {s.title}
-                </a>
-                {year ? <span className="text-muted-foreground">{year}</span> : null}
+                {s.sourceKind === "local_document" ? (
+                  <span className="text-foreground/95">{s.title}<span className="ml-1 text-muted-foreground">（本会话文档）</span></span>
+                ) : (
+                  <a
+                    className="text-foreground/95 underline decoration-border/60 underline-offset-2 transition-colors hover:text-sky-300 hover:decoration-sky-400/50"
+                    href={s.url}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    {s.title}
+                  </a>
+                )}
+                {year || page ? <span className="text-muted-foreground">{year}{page}</span> : null}
               </li>
             )
           })}
@@ -533,8 +539,28 @@ const ChatPanelInner = memo(function ChatPanelInner() {
     async (file: File | null) => {
       if (!file || streaming) return
       try {
-        const text = await readBrowserFileAsText(file)
-        const block = formatFileAttachmentBlock(file.name, text)
+        const parsed = await readBrowserDocumentContent(file)
+        let savedNote = ""
+        if (currentConversationId) {
+          try {
+            const saved = await apiFetch<{ id: string; chunkCount: number }>(
+              `/api/conversations/${encodeURIComponent(currentConversationId)}/documents`,
+              {
+                method: "POST",
+                body: JSON.stringify({ title: file.name, content: parsed.text, chunks: parsed.chunks }),
+              }
+            )
+            savedNote = `\n[本会话文献来源 ID: ${saved.id}；已建立 ${saved.chunkCount} 个可检索片段。]`
+          } catch (error) {
+            pushToast({
+              messageKey: "chat.upload.failed",
+              detail: `正文仍可随消息发送，但未保存为本会话检索来源：${error instanceof Error ? error.message : "保存失败"}`,
+              variant: "error",
+              ttlMs: 6200,
+            })
+          }
+        }
+        const block = `${formatFileAttachmentBlock(file.name, parsed.text)}${savedNote}`
         setInput((prev) => (prev.trim() ? `${block}${prev}` : block))
         pushToast({ messageKey: "chat.upload.done", variant: "success", ttlMs: 2400 })
       } catch (e) {
@@ -549,7 +575,7 @@ const ChatPanelInner = memo(function ChatPanelInner() {
         if (fileInputRef.current) fileInputRef.current.value = ""
       }
     },
-    [pushToast, streaming]
+    [currentConversationId, pushToast, streaming]
   )
 
   const lastAssistantId = useMemo(() => {

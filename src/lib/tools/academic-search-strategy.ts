@@ -180,6 +180,42 @@ function normalizeAcademicUrlKey(raw: string | undefined): string {
   }
 }
 
+/** Reciprocal-rank fusion for results returned by independent queries or local/web retrievers. */
+export function fuseAcademicSearchHits(rankings: AcademicSearchHit[][], limit = 24): AcademicSearchHit[] {
+  const fused = new Map<string, { hit: AcademicSearchHit; score: number; bestRank: number }>()
+  const rankConstant = 60
+  for (const ranking of rankings) {
+    ranking.forEach((hit, index) => {
+      const key = normalizeAcademicUrlKey(hit.url)
+      if (!key) return
+      const contribution = 1 / (rankConstant + index + 1)
+      const current = fused.get(key)
+      if (current) {
+        current.score += contribution
+        const preferred = index < current.bestRank ? hit : current.hit
+        current.hit = {
+          ...preferred,
+          ...(current.hit.retrievalScore !== undefined || hit.retrievalScore !== undefined
+            ? { retrievalScore: current.hit.retrievalScore ?? hit.retrievalScore } : {}),
+          ...(current.hit.denseScore !== undefined || hit.denseScore !== undefined
+            ? { denseScore: current.hit.denseScore ?? hit.denseScore } : {}),
+          ...(current.hit.rerankScore !== undefined || hit.rerankScore !== undefined
+            ? { rerankScore: current.hit.rerankScore ?? hit.rerankScore } : {}),
+        }
+        if (index < current.bestRank) {
+          current.bestRank = index
+        }
+      } else {
+        fused.set(key, { hit, score: contribution, bestRank: index })
+      }
+    })
+  }
+  return [...fused.entries()]
+    .sort((a, b) => b[1].score - a[1].score || a[1].bestRank - b[1].bestRank || a[0].localeCompare(b[0]))
+    .slice(0, Math.max(0, limit))
+    .map(([, item], index) => ({ ...item.hit, source_id: String(index + 1), fusionScore: item.score }))
+}
+
 /** Merge a new search batch and reassign each result to the global citation ID. */
 export function reconcileAcademicSearchSources(
   existing: AcademicSearchHit[],
@@ -215,7 +251,7 @@ export function mergeAcademicSearchResponses(
     }
   }
 
-  const mergedHits = mergeAcademicSearchHits([], responses.flatMap((r) => r.results ?? []))
+  const mergedHits = fuseAcademicSearchHits(responses.map((response) => response.results ?? []))
   const anyOk = responses.some((r) => r.status === "ok" && (r.results?.length ?? 0) > 0)
   const allFailed = responses.every((r) => r.status === "failed")
   const academicOnly = responses.every((r) => r.academicOnly)

@@ -1,6 +1,7 @@
 import { logDiagnosticError } from "@/lib/diagnostics"
 import { jsonError, jsonOk, parseJsonBody } from "@/lib/api-utils"
 import { conversationOwnerWhere, resolveUserIdFromRequest } from "@/lib/auth-user"
+import { indexDocumentChunkEmbeddings, replaceDocumentChunkIndex } from "@/lib/document/document-chunk-index"
 import type { PatchDocumentBody } from "@/lib/db-types"
 import { prisma } from "@/lib/prisma"
 
@@ -39,25 +40,41 @@ export async function PATCH(req: Request, ctx: RouteCtx) {
     const nextVersion =
       body.content !== undefined ? existing.version + 1 : existing.version
 
-    const document = await prisma.document.update({
-      where: { id: docId },
-      data: {
-        ...(body.title !== undefined ? { title: body.title.trim() || "未命名文档" } : {}),
-        ...(body.content !== undefined ? { content: body.content, version: nextVersion } : {}),
-      },
-      select: {
-        id: true,
-        conversationId: true,
-        title: true,
-        content: true,
-        version: true,
-        createdAt: true,
-        updatedAt: true,
-      },
+    const { document, chunkIds } = await prisma.$transaction(async (tx) => {
+      const document = await tx.document.update({
+        where: { id: docId },
+        data: {
+          ...(body.title !== undefined ? { title: body.title.trim() || "未命名文档" } : {}),
+          ...(body.content !== undefined ? { content: body.content, version: nextVersion } : {}),
+        },
+        select: {
+          id: true,
+          conversationId: true,
+          title: true,
+          content: true,
+          version: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+      })
+      const chunks = body.content === undefined
+        ? null
+        : await replaceDocumentChunkIndex(tx, docId, body.content, body.chunks)
+      return { document, chunkIds: chunks?.map((chunk) => chunk.id) }
     })
+    let embeddingStatus: string | undefined
+    if (chunkIds) {
+      try {
+        embeddingStatus = (await indexDocumentChunkEmbeddings(docId, chunkIds)).status
+      } catch (error) {
+        logDiagnosticError("[document embeddings]", error)
+        embeddingStatus = "unavailable"
+      }
+    }
 
     return jsonOk({
       ...document,
+      ...(chunkIds !== undefined ? { chunkCount: chunkIds.length, embeddingStatus } : {}),
       createdAt: document.createdAt.toISOString(),
       updatedAt: document.updatedAt.toISOString(),
     })

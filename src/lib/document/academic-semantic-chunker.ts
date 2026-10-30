@@ -70,26 +70,24 @@ export function detectSectionTitle(line: string): string | null {
   return null
 }
 
-function buildLinePageMap(blocks: LayoutTextBlock[]): Map<string, number> {
-  const map = new Map<string, number>()
+function normalizeLayoutLine(text: string): string {
+  return text.replace(/\s+/g, " ").trim()
+}
+
+function buildLinePageMap(blocks: LayoutTextBlock[]): Map<string, number | null> {
+  const map = new Map<string, number | null>()
   for (const b of blocks) {
-    const key = b.text.trim()
-    if (key.length >= 4 && !map.has(key)) map.set(key, b.page)
+    const key = normalizeLayoutLine(b.text)
+    if (key.length < 4) continue
+    const existing = map.get(key)
+    map.set(key, existing === undefined || existing === b.page ? b.page : null)
   }
   return map
 }
 
-function inferPageForText(text: string, linePageMap: Map<string, number>): number | undefined {
-  const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean)
-  for (const line of lines) {
-    if (line.length < 4) continue
-    const direct = linePageMap.get(line)
-    if (direct !== undefined) return direct
-    for (const [key, page] of linePageMap) {
-      if (line.includes(key) || key.includes(line)) return page
-    }
-  }
-  return undefined
+function pageForLine(line: string, linePageMap: Map<string, number | null>): number | undefined {
+  const mapped = linePageMap.get(normalizeLayoutLine(line))
+  return typeof mapped === "number" ? mapped : undefined
 }
 
 type RawSection = {
@@ -119,19 +117,29 @@ function splitIntoSections(text: string): RawSection[] {
   return sections
 }
 
-function splitSectionLines(lines: string[], maxChars = 2400): string[] {
-  const chunks: string[] = []
+function splitSectionLines(
+  lines: string[],
+  linePageMap: Map<string, number | null>,
+  maxChars = 2400
+): Array<{ text: string; page?: number }> {
+  const chunks: Array<{ text: string; page?: number }> = []
   let current: string[] = []
   let currentLength = 0
+  let currentPage: number | undefined
 
   const flush = () => {
     const text = current.join("\n").trim()
-    if (text) chunks.push(text)
+    if (text) chunks.push({ text, ...(currentPage !== undefined ? { page: currentPage } : {}) })
     current = []
     currentLength = 0
+    currentPage = undefined
   }
 
   for (const line of lines) {
+    const linePage = pageForLine(line, linePageMap)
+    if (current.length && linePage !== undefined && currentPage !== undefined && linePage !== currentPage) flush()
+    if (currentPage === undefined && linePage !== undefined) currentPage = linePage
+
     if (line.length > maxChars) {
       flush()
       let remainder = line
@@ -139,12 +147,13 @@ function splitSectionLines(lines: string[], maxChars = 2400): string[] {
         const window = remainder.slice(0, maxChars)
         const sentenceBreak = Math.max(window.lastIndexOf("。"), window.lastIndexOf(". "), window.lastIndexOf("; "), window.lastIndexOf("；"))
         const splitAt = sentenceBreak > maxChars * 0.55 ? sentenceBreak + 1 : maxChars
-        chunks.push(remainder.slice(0, splitAt).trim())
+        chunks.push({ text: remainder.slice(0, splitAt).trim(), ...(linePage !== undefined ? { page: linePage } : {}) })
         remainder = remainder.slice(splitAt).trimStart()
       }
       if (remainder) {
         current = [remainder]
         currentLength = remainder.length
+        currentPage = linePage
       }
       continue
     }
@@ -194,11 +203,10 @@ export function semanticChunkAcademicText(input: SemanticChunkInput): AcademicCh
   const chunks: AcademicChunk[] = []
 
   for (const section of sections) {
-    for (const body of splitSectionLines(section.lines)) {
-      const page = inferPageForText(body, linePageMap)
+    for (const chunk of splitSectionLines(section.lines, linePageMap)) {
       chunks.push(AcademicChunkSchema.parse({
-        text: body,
-        metadata: { section: section.title, ...(page !== undefined ? { page } : {}), index: chunks.length },
+        text: chunk.text,
+        metadata: { section: section.title, ...(chunk.page !== undefined ? { page: chunk.page } : {}), index: chunks.length },
       }))
     }
   }

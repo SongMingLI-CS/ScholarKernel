@@ -1,6 +1,7 @@
 import { logDiagnosticError } from "@/lib/diagnostics"
 import { jsonError, jsonOk, parseJsonBody } from "@/lib/api-utils"
 import { conversationOwnerWhere, resolveUserIdFromRequest } from "@/lib/auth-user"
+import { indexDocumentChunkEmbeddings, replaceDocumentChunkIndex } from "@/lib/document/document-chunk-index"
 import type { CreateDocumentBody } from "@/lib/db-types"
 import { prisma } from "@/lib/prisma"
 
@@ -23,22 +24,35 @@ export async function POST(req: Request, ctx: RouteCtx) {
     const title = typeof body?.title === "string" ? body.title.trim() || "未命名文档" : "未命名文档"
     const content = typeof body?.content === "string" ? body.content : ""
 
-    const document = await prisma.document.create({
-      data: { conversationId, title, content },
-      select: {
-        id: true,
-        conversationId: true,
-        title: true,
-        content: true,
-        version: true,
-        createdAt: true,
-        updatedAt: true,
-      },
+    const { document, chunkIds } = await prisma.$transaction(async (tx) => {
+      const document = await tx.document.create({
+        data: { conversationId, title, content },
+        select: {
+          id: true,
+          conversationId: true,
+          title: true,
+          content: true,
+          version: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+      })
+      const chunks = await replaceDocumentChunkIndex(tx, document.id, content, body?.chunks)
+      return { document, chunkIds: chunks.map((chunk) => chunk.id) }
     })
+    let embeddingStatus: string = "disabled"
+    try {
+      embeddingStatus = (await indexDocumentChunkEmbeddings(document.id, chunkIds)).status
+    } catch (error) {
+      logDiagnosticError("[document embeddings]", error)
+      embeddingStatus = "unavailable"
+    }
 
     return jsonOk(
       {
         ...document,
+        chunkCount: chunkIds.length,
+        embeddingStatus,
         createdAt: document.createdAt.toISOString(),
         updatedAt: document.updatedAt.toISOString(),
       },

@@ -1,5 +1,6 @@
 
 import { appPath } from "@/lib/app-path"
+import type { AcademicChunk } from "@/lib/document/academic-semantic-chunker"
 export const MAX_BROWSER_FILE_BYTES = 2 * 1024 * 1024
 
 const TEXT_EXTENSIONS = new Set([
@@ -54,7 +55,12 @@ export function formatFileAttachmentBlock(name: string, content: string): string
   return [`[附件: ${name}]`, "", trimmed, "", "---", ""].join("\n")
 }
 
-async function parseLayoutAwareUpload(file: File): Promise<string> {
+export type BrowserDocumentContent = {
+  text: string
+  chunks?: AcademicChunk[]
+}
+
+async function parseLayoutAwareUpload(file: File): Promise<BrowserDocumentContent> {
   const form = new FormData()
   form.append("file", file, file.name)
 
@@ -64,12 +70,12 @@ async function parseLayoutAwareUpload(file: File): Promise<string> {
     const msg = typeof err?.error === "string" ? err.error : `ParseFailed:${res.status}`
     throw new Error(msg)
   }
-  const data = (await res.json()) as { text?: string }
+  const data = (await res.json()) as { text?: string; chunks?: AcademicChunk[] }
   if (!data.text?.trim()) throw new Error("ParseEmpty")
-  return data.text
+  return { text: data.text, ...(Array.isArray(data.chunks) ? { chunks: data.chunks } : {}) }
 }
 
-export async function readBrowserFileAsText(file: File, maxBytes = MAX_BROWSER_FILE_BYTES): Promise<string> {
+export async function readBrowserDocumentContent(file: File, maxBytes = MAX_BROWSER_FILE_BYTES): Promise<BrowserDocumentContent> {
   if (file.size > maxBytes) {
     throw new Error(`FileTooLarge:${file.size}`)
   }
@@ -79,5 +85,9 @@ export async function readBrowserFileAsText(file: File, maxBytes = MAX_BROWSER_F
   if (isLayoutAwareUpload(file.name)) {
     return await parseLayoutAwareUpload(file)
   }
-  return await file.text()
+  return { text: await file.text() }
+}
+
+export async function readBrowserFileAsText(file: File, maxBytes = MAX_BROWSER_FILE_BYTES): Promise<string> {
+  return (await readBrowserDocumentContent(file, maxBytes)).text
 }

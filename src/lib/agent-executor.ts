@@ -9,6 +9,7 @@ import { z } from "zod"
 import { normalizeReferenceSections } from "./reference-sections"
 import {
   DEFAULT_ACADEMIC_SEARCH_MAX_RESULTS,
+  fuseAcademicSearchHits,
   mergeAcademicSearchResponses,
   reconcileAcademicSearchSources,
   RERANK_FINAL_TOP_K,
@@ -713,6 +714,7 @@ export class AgentExecutor {
           type Exec = NonNullable<typeof academicSearch.execute>
           const toolOpts = {} as Parameters<Exec>[1]
           let out: AcademicSearchResponse | null = null
+          let searchFailure: unknown = null
           try {
             if (queryList.length <= 1) {
               out = (await exec(
@@ -742,6 +744,41 @@ export class AgentExecutor {
               out = mergeAcademicSearchResponses(outs as AcademicSearchResponse[], queryList.join(" | "))
             }
           } catch (e) {
+            searchFailure = e
+          }
+
+          let localHits: AcademicSearchHit[] = []
+          if (this.deps.retrieveLocalEvidence) {
+            try {
+              const localBatches = await Promise.all(queryList.map((query) => this.deps.retrieveLocalEvidence!(query)))
+              localHits = fuseAcademicSearchHits(localBatches)
+              if (localHits.length) this.hooks.onNodeLog?.(n.id, `当前会话已保存文档命中 ${localHits.length} 个证据片段。`)
+            } catch (error) {
+              this.hooks.onNodeLog?.(n.id, `本地文档检索暂不可用，继续使用学术网络检索：${error instanceof Error ? error.message : "检索失败"}`)
+            }
+          }
+
+          if (out) {
+            const combined = fuseAcademicSearchHits([out.results ?? [], localHits])
+            out = {
+              ...out,
+              results: combined,
+              total: combined.length,
+              status: combined.length ? "ok" : out.status,
+              ...(combined.length ? { message: undefined } : {}),
+            }
+          } else if (localHits.length) {
+            out = {
+              provider: "tavily",
+              query: search_query,
+              academicOnly,
+              total: localHits.length,
+              results: localHits,
+              status: "ok",
+              message: "已使用当前会话中保存的文档片段。",
+            }
+          } else if (searchFailure) {
+            const e = searchFailure
             const msg = e instanceof Error ? e.message : String(e)
             const durationMs = Math.round(performance.now() - nodeStartedAt)
             if (isNetworkishError(e)) {
@@ -774,7 +811,8 @@ export class AgentExecutor {
             continue
           }
 
-          const reconciled = reconcileAcademicSearchSources(sources, Array.isArray(out?.results) ? out.results : [])
+          if (!out) throw new Error("AcademicSearchUnavailable")
+          const reconciled = reconcileAcademicSearchSources(sources, Array.isArray(out.results) ? out.results : [])
           sources = reconciled.sources
           out = { ...out, results: reconciled.results }
           const synthesized = synthesizeCitationsMarkdown(sources)

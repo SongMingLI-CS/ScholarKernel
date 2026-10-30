@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest"
 import {
   buildDualSearchQueries,
   expandSearchQueries,
+  fuseAcademicSearchHits,
   formatResearchHitLines,
   isBroadTopicQuery,
   isSurveyOrProgressTopic,
@@ -70,6 +71,40 @@ describe("academic-search-strategy", () => {
     expect(reconciled.sources.map((hit) => hit.source_id)).toEqual(["1", "2"])
     expect(reconciled.results.map((hit) => hit.source_id)).toEqual(["1", "2"])
     expect(reconciled.results).toHaveLength(2)
+  })
+
+  it("keeps local document chunk IDs aligned with global citations across research batches", () => {
+    const local: AcademicSearchHit = {
+      source_id: "",
+      title: "Methods note · Methodology",
+      url: "scholarkernel://documents/doc-a/chunks/chunk-stable-a",
+      snippet: "The measured model setup.",
+      sourceKind: "local_document",
+      documentId: "doc-a",
+      chunkId: "chunk-stable-a",
+      pageNumber: 7,
+    }
+    const first = reconcileAcademicSearchSources([], [{ source_id: "1", title: "Web source", url: "https://example.test/paper" }])
+    const second = reconcileAcademicSearchSources(first.sources, [local, local])
+
+    expect(second.sources.map((hit) => hit.source_id)).toEqual(["1", "2"])
+    expect(second.results).toHaveLength(1)
+    expect(second.results[0]).toMatchObject({ source_id: "2", chunkId: "chunk-stable-a", pageNumber: 7 })
+  })
+
+  it("fuses local and web rank lists while deduplicating the same source", () => {
+    const fused = fuseAcademicSearchHits([
+      [
+        { source_id: "1", title: "Shared source", url: "https://example.test/paper" },
+        { source_id: "2", title: "Web second", url: "https://example.test/other" },
+      ],
+      [
+        { source_id: "1", title: "Local evidence", url: "scholarkernel://documents/doc/chunks/chunk" },
+        { source_id: "2", title: "Shared source copy", url: "https://example.test/paper#abstract" },
+      ],
+    ])
+    expect(fused.map((hit) => hit.title)).toEqual(["Shared source", "Local evidence", "Web second"])
+    expect(fused.map((hit) => hit.source_id)).toEqual(["1", "2", "3"])
   })
 
   it("formatResearchHitLines keeps every URL", () => {

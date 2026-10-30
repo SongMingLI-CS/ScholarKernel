@@ -79,6 +79,7 @@ export async function runNextDurableJob(workerId: string, runner: JobRunner = ru
     }
     const result = await runner({
       ...config, userId: job.userId, userInput: job.input, activeProvider: job.provider as AgentRunInput["activeProvider"],
+      conversationId: job.conversationId ?? undefined,
       jobId: job.id, interventionSessionId: job.id, runtimeKeys, signal: controller.signal, suspendForIntervention: true,
       peerReviewCheckpoint: parsePeerReviewCheckpoint(checkpoint),
       onPeerReviewCheckpoint: async patch => {

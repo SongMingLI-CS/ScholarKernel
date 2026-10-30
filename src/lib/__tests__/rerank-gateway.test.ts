@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
-import { lexicalRerankScores, rerankAcademicHits } from "@/lib/document/rerank-gateway"
+import { getBM25Parameters, lexicalRerankScores, rerankAcademicHits, rerankWithLocalService } from "@/lib/document/rerank-gateway"
 import type { AcademicSearchHit } from "@/lib/tools/search-tool"
 
 describe("rerankAcademicHits", () => {
@@ -8,6 +8,9 @@ describe("rerankAcademicHits", () => {
     vi.stubEnv("COHERE_API_KEY", "")
     vi.stubEnv("RERANK_API_URL", "")
     vi.stubEnv("RERANK_API_KEY", "")
+    vi.stubEnv("LOCAL_RERANKER_API_URL", "")
+    vi.stubEnv("LOCAL_RERANKER_MODEL", "")
+    vi.stubEnv("LOCAL_RERANKER_REVISION", "")
   })
 
   afterEach(() => {
@@ -41,6 +44,16 @@ describe("rerankAcademicHits", () => {
     ])
     expect(scores[0]?.score).toBeGreaterThan(scores[1]?.score ?? 0)
     expect(scores[1]?.score).toBe(0)
+  })
+
+  it("uses explicit and environment BM25 k1/b values within supported bounds", () => {
+    vi.stubEnv("RAG_BM25_K1", "1.8")
+    vi.stubEnv("RAG_BM25_B", "0.4")
+    expect(getBM25Parameters()).toEqual({ k1: 1.8, b: 0.4 })
+    expect(getBM25Parameters({ k1: 2.1, b: 0.2 })).toEqual({ k1: 2.1, b: 0.2 })
+    expect(getBM25Parameters({ k1: 99, b: -1 })).toEqual({ k1: 1.2, b: 0.75 })
+    expect(lexicalRerankScores("academic search", ["academic research search", "unrelated topic"], { k1: 1.8, b: 0.4 })[0]?.score)
+      .toBeGreaterThan(0)
   })
 
   it("falls back to lexical ranking when both configured services throw", async () => {
@@ -86,5 +99,41 @@ describe("rerankAcademicHits", () => {
 
     expect(out.rerankProvider).toBe("cohere")
     expect(out.hits.map((hit) => hit.title)).toEqual(["Second", "First"])
+  })
+
+  it("prefers the explicitly configured local reranker and records its exact version", async () => {
+    vi.stubEnv("LOCAL_RERANKER_API_URL", "http://127.0.0.1:8999/v1/rerank")
+    vi.stubEnv("LOCAL_RERANKER_MODEL", "cross-encoder/ms-marco-MiniLM-L6-v2")
+    vi.stubEnv("LOCAL_RERANKER_REVISION", "fbf9045f293a58fa68636213c5e0cb8a2de5d45e")
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      model: "cross-encoder/ms-marco-MiniLM-L6-v2",
+      revision: "fbf9045f293a58fa68636213c5e0cb8a2de5d45e",
+      results: [{ index: 1, score: 0.8 }, { index: 0, score: -0.2 }],
+    }), { status: 200, headers: { "content-type": "application/json" } }))
+    vi.stubGlobal("fetch", fetchMock)
+
+    const out = await rerankAcademicHits("query", [
+      { source_id: "1", title: "First", url: "https://example.test/first" },
+      { source_id: "2", title: "Second", url: "https://example.test/second" },
+    ])
+
+    expect(out.rerankProvider).toBe("local-http")
+    expect(out.hits.map((hit) => hit.title)).toEqual(["Second", "First"])
+    expect(out.hits[0]?.rerankerModel).toBe("cross-encoder/ms-marco-MiniLM-L6-v2@fbf9045f293a58fa68636213c5e0cb8a2de5d45e")
+    expect(fetchMock).toHaveBeenCalledOnce()
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("http://127.0.0.1:8999/v1/rerank")
+  })
+
+  it("rejects local reranker output with a different pinned model revision", async () => {
+    vi.stubEnv("LOCAL_RERANKER_API_URL", "http://127.0.0.1:8999/v1/rerank")
+    vi.stubEnv("LOCAL_RERANKER_MODEL", "cross-encoder/local")
+    vi.stubEnv("LOCAL_RERANKER_REVISION", "expected-revision")
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      model: "cross-encoder/local",
+      revision: "different-revision",
+      results: [{ index: 1, score: 0.8 }],
+    }), { status: 200, headers: { "content-type": "application/json" } })))
+
+    await expect(rerankWithLocalService("query", ["document"])).resolves.toBeNull()
   })
 })

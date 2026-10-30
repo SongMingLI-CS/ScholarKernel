@@ -56,14 +56,29 @@ function normalizeScores(
   return scores.length ? scores : null
 }
 
-/** BM25 风格轻量词项打分（无外部 API 时的兜底重排）。 */
-export function lexicalRerankScores(query: string, docs: string[]): RerankScore[] {
+export type BM25Parameters = { k1?: number; b?: number }
+
+function configuredBm25Number(name: string, fallback: number, min: number, max: number): number {
+  const configured = Number(safeEnv(name))
+  return Number.isFinite(configured) && configured >= min && configured <= max ? configured : fallback
+}
+
+export function getBM25Parameters(overrides: BM25Parameters = {}): Required<BM25Parameters> {
+  const k1 = overrides.k1 ?? configuredBm25Number("RAG_BM25_K1", 1.2, 0, 3)
+  const b = overrides.b ?? configuredBm25Number("RAG_BM25_B", 0.75, 0, 1)
+  return {
+    k1: Number.isFinite(k1) && k1 >= 0 && k1 <= 3 ? k1 : 1.2,
+    b: Number.isFinite(b) && b >= 0 && b <= 1 ? b : 0.75,
+  }
+}
+
+/** BM25 scoring with Chinese adjacent-character bigrams and configurable k1/b. */
+export function lexicalRerankScores(query: string, docs: string[], options: BM25Parameters = {}): RerankScore[] {
   const qTokens = tokenize(query)
   const docTokens = docs.map((d) => tokenize(d))
   const N = docs.length
   const avgLen = docTokens.reduce((s, t) => s + t.length, 0) / Math.max(N, 1)
-  const k1 = 1.2
-  const b = 0.75
+  const { k1, b } = getBM25Parameters(options)
 
   const df = new Map<string, number>()
   for (const tokens of docTokens) {
@@ -159,13 +174,48 @@ function hitToRerankDoc(hit: AcademicSearchHit): string {
 export type RerankGatewayResult = {
   hits: AcademicSearchHit[]
   recallCount: number
-  rerankProvider: "cohere" | "bge-http" | "lexical"
+  rerankProvider: "local-http" | "cohere" | "bge-http" | "lexical"
   scores?: RerankScore[]
+}
+
+export type LocalRerankResult = {
+  model: string
+  revision: string
+  scores: RerankScore[]
+}
+
+/** Calls an explicitly configured local reranker and checks its model identity. */
+export async function rerankWithLocalService(query: string, docs: string[]): Promise<LocalRerankResult | null> {
+  const url = safeEnv("LOCAL_RERANKER_API_URL")
+  const model = safeEnv("LOCAL_RERANKER_MODEL")
+  const revision = safeEnv("LOCAL_RERANKER_REVISION")
+  if (!url || !model || !revision || docs.length === 0) return null
+
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ model, revision, query, documents: docs }),
+    signal: rerankTimeoutSignal(),
+  })
+  if (!response.ok) return null
+  const body = await response.json() as {
+    model?: unknown
+    revision?: unknown
+    results?: Array<{ index: number; score?: number; relevance_score?: number }>
+    scores?: number[]
+  }
+  if (body.model !== model || body.revision !== revision) return null
+  const scores = Array.isArray(body.results)
+    ? normalizeScores(body.results.map((row) => ({ index: row.index, score: row.score ?? row.relevance_score ?? Number.NaN })), docs.length)
+    : Array.isArray(body.scores) && body.scores.length === docs.length
+      ? normalizeScores(body.scores.map((score, index) => ({ index, score })), docs.length)
+      : null
+  return scores ? { model, revision, scores } : null
 }
 
 /**
  * 二级重排网关：宽召回 → 精筛 Top-K。
- * 优先 Cohere / BGE HTTP；无密钥时降级为 BM25 风格词项重排。
+ * 优先本地 HTTP / Cohere / BGE HTTP；服务不可用时降级为 BM25 风格词项重排。
  */
 export async function rerankAcademicHits(
   query: string,
@@ -181,12 +231,26 @@ export async function rerankAcademicHits(
 
   const docs = recall.map(hitToRerankDoc)
   let scores: RerankScore[] | null = null
-  let provider: RerankGatewayResult["rerankProvider"] = "cohere"
+  let provider: RerankGatewayResult["rerankProvider"] = "local-http"
+  let rerankerModel: string | undefined
 
   try {
-    scores = await cohereRerank(query, docs)
+    const local = await rerankWithLocalService(query, docs)
+    if (local) {
+      scores = local.scores
+      rerankerModel = `${local.model}@${local.revision}`
+    }
   } catch {
     scores = null
+  }
+
+  if (!scores) {
+    try {
+      scores = await cohereRerank(query, docs)
+    } catch {
+      scores = null
+    }
+    provider = "cohere"
   }
 
   if (!scores) {
@@ -209,6 +273,14 @@ export async function rerankAcademicHits(
   const reranked = ranked.map((r, idx) => ({
     ...recall[r.index]!,
     source_id: String(idx + 1),
+    rerankScore: r.score,
+    ...(rerankerModel
+      ? { rerankerModel }
+      : safeEnv("RERANK_MODEL")
+        ? { rerankerModel: safeEnv("RERANK_MODEL") }
+        : provider === "cohere"
+          ? { rerankerModel: "rerank-english-v3.0" }
+          : {}),
   }))
 
   return {

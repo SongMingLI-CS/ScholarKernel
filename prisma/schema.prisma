@@ -83,8 +83,27 @@ model Document {
   version        Int          @default(1)
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
+  chunks         DocumentChunk[]
 
   @@index([conversationId, updatedAt])
+}
+
+model DocumentChunk {
+  id             String   @id
+  documentId     String
+  document       Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  chunkIndex     Int
+  section        String
+  pageNumber     Int?
+  content        String   @db.Text
+  contentHash    String
+  parserVersion  String
+  embedding      Json?
+  embeddingModel String?
+  embeddingRevision String?
+  createdAt      DateTime @default(now())
+
+  @@unique([documentId, chunkIndex])
 }
 
 model Message {

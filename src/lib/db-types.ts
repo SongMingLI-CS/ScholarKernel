@@ -65,11 +65,13 @@ export type ScholarDocument = {
 export type CreateDocumentBody = {
   title?: string
   content?: string
+  chunks?: unknown
 }
 
 export type PatchDocumentBody = {
   title?: string
   content?: string
+  chunks?: unknown
 }
 
 function parseMessageMetadata(raw: unknown): MessageMetadata {
@@ -84,12 +86,24 @@ function parseMessageMetadata(raw: unknown): MessageMetadata {
       const title = typeof item.title === "string" ? item.title : ""
       const url = typeof item.url === "string" ? item.url : ""
       if (!title || !url) return null
+      const sourceKind: "web" | "local_document" | undefined =
+        item.sourceKind === "web" || item.sourceKind === "local_document" ? item.sourceKind : undefined
       return {
         title,
         url,
         ...(typeof item.snippet === "string" ? { snippet: item.snippet } : {}),
         ...(typeof item.publishedAt === "string" ? { publishedAt: item.publishedAt } : {}),
         ...(typeof item.source_id === "string" ? { source_id: item.source_id } : {}),
+        ...(sourceKind ? { sourceKind } : {}),
+        ...(typeof item.documentId === "string" ? { documentId: item.documentId } : {}),
+        ...(typeof item.chunkId === "string" ? { chunkId: item.chunkId } : {}),
+        ...(typeof item.pageNumber === "number" && Number.isInteger(item.pageNumber) && item.pageNumber > 0 ? { pageNumber: item.pageNumber } : {}),
+        ...(typeof item.retrievalScore === "number" && Number.isFinite(item.retrievalScore) ? { retrievalScore: item.retrievalScore } : {}),
+        ...(typeof item.denseScore === "number" && Number.isFinite(item.denseScore) ? { denseScore: item.denseScore } : {}),
+        ...(typeof item.fusionScore === "number" && Number.isFinite(item.fusionScore) ? { fusionScore: item.fusionScore } : {}),
+        ...(typeof item.rerankScore === "number" && Number.isFinite(item.rerankScore) ? { rerankScore: item.rerankScore } : {}),
+        ...(typeof item.retrieverModel === "string" ? { retrieverModel: item.retrieverModel } : {}),
+        ...(typeof item.rerankerModel === "string" ? { rerankerModel: item.rerankerModel } : {}),
       }
     })
     .filter((s): s is NonNullable<typeof s> => s != null)

@@ -2,9 +2,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 
 import { PATCH } from "../route"
 
-const { findFirst, update } = vi.hoisted(() => ({
+const { findFirst, update, deleteChunks, createChunks, transaction } = vi.hoisted(() => ({
   findFirst: vi.fn(),
   update: vi.fn(),
+  deleteChunks: vi.fn(async () => ({ count: 0 })),
+  createChunks: vi.fn(async ({ data }: { data: unknown[] }) => ({ count: data.length })),
+  transaction: vi.fn(),
 }))
 
 vi.mock("@/lib/auth-user", () => ({
@@ -16,6 +19,7 @@ vi.mock("@/lib/prisma", () => ({
   prisma: {
     conversation: { findFirst },
     document: { findFirst, update },
+    $transaction: transaction,
   },
 }))
 
@@ -26,6 +30,10 @@ const ctx = { params: Promise.resolve({ id: "conv-1", docId: "doc-1" }) }
 describe("PATCH /api/conversations/[id]/documents/[docId]", () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    transaction.mockImplementation((callback: (tx: unknown) => unknown) => callback({
+      document: { update },
+      documentChunk: { deleteMany: deleteChunks, createMany: createChunks },
+    }))
     vi.mocked(resolveUserIdFromRequest).mockResolvedValue("user-test")
   })
 

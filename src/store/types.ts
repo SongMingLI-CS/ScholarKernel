@@ -89,7 +89,7 @@ export type ChatMessage = {
   id: string
   role: "user" | "assistant" | "system"
   content: string
-  sources?: Array<{ title: string; url: string; snippet?: string; publishedAt?: string; source_id?: string }>
+  sources?: Array<{ title: string; url: string; snippet?: string; publishedAt?: string; source_id?: string; sourceKind?: "web" | "local_document"; documentId?: string; chunkId?: string; pageNumber?: number; retrievalScore?: number; denseScore?: number; fusionScore?: number; rerankScore?: number; retrieverModel?: string; rerankerModel?: string }>
   /** Green badge when BibTeX/RIS references are loaded into session context */
   citationBadge?: { count: number }
 }

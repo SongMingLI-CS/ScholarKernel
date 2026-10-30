@@ -7,12 +7,14 @@ import type { AgentExecutorDeps, AgentExecutorHooks } from "@/lib/agent/executor
 import type { PeerReviewCheckpointData } from "@/lib/agent/peer-review-checkpoint"
 import type { ActiveProviderConfig, ChatHistoryEntry } from "@/lib/agent/planner"
 import { createTokenUsageRecorder } from "@/lib/billing/token-audit"
+import { searchConversationDocumentChunks } from "@/lib/document/search-conversation-chunks"
 
 export type AgentRunInput = {
   userId?: string
   userInput: string
   activeProvider: ActiveProviderConfig
   jobId?: string
+  conversationId?: string
   interventionSessionId?: string
   peerReviewCheckpoint?: PeerReviewCheckpointData | null
   onPeerReviewCheckpoint?: AgentExecutorDeps["onPeerReviewCheckpoint"]
@@ -56,6 +58,7 @@ export async function runAgentOnServer(
       localFileTool: createFileTool(createOwnedDocumentReader(input.userId)),
       readDocument: createOwnedDocumentReader(input.userId),
       userId: input.userId,
+      conversationId: input.conversationId,
       activeProvider: input.activeProvider,
       jobId: input.jobId,
       trackUsageWrite: write => { usageWrites.push(write) },
@@ -74,6 +77,9 @@ export async function runAgentOnServer(
       runtimeKeys,
       getRuntimeKeys: () => runtimeKeys,
       search: { tavilyApiKey: runtimeKeys.tavily, serperApiKey: runtimeKeys.serper },
+      retrieveLocalEvidence: input.userId && input.conversationId
+        ? (query) => searchConversationDocumentChunks(input.userId!, input.conversationId!, query)
+        : undefined,
       getChatHistory: () => input.chatHistory ?? [],
       sourceApiBase: input.sourceApiBase,
       signal: input.signal,

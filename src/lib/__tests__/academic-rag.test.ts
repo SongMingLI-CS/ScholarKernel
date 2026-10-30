@@ -130,6 +130,34 @@ describe("academic-rag pipeline", () => {
     expect(observed[0]?.metadata.page).toBe(7)
   })
 
+  it("splits chunks at observed page boundaries and leaves missing page values unknown", () => {
+    const text = "Introduction\nPage one evidence about the model.\nPage two evidence about the model."
+    const chunks = semanticChunkAcademicText({
+      text,
+      blocks: [
+        { text: "Page one evidence about the model.", x: 40, y: 700, page: 2 },
+        { text: "Page two evidence about the model.", x: 40, y: 700, page: 3 },
+      ],
+    })
+
+    expect(chunks.map((chunk) => chunk.metadata.page)).toEqual([2, 3])
+    expect(chunks.map((chunk) => chunk.text)).toEqual([
+      "Introduction\nPage one evidence about the model.",
+      "Page two evidence about the model.",
+    ])
+  })
+
+  it("does not guess a page when identical source text occurs on multiple pages", () => {
+    const chunks = semanticChunkAcademicText({
+      text: "Results\nRepeated source sentence appears here.",
+      blocks: [
+        { text: "Repeated source sentence appears here.", x: 40, y: 700, page: 2 },
+        { text: "Repeated source sentence appears here.", x: 40, y: 700, page: 5 },
+      ],
+    })
+    expect(chunks[0]?.metadata.page).toBeUndefined()
+  })
+
   it("splits long sections into bounded chunks without inventing page metadata", () => {
     const paragraphs = Array.from({ length: 8 }, (_, index) => `段落${index + 1} ${"研究方法与实验结果。".repeat(40)}`)
     const chunks = semanticChunkAcademicText({ text: `1. Methodology\n${paragraphs.join("\n")}` })

@@ -4,6 +4,7 @@ import { appPath } from "@/lib/app-path"
 import { runDurableAgent, observeDurableJob, cancelDurableJob, serverJobsEnabled, type JobSnapshot } from "@/lib/agent/job-client"
 import { apiFetch } from "@/lib/api-fetch"
 import type { AgentExecutorHooks } from "@/lib/agent/executor-types"
+import type { AcademicSearchHit } from "@/lib/tools/search-tool"
 
 import { useCallback, useEffect, useRef, useState, type MutableRefObject } from "react"
 import { type ProviderConfig } from "@/lib/ai-gateway"
@@ -403,6 +404,10 @@ export function useChatSend({
               serper: effectiveKeys?.serper,
             },
             getRuntimeKeys: () => useAgentStore.getState().actions.getRuntimeKeys(),
+            conversationId: useAgentStore.getState().conversations.currentId ?? undefined,
+            retrieveLocalEvidence: useAgentStore.getState().conversations.currentId
+              ? (query) => apiFetch<AcademicSearchHit[]>(`/api/conversations/${encodeURIComponent(useAgentStore.getState().conversations.currentId!)}/documents/search`, { method: "POST", body: JSON.stringify({ query }) })
+              : undefined,
             search: {
               tavilyApiKey: runtimeKeys?.tavily,
               serperApiKey: runtimeKeys?.serper,

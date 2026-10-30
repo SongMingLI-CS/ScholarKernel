@@ -50,4 +50,16 @@ describe("reference sections", () => {
     expect(result.markdown).toContain("https://numpy.org/doc/")
     expect(result.markdown).toContain("NumPy \\[guide\\]")
   })
+
+  it("prints a saved document page only when the parser observed one", () => {
+    const withPage = synthesizeCitationsMarkdown([{
+      source_id: "4", title: "Study · Results", url: "scholarkernel://documents/doc/chunks/chunk", pageNumber: 8,
+      sourceKind: "local_document", documentId: "doc", chunkId: "chunk",
+    }])
+    const unknownPage = synthesizeCitationsMarkdown([
+      { source_id: "5", title: "Notes · Methods", url: "scholarkernel://documents/doc/chunks/other", sourceKind: "local_document" },
+    ])
+    expect(withPage.markdown).toContain("[4] Study · Results (p.8)")
+    expect(unknownPage.markdown).not.toContain("p.")
+  })
 })

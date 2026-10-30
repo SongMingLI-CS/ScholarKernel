@@ -35,6 +35,7 @@ export type AgentExecutorDeps = {
   localFileTool?: ReturnType<typeof import("@/lib/tools/file-tool").createFileTool>
   activeProvider: ActiveProviderConfig
   userId?: string
+  conversationId?: string
   jobId?: string
   /** 异步写入 Token 审计；由 agent-server-run 注入 */
   trackUsageWrite?: (write: Promise<unknown>) => void
@@ -60,6 +61,7 @@ export type AgentExecutorDeps = {
   }
   getRuntimeKeys?: () => AgentExecutorDeps["runtimeKeys"] | null | undefined
   search?: { tavilyApiKey?: string; serperApiKey?: string }
+  retrieveLocalEvidence?: (query: string) => Promise<AcademicSearchHit[]>
   inference?: { temperature?: number; maxTokens?: number; contextLimit?: number }
   sourceApiBase?: string
   signal?: AbortSignal
