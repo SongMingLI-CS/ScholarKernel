@@ -41,5 +41,5 @@ Web 与 Worker 都连接同一个 PostgreSQL。Worker 执行 `/api/agent/jobs` �
 
 - 未运行 GitHub Actions；基线没有 Actions run，远端只报告 Vercel 成功。
 - 未运行完整 `npm run test:upgrade` 或整套 CI。该白名单包含 `boundaries.integration.test.ts`，本轮明确排除权限/安全验证；只运行普通 Job、文档索引和 Mock 聊天的隔离数据库集成用例。
-- 未构建/启动 Docker 镜像，也未调用外部模型、部署或访问生产服务。Compose 配置将在后续本地语法检查中检查。
+- `docker compose --env-file .env.example config --no-env-resolution -q` 本地配置解析通过；未构建/启动 Docker 镜像，也未调用外部模型、部署或访问生产服务。
 - PostgreSQL 的新测试集群和数据库保留在仓库 `node_modules/.cache/phase5-pg-utf8/` 与本机测试服务中；测试结束会停止服务，不删除数据目录。
