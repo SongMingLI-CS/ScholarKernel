@@ -1,3 +1,4 @@
+import { logDiagnosticError } from "@/lib/diagnostics"
 import { jsonError, jsonOk, parseJsonBody } from "@/lib/api-utils"
 import { conversationOwnerWhere, resolveUserIdFromRequest } from "@/lib/auth-user"
 import type { PatchDocumentBody } from "@/lib/db-types"
@@ -61,7 +62,7 @@ export async function PATCH(req: Request, ctx: RouteCtx) {
       updatedAt: document.updatedAt.toISOString(),
     })
   } catch (e) {
-    console.error("[PATCH /api/conversations/[id]/documents/[docId]]", e)
+    logDiagnosticError("[PATCH /api/conversations/[id]/documents/[docId]]", e)
     return jsonError("Failed to update document", 500)
   }
 }

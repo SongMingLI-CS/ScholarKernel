@@ -1,3 +1,4 @@
+import { logDiagnosticError } from "@/lib/diagnostics"
 import { generateText, tool, zodSchema, type ToolSet } from "ai"
 import { createAnthropic } from "@ai-sdk/anthropic"
 import { createOpenAI } from "@ai-sdk/openai"
@@ -41,7 +42,6 @@ import {
   PLAN_QUERY_OPTIMIZATION,
   PLAN_TOOL_BOUNDARY,
   PLAN_TOOL_ENFORCEMENT,
-  READ_FILE_LITERATURE_FALLBACK,
   type WorkflowNode,
 } from "@/lib/agent/planner"
 import {
@@ -53,12 +53,10 @@ import {
   clampTextByChars,
   createPlanningFetch,
   extractLlmHistory,
-  formatPlanCrashDetail,
   formatResearchResultsForSessionContext,
   generatePlanTextWithStructuredFallback,
   isBrowser,
   isNetworkishError,
-  isReadFileNotFoundError,
   keyForActiveProvider,
   llmCallSettings,
   logLlmCallFailure,
@@ -226,10 +224,10 @@ export class AgentExecutor {
       "约束：",
       "- 对于“学术综述/Survey/Review/核心进展/对比论文”类任务：必须规划两个 research 节点（Survey 向 + Methodology 向），见【多源聚合】",
       "- 用户要求「详解/深入分析上一轮某篇论文」时：必须从 messages 历史 assistant 的参考文献中提炼论文完整英文标题，规划 research 节点重新检索；严禁 read_file",
-      "- 只有当任务明确涉及本地项目/具体文件/代码问题时，才使用 read_file（必须提供 input.path，且必须是本地源码路径如 src/...）",
-      "- 优先把“读文件/抓上下文”拆成 read_file（但不要为了凑步骤而读文件）",
+      "- read_file 只能读取当前用户保存的文档（input.documentId）；没有文档 ID 时请用户上传，不得生成本机路径",
+      "- 仅在已有文档 ID 时使用 read_file",
       "- 推理整合用 reasoning",
-      "- 代码或安全审计用 audit",
+      "- 用户主动提供文本的分析可使用 audit",
       "- 需要全球资料检索/论文对比/最新信息时，用 research（会调用 academicSearch）",
       "- 用户提交论文摘要/实验设计或要求模拟审稿时，用 peer_review（系统将并行派生 Reviewer #1/#2 激辩并由 Area Chair 汇总）",
       "- 所有子任务的 provider 必须为 cloud（不得输出 local）",
@@ -360,12 +358,8 @@ export class AgentExecutor {
       throw new Error("MissingApiKey")
     }
 
-    const content = planGen.text ?? ""
-    console.log("🔥🔥🔥 RAW_LLM_OUTPUT:", content)
-    if (usesStructuredJson && planGen.output != null) {
-      console.log("🔥🔥🔥 RAW_LLM_OUTPUT (structured):", planGen.output)
-    }
 
+    const content = planGen.text ?? ""
     const planModelUsed =
       dsKey
         ? "deepseek-chat"
@@ -445,8 +439,7 @@ export class AgentExecutor {
     return nodes
     } catch (error) {
       if (isAbortError(error)) throw error
-      console.error("🔥🔥🔥 PLAN_CRASH_REASON:", error)
-      console.error("🔥 PLAN_CRASH_DETAIL:", formatPlanCrashDetail(error))
+      logDiagnosticError("[plan] generation failed", error)
       const history = this.deps.getChatHistory?.() ?? []
       const fallbackQuery = buildFallbackSearchQuery(userInput, history)
       const crashNodes: WorkflowNode[] = needsResearchIntent(userInput)
@@ -494,7 +487,7 @@ export class AgentExecutor {
     const inf = this.inferenceCfg()
     const localSourceAudit = tool({
       description:
-        "使用本地 Ollama 对项目源码做行级审计。仅用于本地 path（如 src/app/page.tsx）或用户粘贴的源码 content；严禁用于论文标题、URL 或在线文献。",
+        "使用本地 Ollama 分析用户主动提供的文本 content，或当前用户保存的文档 ID；不能读取系统文件。",
       inputSchema: zodSchema(
         z.object({
         path: z.string().optional(),
@@ -505,7 +498,7 @@ export class AgentExecutor {
       execute: async ({ path, content, focus }: { path?: string; content?: string; focus?: string }) => {
         const src =
           content ??
-          (path && this.deps.sourceApiBase ? await readSourceText(this.deps.sourceApiBase, path, this.deps.signal) : null)
+          (path && this.deps.readDocument ? await this.deps.readDocument(path).then((document) => document.ok ? document.text : null) : null)
         if (!src) throw new Error("MissingSourceContent")
 
         const provider = createOllama({ baseURL: this.deps.activeProvider.baseUrl })
@@ -613,7 +606,7 @@ export class AgentExecutor {
     userInput: string,
     options?: { planRetryMessage?: string }
   ): Promise<{ final: string; nodes: WorkflowNode[]; sources: AcademicSearchHit[]; status: "done" | "partial" | "error" }> {
-    console.log("🚀 Agent 收到输入:", userInput)
+    console.log("[agent] run started")
 
     if (isDirectChatInput(userInput)) {
       console.log("💬 走普通对话路由")
@@ -703,7 +696,7 @@ export class AgentExecutor {
           const academicOnly = typeof payload["academicOnly"] === "boolean" ? Boolean(payload["academicOnly"]) : true
           const queryList = resolveResearchQueryList(payload, search_query, userInput)
 
-          console.log("🔍 research 节点执行，queries:", queryList)
+          console.log("[research] node started", { nodeId: n.id, queryCount: queryList.length })
 
           // inject per-node logger
           const keysNow = this.effectiveSearchKeys()
@@ -833,121 +826,24 @@ export class AgentExecutor {
 
         if (n.type === "read_file") {
           const inp = asRecord(n.input)
-          const path = typeof inp["path"] === "string" ? String(inp["path"]) : undefined
-          if (!path || !path.trim()) {
-            const msg = "Error: 请提供具体的文件路径"
-            const durationMs = Math.round(performance.now() - nodeStartedAt)
-            this.hooks.onNodePatch?.(n.id, {
-              status: "error",
-              error: msg,
-              metadata: { durationMs, fallback: true, fallbackReason: msg, fallbackKind: "read_file" },
-            })
-            results.push({
-              id: n.id,
-              ok: false,
-              summary: `read_file 参数缺失（已降级继续）：${msg}`,
-              output: {
-                error_info: {
-                  node_id: n.id,
-                  node_type: n.type,
-                  provider: n.provider,
-                  tool: "read_file",
-                  message: msg,
-                  durationMs,
-                  is_networkish: false,
-                },
-              },
-            })
-            continue
+          const documentId = typeof inp["documentId"] === "string" ? inp["documentId"] : typeof inp["path"] === "string" ? inp["path"] : ""
+          if (!documentId.trim()) throw new Error("DocumentIdRequired: 请提供已保存的文档 ID。")
+          let text: string
+          if (this.deps.readDocument) {
+            const document = await this.deps.readDocument(documentId)
+            if (!document.ok) throw new Error(document.error)
+            text = document.text
+          } else if (this.deps.sourceApiBase) {
+            text = await readSourceText(this.deps.sourceApiBase, documentId, this.deps.signal)
+          } else {
+            throw new Error("DocumentAccessRequired: 请上传文献并使用已保存的文档 ID。")
           }
-          if (!this.deps.sourceApiBase) {
-            const msg = "SourceApiDisabled"
-            const durationMs = Math.round(performance.now() - nodeStartedAt)
-            this.hooks.onNodePatch?.(n.id, {
-              status: "error",
-              error: msg,
-              metadata: { durationMs, fallback: true, fallbackReason: msg, fallbackKind: "read_file" },
-            })
-            results.push({
-              id: n.id,
-              ok: false,
-              summary: `read_file 不可用（已降级继续）：${msg}`,
-              output: {
-                error_info: {
-                  node_id: n.id,
-                  node_type: n.type,
-                  provider: n.provider,
-                  tool: "read_file",
-                  message: msg,
-                  durationMs,
-                  is_networkish: false,
-                },
-              },
-            })
-            continue
-          }
-
-          let text = ""
-          try {
-            this.hooks.onNodeLog?.(n.id, `调用工具：read_file(path="${path}")`)
-            text = await readSourceText(this.deps.sourceApiBase, path, this.deps.signal)
-          } catch (e) {
-            const msg = e instanceof Error ? e.message : String(e)
-            const durationMs = Math.round(performance.now() - nodeStartedAt)
-            const isLogLike = /(^|\/)logs\/.+\.log$/i.test(path.replace(/\\/g, "/")) || /\.log$/i.test(path)
-
-            if (isReadFileNotFoundError(msg, path) && !isLogLike) {
-              const fallbackText = READ_FILE_LITERATURE_FALLBACK
-              this.hooks.onNodeLog?.(n.id, `[Fallback] 路径不存在或非本地文件：${path}`)
-              this.hooks.onNodePatch?.(n.id, {
-                status: "done",
-                output: { path, chars: fallbackText.length, text: fallbackText, fallback: true },
-                metadata: {
-                  durationMs,
-                  fallback: true,
-                  fallbackReason: msg,
-                  fallbackKind: "read_file_not_found",
-                },
-              })
-              results.push({
-                id: n.id,
-                ok: true,
-                summary: `read_file 未找到（已降级继续）`,
-                output: { path, text: fallbackText, fallback: true, fallbackReason: msg },
-              })
-              continue
-            }
-
-            this.hooks.onNodePatch?.(n.id, {
-              status: "error",
-              error: msg,
-              metadata: { durationMs, fallback: true, fallbackReason: msg, fallbackKind: "read_file" },
-            })
-            results.push({
-              id: n.id,
-              ok: false,
-              summary: `read_file 失败（已降级继续）：${msg}`,
-              output: {
-                error_info: {
-                  node_id: n.id,
-                  node_type: n.type,
-                  provider: n.provider,
-                  tool: "read_file",
-                  message: msg,
-                  durationMs,
-                  is_networkish: isNetworkishError(e),
-                },
-              },
-            })
-            continue
-          }
-          this.hooks.onNodeLog?.(n.id, `读取完成：${path}（${text.length} chars）`)
           this.hooks.onNodePatch?.(n.id, {
             status: "done",
-            output: { path, chars: text.length },
+            output: { documentId, text, chars: text.length },
             metadata: { durationMs: Math.round(performance.now() - nodeStartedAt) },
           })
-          results.push({ id: n.id, ok: true, summary: `读取 ${path}（${text.length} chars）`, output: { path, text } })
+          results.push({ id: n.id, ok: true, summary: `读取文档（${text.length} chars）`, output: { documentId, text } })
           continue
         }
 

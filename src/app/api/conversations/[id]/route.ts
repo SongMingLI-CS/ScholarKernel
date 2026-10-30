@@ -1,3 +1,4 @@
+import { logDiagnosticError } from "@/lib/diagnostics"
 import { NextResponse } from "next/server"
 
 import { jsonError, jsonOk, parseJsonBody } from "@/lib/api-utils"
@@ -61,7 +62,7 @@ export async function GET(req: Request, ctx: RouteCtx) {
       messagesHasMore: hasMore,
     })
   } catch (e) {
-    console.error("[GET /api/conversations/[id]]", e)
+    logDiagnosticError("[GET /api/conversations/[id]]", e)
     return jsonError("Failed to fetch conversation", 500)
   }
 }
@@ -94,7 +95,7 @@ export async function PATCH(req: Request, ctx: RouteCtx) {
     })
     return jsonOk(conversation)
   } catch (e) {
-    console.error("[PATCH /api/conversations/[id]]", e)
+    logDiagnosticError("[PATCH /api/conversations/[id]]", e)
     return jsonError("Failed to update conversation", 500)
   }
 }
@@ -109,7 +110,7 @@ export async function DELETE(req: Request, ctx: RouteCtx) {
     await prisma.conversation.delete({ where: { id } })
     return new NextResponse(null, { status: 204 })
   } catch (e) {
-    console.error("[DELETE /api/conversations/[id]]", e)
+    logDiagnosticError("[DELETE /api/conversations/[id]]", e)
     return jsonError("Failed to delete conversation", 500)
   }
 }

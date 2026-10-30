@@ -1,5 +1,6 @@
+import { prisma } from "@/lib/prisma"
 import { createFileTool } from "@/lib/tools/file-tool"
-import { safeReadTextFile } from "@/lib/tools/file-reader-server"
+import { createOwnedDocumentReader } from "@/lib/document-service"
 import { AgentExecutor } from "@/lib/agent-executor"
 import { runtimeKeysFromEnv } from "@/lib/agent/llm-utils"
 import type { AgentExecutorDeps, AgentExecutorHooks } from "@/lib/agent/executor-types"
@@ -49,7 +50,8 @@ export async function runAgentOnServer(
 
   const executor = new AgentExecutor(
     {
-      localFileTool: createFileTool(safeReadTextFile),
+      localFileTool: createFileTool(createOwnedDocumentReader(input.userId)),
+      readDocument: createOwnedDocumentReader(input.userId),
       userId: input.userId,
       activeProvider: input.activeProvider,
       jobId: input.jobId,
@@ -57,6 +59,11 @@ export async function runAgentOnServer(
         ? (payload) => billingRecorder.record(payload)
         : undefined,
       interventionSessionId: input.interventionSessionId ?? input.jobId,
+      getInterventionDecision: input.userId && input.jobId ? async (nodeId) => {
+        const saved = await prisma.agentIntervention.findFirst({ where: { jobId: input.jobId, userId: input.userId, nodeId } })
+        if (!saved) return null
+        return saved.action === "redirect" ? { action: "redirect", instruction: saved.instruction ?? "" } : { action: "approve" }
+      } : undefined,
       peerReviewCheckpoint: input.peerReviewCheckpoint,
       onPeerReviewCheckpoint: input.onPeerReviewCheckpoint,
       inference: input.inference,

@@ -1,3 +1,4 @@
+import { logDiagnosticError } from "@/lib/diagnostics"
 import { jsonError, jsonOk, parseJsonBody } from "@/lib/api-utils"
 import { conversationOwnerWhere, resolveUserIdFromRequest } from "@/lib/auth-user"
 import type { CreateDocumentBody } from "@/lib/db-types"
@@ -44,7 +45,7 @@ export async function POST(req: Request, ctx: RouteCtx) {
       { status: 201 }
     )
   } catch (e) {
-    console.error("[POST /api/conversations/[id]/documents]", e)
+    logDiagnosticError("[POST /api/conversations/[id]/documents]", e)
     return jsonError("Failed to create document", 500)
   }
 }

@@ -1,3 +1,4 @@
+import { logDiagnosticError } from "@/lib/diagnostics"
 import { generateText, Output, streamText } from "ai"
 import { createAnthropic } from "@ai-sdk/anthropic"
 import { createOpenAI } from "@ai-sdk/openai"
@@ -127,10 +128,10 @@ export async function consumeStreamTextOutput(
           const detail = "error" in part ? formatPlanCrashMessage(part.error) : "未知模型流错误"
           throw new ModelStreamError(`模型生成失败：${detail}`, acc)
         }
-        console.warn("跳过未知流片段:", part)
+        console.warn("[stream] unknown part", { type: part.type })
       } catch (chunkErr) {
         if (chunkErr instanceof ModelStreamError) throw chunkErr
-        console.warn("处理模型流片段失败:", part, chunkErr)
+        logDiagnosticError("[stream] part processing failed", chunkErr)
       }
     }
   } catch (e) {
@@ -170,7 +171,7 @@ function isAbortError(error: unknown): boolean {
 }
 
 export async function readSourceText(sourceApiBase: string, path: string, signal?: AbortSignal) {
-  const qp = new URLSearchParams({ path })
+  const qp = new URLSearchParams({ documentId: path })
   const url = `${sourceApiBase.replace(/\/$/, "")}/api/source?${qp.toString()}`
   const res = await fetch(url, { signal })
   if (!res.ok) {
@@ -210,16 +211,7 @@ export function isReadFileNotFoundError(msg: string, path: string): boolean {
 }
 
 export function logLlmCallFailure(context: string, e: unknown) {
-  const msg = e instanceof Error ? e.message : String(e)
-  let httpStatus: number | string = "—"
-  let responseBody: string | undefined
-  if (e && typeof e === "object") {
-    const o = e as Record<string, unknown>
-    if (typeof o.statusCode === "number") httpStatus = o.statusCode
-    const rb = o.responseBody
-    if (typeof rb === "string" && rb.length) responseBody = rb.length > 1200 ? `${rb.slice(0, 1200)}…` : rb
-  }
-  console.error(`[AgentExecutor] ${context}`, { httpStatus, message: msg, responseBody })
+  logDiagnosticError(`[AgentExecutor] ${context}`, e)
 }
 
 function unwrapErrorChain(error: unknown): unknown[] {
@@ -296,9 +288,7 @@ export function formatPlanCrashMessage(error: unknown): string {
 }
 
 export function logPlanCrashReason(error: unknown, context: string) {
-  console.error("🔥🔥🔥 PLAN_CRASH_REASON:", error)
-  console.error(`🔥 PLAN_CRASH_CONTEXT: ${context}`)
-  console.error("🔥 PLAN_CRASH_DETAIL:", formatPlanCrashDetail(error))
+  logDiagnosticError(`[plan] ${context}`, error)
 }
 
 export function keyForActiveProvider(runtimeKeys: AgentExecutorDeps["runtimeKeys"] | undefined, providerId: ActiveProviderId) {
@@ -564,11 +554,10 @@ export async function rewriteResearchSearchQuery(
         .replace(/\s+/g, " ")
         .trim()
       if (rewritten.length >= 8 && !/[\u4e00-\u9fff]/.test(rewritten)) {
-        console.log("🔁 Query rewritten:", { from: draft, to: rewritten })
         return rewritten
       }
     } catch (e) {
-      console.warn("⚠️ LLM query rewrite failed, using rule-based fallback:", e)
+      logDiagnosticError("[search] query rewrite fallback", e)
     }
   }
 

@@ -20,6 +20,7 @@ export async function getServerSession() {
 
 /** 从 NextAuth 会话解析当前用户 ID；Auth 未启用时返回 DEFAULT_USER_ID */
 export async function resolveUserIdFromRequest(_req?: Request): Promise<string | null> {
+  void _req // Auth.js reads the request through the Next.js request context.
   if (!isAuthEnabled()) return DEFAULT_USER_ID
   const session = await auth()
   return session?.user?.id ?? null

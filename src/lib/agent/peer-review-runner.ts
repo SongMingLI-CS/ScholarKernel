@@ -402,6 +402,13 @@ export async function executePeerReviewGroup(input: ExecutePeerReviewGroupInput)
       ? "Reviewer scores diverge — wait for expert guidance"
       : "Wait for expert guidance"
 
+    const waitFn = input.waitForHumanIntervention ?? waitForHumanIntervention
+    const savedDecision = deps.getInterventionDecision ? await deps.getInterventionDecision(r3Node.id) : null
+    const pendingDecision = savedDecision ? Promise.resolve(savedDecision) : waitFn(
+      sessionId, r3Node.id, reason, deps.signal,
+      deps.userId && deps.jobId ? { userId: deps.userId, jobId: deps.jobId } : undefined
+    )
+
     hooks.onNodePatch?.(r3Node.id, {
       status: "pending_approval",
       metadata: { interventionReason: reason, personaId: "area_chair" },
@@ -414,10 +421,9 @@ export async function executePeerReviewGroup(input: ExecutePeerReviewGroupInput)
     })
     hooks.onNodeLog?.(r3Node.id, `【Human-in-the-Loop】断点挂起：${reason}`)
 
-    const waitFn = input.waitForHumanIntervention ?? waitForHumanIntervention
     let decision: HumanInterventionDecision
     try {
-      decision = await waitFn(sessionId, r3Node.id, reason, deps.signal)
+      decision = await pendingDecision
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
       hooks.onNodePatch?.(r3Node.id, { status: "error", error: msg })

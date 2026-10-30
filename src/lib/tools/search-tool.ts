@@ -189,7 +189,7 @@ function sanitizeSearchQuery(query: string): string {
   if (/[\u4e00-\u9fff]/.test(optimizedQuery)) {
     console.warn(
       "⚠️ search_query 仍含中文字符，Tavily 命中率可能下降。请确认 query 改写层已生效:",
-      optimizedQuery
+      "请检查 query 改写配置"
     )
   }
   return optimizedQuery
@@ -202,7 +202,6 @@ async function tavilySearch(apiKey: string, query: string, maxResults: number): 
   }
 
   const optimizedQuery = sanitizeSearchQuery(query)
-  console.log("🔍 Tavily Search Query:", optimizedQuery)
 
   const url = isBrowser() ? "/api/proxy/tavily/search" : "https://api.tavily.com/search"
   const requestBody = {
@@ -214,7 +213,6 @@ async function tavilySearch(apiKey: string, query: string, maxResults: number): 
     // 已移除 include_domains / exclude_domains 等严苛过滤，避免误杀有效结果
   }
 
-  console.log("🚀 [Tavily Request Payload]:", JSON.stringify(requestBody))
 
   const res = await proxyAwareFetch(url, {
     method: "POST",
@@ -231,7 +229,6 @@ async function tavilySearch(apiKey: string, query: string, maxResults: number): 
   }
 
   const rawData = (await res.json()) as unknown
-  console.log("📦 [Tavily Raw Response]:", JSON.stringify(rawData))
 
   const rec =
     rawData && typeof rawData === "object" && !Array.isArray(rawData)
@@ -354,11 +351,11 @@ export function createAcademicSearchTool(input: {
       }
 
       if (provider === "tavily") {
-        console.log("✅ 成功拿到 Tavily Key，长度为:", tavilyKey.length)
-        input.onLog?.(`[Key] Tavily 已就绪（${tavilyKey.length} chars）`)
+        console.log("[search] provider ready: tavily")
+        input.onLog?.("Tavily 已就绪")
       } else {
-        console.log("✅ 成功拿到 Serper Key，长度为:", serperKey.length)
-        input.onLog?.(`[Key] Serper 已就绪（${serperKey.length} chars）`)
+        console.log("[search] provider ready: serper")
+        input.onLog?.("Serper 已就绪")
       }
 
       input.onLog?.(
@@ -430,7 +427,7 @@ export function createAcademicSearchTool(input: {
       }
 
       if (status === "failed" || status === "empty") {
-        console.warn("⚠️ academicSearch 零命中:", JSON.stringify({ status, query, message: emptyMessage }))
+        console.warn("⚠️ academicSearch 零命中:", { status, provider })
         input.onLog?.(`[${status === "failed" ? "Failed" : "Empty"}] ${emptyMessage ?? "检索零命中"}`)
       }
 

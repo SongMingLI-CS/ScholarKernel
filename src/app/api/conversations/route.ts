@@ -1,3 +1,4 @@
+import { logDiagnosticError } from "@/lib/diagnostics"
 import { auth } from "@/auth"
 import { jsonError, jsonOk } from "@/lib/api-utils"
 import { conversationOwnerWhere, resolveUserIdFromRequest } from "@/lib/auth-user"
@@ -45,7 +46,7 @@ export async function GET(req: Request) {
       hasMore,
     })
   } catch (e) {
-    console.error("[GET /api/conversations]", e)
+    logDiagnosticError("[GET /api/conversations]", e)
     return jsonError("Failed to list conversations", 500)
   }
 }
@@ -80,7 +81,7 @@ export async function POST(req: Request) {
     })
     return jsonOk(conversation, { status: 201 })
   } catch (e) {
-    console.error("[POST /api/conversations]", e)
+    logDiagnosticError("[POST /api/conversations]", e)
     return jsonError("Failed to create conversation", 500)
   }
 }

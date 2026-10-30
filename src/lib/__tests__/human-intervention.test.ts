@@ -9,6 +9,7 @@ import { pruneWorkflowAfterHumanIntervention } from "@/lib/agent/human-intervent
 import { hasPeerReviewScoreGap } from "@/lib/agent/peer-review-score-gap"
 import { executePeerReviewGroup } from "@/lib/agent/peer-review-runner"
 import { buildPeerReviewWorkflowNodes } from "@/lib/agent/planner"
+import { prisma } from "@/lib/prisma"
 import { POST } from "@/app/api/agent/intervention/route"
 
 vi.mock("@/lib/auth-user", () => ({
@@ -17,6 +18,7 @@ vi.mock("@/lib/auth-user", () => ({
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
+    agentIntervention: { findUnique: vi.fn(), create: vi.fn() },
     agentJob: {
       findUnique: vi.fn(),
       findFirst: vi.fn(),
@@ -141,7 +143,10 @@ describe("POST /api/agent/intervention", () => {
   })
 
   it("wakes suspended session and returns ok", async () => {
-    void waitForHumanIntervention("api-sess", "peer-r3", "Wait for expert guidance")
+    vi.mocked(prisma.agentJob.findFirst).mockResolvedValueOnce({ id: "api-sess", status: "running", checkpoint: { humanInterventionPending: { sessionId: "api-sess", nodeId: "peer-r3" } } } as never)
+    vi.mocked(prisma.agentIntervention.findUnique).mockResolvedValueOnce(null)
+    vi.mocked(prisma.agentIntervention.create).mockResolvedValueOnce({ id: "decision-1" } as never)
+    void waitForHumanIntervention("api-sess", "peer-r3", "Wait for expert guidance", undefined, { userId: "user-test", jobId: "api-sess" })
 
     const res = await POST(
       new Request("http://localhost/api/agent/intervention", {

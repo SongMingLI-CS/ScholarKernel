@@ -1,3 +1,4 @@
+import { logDiagnosticError } from "@/lib/diagnostics"
 import { resolveUserIdFromRequest } from "@/lib/auth-user"
 import {
   completeAgentJob,
@@ -194,7 +195,7 @@ export async function POST(req: Request) {
     const failed = cancelled
       ? await cancelAgentJob(job.id, checkpoint)
       : await failAgentJob(job.id, e, checkpoint)
-    console.error("[POST /api/agent/jobs]", e)
+    logDiagnosticError("[POST /api/agent/jobs]", e)
     return jsonOk(failed, { status: cancelled ? 200 : 500 })
   }
 }

@@ -31,6 +31,7 @@ export type PeerReviewStreamProgress = {
 }
 
 export type AgentExecutorDeps = {
+  readDocument?: import("@/lib/tools/file-tool").FileReader
   localFileTool?: ReturnType<typeof import("@/lib/tools/file-tool").createFileTool>
   activeProvider: ActiveProviderConfig
   userId?: string
@@ -39,6 +40,7 @@ export type AgentExecutorDeps = {
   recordTokenUsage?: (input: RecordTokenUsageInput) => void
   /** 人类介入会话键（客户端 runId 或服务端 jobId） */
   interventionSessionId?: string
+  getInterventionDecision?: (nodeId: string) => Promise<HumanInterventionDecision | null>
   peerReviewCheckpoint?: PeerReviewCheckpointData | null
   onPeerReviewCheckpoint?: (
     patch: Partial<PeerReviewCheckpointData> & { markComplete?: PeerReviewCheckpointData["completedStages"][number] }

@@ -64,8 +64,9 @@ export async function checkProxyAuth(req: Request): Promise<ProxyAuthResult> {
   if (await hasValidAuthSession(req)) return { ok: true }
 
   const configured = readProxyAccessToken()
-  // 未配置 PROXY_ACCESS_TOKEN → 直连降级：放行转发，不阻断工作流
-  if (!configured) return { ok: true }
+  if (!configured) return process.env.NODE_ENV === "production"
+    ? { ok: false, status: 401, message: "Proxy authentication is not configured" }
+    : { ok: true }
 
   const presented = readBearerToken(req) ?? readProxyTokenHeader(req)
   if (presented !== configured) {

@@ -1,7 +1,9 @@
+import { logDiagnosticError } from "@/lib/diagnostics"
 import { jsonError, jsonOk, parseJsonBody } from "@/lib/api-utils"
 import { conversationOwnerWhere, resolveUserIdFromRequest } from "@/lib/auth-user"
 import type { CreateMessageBody } from "@/lib/db-types"
 import { prisma } from "@/lib/prisma"
+import { saveOwnedMessage, MessageWriteError } from "@/lib/owned-messages"
 
 type RouteCtx = { params: Promise<{ id: string }> }
 
@@ -21,51 +23,13 @@ export async function POST(req: Request, ctx: RouteCtx) {
   try {
     const userId = await resolveUserIdFromRequest(req)
     if (!userId) return jsonError("Unauthorized", 401)
-    const conversation = await prisma.conversation.findFirst({
-      where: { id: conversationId, ...conversationOwnerWhere(userId) },
-      select: { id: true },
-    })
-    if (!conversation) return jsonError("Conversation not found", 404)
-
-    const messageId = body.id?.trim() || undefined
-    const metadata =
-      body.metadata && typeof body.metadata === "object" && !Array.isArray(body.metadata)
-        ? body.metadata
-        : undefined
-    const [message] = await prisma.$transaction([
-      messageId
-        ? prisma.message.upsert({
-            where: { id: messageId },
-            create: {
-              id: messageId,
-              conversationId,
-              role,
-              content: body.content,
-              ...(metadata ? { metadata } : {}),
-            },
-            update: {
-              content: body.content,
-              role,
-              ...(metadata !== undefined ? { metadata } : {}),
-            },
-          })
-        : prisma.message.create({
-            data: {
-              conversationId,
-              role,
-              content: body.content,
-              ...(metadata ? { metadata } : {}),
-            },
-          }),
-      prisma.conversation.update({
-        where: { id: conversationId },
-        data: { updatedAt: new Date() },
-      }),
-    ])
+    const message = await saveOwnedMessage(userId, conversationId, body)
 
     return jsonOk(message, { status: 201 })
   } catch (e) {
-    console.error("[POST /api/conversations/[id]/messages]", e)
+    if (e instanceof MessageWriteError) return jsonError(e.message, e.status)
+    if (e && typeof e === "object" && "code" in e && e.code === "P2002") return jsonError("Message ID already exists", 409)
+    logDiagnosticError("[POST /api/conversations/[id]/messages]", e)
     return jsonError("Failed to append message", 500)
   }
 }
@@ -92,7 +56,7 @@ export async function DELETE(req: Request, ctx: RouteCtx) {
 
     return new Response(null, { status: 204 })
   } catch (e) {
-    console.error("[DELETE /api/conversations/[id]/messages]", e)
+    logDiagnosticError("[DELETE /api/conversations/[id]/messages]", e)
     return jsonError("Failed to clear messages", 500)
   }
 }

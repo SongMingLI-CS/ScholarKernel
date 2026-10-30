@@ -1,0 +1,37 @@
+import { prisma } from "@/lib/prisma"
+import { getPendingIntervention, resolveHumanInterventionSession, type HumanInterventionDecision } from "./human-intervention-gate"
+
+export class InterventionError extends Error {
+  constructor(message: string, readonly status: number) { super(message) }
+}
+
+export async function applyOwnedIntervention(userId: string, jobId: string, nodeId: string, decision: HumanInterventionDecision) {
+  const job = await prisma.agentJob.findFirst({ where: { id: jobId, userId } })
+  if (!job) throw new InterventionError("Job not found", 404)
+  const where = { jobId_nodeId: { jobId, nodeId } }
+  const instruction = decision.action === "redirect" ? decision.instruction.trim() : null
+  const previous = await prisma.agentIntervention.findUnique({ where })
+  if (previous) {
+    if (previous.action !== decision.action || previous.instruction !== instruction) throw new InterventionError("A different decision has already been applied", 409)
+    return { ok: true, nodeId, duplicate: true }
+  }
+  const checkpoint = job.checkpoint as { humanInterventionPending?: { sessionId?: string; nodeId?: string } } | null
+  const pending = checkpoint?.humanInterventionPending
+  const gate = getPendingIntervention(jobId)
+  if (job.status !== "running" || pending?.sessionId !== jobId || pending.nodeId !== nodeId || !gate || gate.nodeId !== nodeId || gate.userId !== userId || gate.jobId !== jobId) {
+    throw new InterventionError("Job is not waiting for this decision", 409)
+  }
+  try {
+    await prisma.agentIntervention.create({ data: { jobId, userId, nodeId, action: decision.action, instruction } })
+  } catch (error) {
+    if (error && typeof error === "object" && "code" in error && error.code === "P2002") {
+      const winner = await prisma.agentIntervention.findUnique({ where })
+      if (winner?.action === decision.action && winner.instruction === instruction) return { ok: true, nodeId, duplicate: true }
+      throw new InterventionError("A decision has already been recorded", 409)
+    }
+    throw error
+  }
+  const resolved = resolveHumanInterventionSession(jobId, decision, { userId, jobId, nodeId })
+  if (!resolved.ok) throw new InterventionError("Decision saved; Job must be resumed", 409)
+  return { ok: true, nodeId, duplicate: false }
+}

@@ -1,3 +1,4 @@
+import { logDiagnosticError } from "@/lib/diagnostics"
 import { jsonError } from "@/lib/api-utils"
 import {
   checkProxyAuth,
@@ -62,7 +63,7 @@ async function handleProxy(req: Request, ctx: RouteCtx) {
   try {
     upstreamRes = await fetch(url.toString(), init)
   } catch (e) {
-    console.error("[proxy] upstream fetch failed", e)
+    logDiagnosticError("[proxy] upstream fetch failed", e)
     logProxyRequest({ provider, path: pathSegments.join("/"), status: 502, clientIp })
     return jsonError("Upstream proxy request failed", 502)
   }

@@ -1,3 +1,4 @@
+import { logDiagnosticError } from "@/lib/diagnostics"
 import { jsonError, jsonOk, parseJsonBody } from "@/lib/api-utils"
 import { signIn } from "@/auth"
 import { isAuthEnabled } from "@/lib/session-auth"
@@ -21,7 +22,7 @@ export async function POST(req: Request) {
     if (e instanceof AuthError) {
       return jsonError("Invalid password", 401)
     }
-    console.error("[POST /api/auth/login]", e)
+    logDiagnosticError("[POST /api/auth/login]", e)
     return jsonError("Login failed", 500)
   }
 }

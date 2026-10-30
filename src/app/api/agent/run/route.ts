@@ -1,3 +1,4 @@
+import { logDiagnosticError } from "@/lib/diagnostics"
 import { resolveUserIdFromRequest } from "@/lib/auth-user"
 import { persistAgentJobError } from "@/lib/agent-jobs"
 import { runAgentOnServer } from "@/lib/agent-server-run"
@@ -63,7 +64,7 @@ export async function POST(req: Request) {
       userInput: body.userInput?.trim(),
       provider: body.provider,
     })
-    console.error("[POST /api/agent/run]", e)
+    logDiagnosticError("[POST /api/agent/run]", e)
     return jsonError(message, 500)
   }
 }

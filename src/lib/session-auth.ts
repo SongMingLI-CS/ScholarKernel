@@ -1,4 +1,5 @@
 import { createHmac, timingSafeEqual } from "node:crypto"
+import { authenticationRequired } from "./auth-configuration"
 
 export const AUTH_SESSION_COOKIE = "sk_session"
 export const AUTHENTICATED_USER_ID = "primary_user"
@@ -23,7 +24,7 @@ function readAuthenticatedUserId(): string {
 }
 
 export function isAuthEnabled(): boolean {
-  return Boolean(readAuthPassword())
+  return authenticationRequired()
 }
 
 function assertSessionSecretConfigured() {
@@ -125,6 +126,7 @@ export function createAuthenticatedSessionToken(): string {
 }
 
 export async function hasValidAuthSession(_req?: Request): Promise<boolean> {
+  void _req // Auth.js reads cookies through the Next.js request context.
   if (!isAuthEnabled()) return false
   const { auth } = await import("@/auth")
   const session = await auth()

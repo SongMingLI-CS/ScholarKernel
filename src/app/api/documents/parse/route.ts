@@ -1,3 +1,4 @@
+import { logDiagnosticError } from "@/lib/diagnostics"
 import { jsonError, jsonOk } from "@/lib/api-utils"
 import { parseLayoutAwareDocument } from "@/lib/document/layout-aware-parser"
 import { MAX_PDF_BYTES, PdfParseError } from "@/lib/document/pdf-text-extract"
@@ -53,7 +54,7 @@ export async function POST(req: Request) {
   } catch (e) {
     if (e instanceof PdfParseError) return jsonError(e.message, e.status)
 
-    console.error("[documents/parse]", e)
+    logDiagnosticError("[documents/parse]", e)
     const msg = e instanceof Error ? e.message : String(e)
     return jsonError(msg, 500)
   }

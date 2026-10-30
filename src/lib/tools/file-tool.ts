@@ -15,15 +15,15 @@ const unavailableReader: FileReader = async path => ({
 export function createFileTool(readFile: FileReader = unavailableReader) {
   return tool({
     description:
-      "读取项目根目录下的本地文件（相对路径）。支持 .pdf/.docx 版面感知解析（双栏阅读顺序 + LaTeX 公式重构）。" +
-      "必须提供 input.path（必填）。仅用于 src/、package.json 等本地源码/配置或用户上传的论文附件；严禁用于在线文献 URL。",
+      "读取当前用户已保存的学术文档，path 参数仅兼容承载文档 ID，不是本机路径。" +
+      "文档必须通过当前用户的文档服务读取。系统源码、配置和日志不属于用户文档。",
     inputSchema: zodSchema(
       z.object({
         path: z
           .string()
           .min(1)
           .describe(
-            '必填。相对项目根目录的文件路径，例如 "src/app/page.tsx"、"papers/sample.pdf" 或 "logs/error.log"。'
+            '必填。当前用户已保存的文档 ID。'
           ),
         maxChars: z.number().int().min(1).max(200_000).optional().default(80_000),
       })

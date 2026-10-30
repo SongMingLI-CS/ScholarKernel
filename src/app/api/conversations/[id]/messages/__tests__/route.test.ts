@@ -2,8 +2,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 
 import { DELETE, POST } from "../route"
 
-const { findFirst, create, upsert, update, deleteMany, transaction } = vi.hoisted(() => ({
+const { findFirst, create, upsert, update, deleteMany, transaction, messageFind, updateMany } = vi.hoisted(() => ({
   findFirst: vi.fn(),
+  messageFind: vi.fn(),
+  updateMany: vi.fn(),
   create: vi.fn(),
   upsert: vi.fn(),
   update: vi.fn(),
@@ -21,9 +23,12 @@ vi.mock("@/lib/prisma", () => ({
     conversation: {
       findFirst,
       update,
+      updateMany,
     },
     message: {
       create,
+      findFirst: messageFind,
+      updateMany,
       upsert,
       deleteMany,
     },
@@ -39,7 +44,8 @@ describe("/api/conversations/[id]/messages", () => {
   beforeEach(() => {
     vi.clearAllMocks()
     vi.mocked(resolveUserIdFromRequest).mockResolvedValue("user-test")
-    transaction.mockImplementation(async (ops: unknown[]) => {
+    transaction.mockImplementation(async (ops: unknown[] | ((tx: unknown) => Promise<unknown>)) => {
+      if (typeof ops === "function") return ops({ conversation: { findFirst, updateMany }, message: { findFirst: messageFind, create, updateMany } })
       const results = []
       for (const op of ops) results.push(await op)
       return results

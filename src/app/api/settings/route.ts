@@ -1,3 +1,4 @@
+import { logDiagnosticError } from "@/lib/diagnostics"
 import { jsonError, jsonOk, parseJsonBody } from "@/lib/api-utils"
 import {
   EMPTY_RUNTIME_KEYS,
@@ -71,7 +72,7 @@ export async function GET(req: Request) {
     const row = await getOrCreateSettings(userId)
     return jsonOk(toSettingsResponse(row))
   } catch (e) {
-    console.error("[GET /api/settings]", e)
+    logDiagnosticError("[GET /api/settings]", e)
     return jsonError("Failed to load settings", 500)
   }
 }
@@ -104,7 +105,7 @@ export async function PATCH(req: Request) {
 
     return jsonOk(toSettingsResponse(updated))
   } catch (e) {
-    console.error("[PATCH /api/settings]", e)
+    logDiagnosticError("[PATCH /api/settings]", e)
     return jsonError("Failed to update settings", 500)
   }
 }

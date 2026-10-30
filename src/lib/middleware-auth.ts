@@ -1,6 +1,7 @@
 /**
  * Edge-safe route policy for NextAuth middleware (no Prisma imports).
  */
+import { authenticationRequired } from "./auth-configuration"
 
 export const unauthorizedJsonBody = { error: "Unauthorized", status: 401 } as const
 
@@ -11,9 +12,7 @@ const PROTECTED_API_PREFIXES = ["/api/conversations", "/api/agent", "/api/canvas
 const PROTECTED_PAGE_PREFIXES = ["/dashboard", "/workspace"] as const
 
 export function isAuthEnabledInMiddleware(env: NodeJS.ProcessEnv = process.env): boolean {
-  const raw = env.AUTH_PASSWORD
-  const trimmed = typeof raw === "string" ? raw.trim() : ""
-  return trimmed.length > 0
+  return authenticationRequired(env)
 }
 
 export function isPublicPath(pathname: string): boolean {
