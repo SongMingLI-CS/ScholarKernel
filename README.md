@@ -19,6 +19,17 @@ docker compose up --build -d
 
 镜像启动时会自动执行 `prisma migrate deploy` 再 `npm start`。
 
+默认 Compose 只启动 PostgreSQL 和 Next.js。需要服务端持久化 Agent 时，在 `.env` 中设置
+`AGENT_DURABLE_JOBS=1` 与 `NEXT_PUBLIC_AGENT_EXECUTION=server`，然后通过 profile 启动独立 Worker：
+
+```bash
+docker compose --profile durable-agent up --build -d
+```
+
+Worker 等待数据库健康且 Web 完成迁移并健康后启动。关闭 profile 会保留仅 Web 的部署拓扑；
+设置 `NEXT_PUBLIC_AGENT_EXECUTION` 后需要重新构建镜像。可选本地 Embedding/Reranker 服务不包含在
+Compose 中，容器内的服务地址必须使用容器网络可达的地址，不能使用容器自身的 `127.0.0.1`。
+
 ## 开发
 
 ```bash

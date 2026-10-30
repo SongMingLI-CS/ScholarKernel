@@ -38,5 +38,23 @@ services:
       timeout: 5s
       retries: 10
       start_period: 30s
+  scholarkernel-worker:
+    profiles: ["durable-agent"]
+    build:
+      context: .
+      args:
+        NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmjs.org}
+        DEBIAN_MIRROR: ${DEBIAN_MIRROR:-http://deb.debian.org}
+        NEXT_PUBLIC_BASE_PATH: ${NEXT_PUBLIC_BASE_PATH:-}
+    command: ["npm", "run", "worker"]
+    env_file:
+      - .env
+    depends_on:
+      scholarkernel-db:
+        condition: service_healthy
+      scholarkernel-web:
+        condition: service_healthy
+    restart: unless-stopped
+    mem_limit: 1g
 volumes:
   sk-postgres:
