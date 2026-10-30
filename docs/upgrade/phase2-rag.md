@@ -49,6 +49,8 @@
 - `npx tsc --noEmit`、`npm run lint`、`npm run build` 通过。构建仍报告 Next.js middleware 约定弃用提示。
 - Embedding/reranker tests 使用确定性 mock，不是模型效果、延迟或成本测量。真实本地 Python 服务端到端协议验证在 Phase 4 记录。
 
+后续 Phase 4 已补充实际本机协议验证：固定版本的 embedding 服务返回 384 维向量，微调 reranker 返回可解析分数；本机模型环境变量下 `document-index.integration.test.ts` 3 项通过。该验证未改变本阶段原始 mock 测试的性质，也不代表用户文档质量评测。
+
 ## 限制
 
 - 无文字层的扫描 PDF、手写内容、需要 OCR 的页面无法从当前文本解析器还原。
@@ -56,4 +58,4 @@
 - legacy 文档仅有纯文本时可以分块检索，但缺失来源页码仍为未知。
 - 当前对话级本地索引只读最近更新的至多 1000 块；更大文档集合需分页检索或数据库向量索引。
 - Dense 检索与 reranker 取决于用户明确配置且保持可用的本地服务；未配置时 BM25-only。模型升级后按需补向量，尚无批量离线重建命令。
-- BM25/Dense/RRF 的比较指标、固定公开数据、查询级错误分析和人工引用支持性抽样由 Phase 3 给出；目前不宣称 RAG 质量提升。
+- BM25/Dense/RRF 与两种 Cross-Encoder 的 SciFact dev 对比、查询级结果和来源抽样见 Phase 3/4。它不是用户文档或生成答案评测，不宣称产品 RAG 质量提升。

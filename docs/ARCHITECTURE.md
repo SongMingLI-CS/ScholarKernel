@@ -12,11 +12,16 @@ flowchart LR
   Executor --> Search[Academic search]
   Executor --> Read[Document and source readers]
   Executor --> Review[Peer review agents]
-  Search --> RAG[Deduplicate, rerank, chunk]
-  Read --> RAG
+  Read --> Chunk[Parse, section and page chunks]
+  Chunk --> Index[DocumentChunk index]
+  Index --> DB[(PostgreSQL / Prisma)]
+  Index --> Embed[Optional local embedding service]
+  Search --> RAG[BM25, optional Dense, RRF, rerank]
+  Index --> RAG
   RAG --> Reasoning[Reasoning and citations]
+  RAG --> Ranker[Optional local reranker]
   Executor --> Checkpoint[AgentJob checkpoint API]
-  Checkpoint --> DB[(PostgreSQL / Prisma)]
+  Checkpoint --> DB
   Executor --> Usage[Token audit by Agent]
   Usage --> DB
 ```
@@ -36,8 +41,12 @@ flowchart LR
 - `src/lib/document/pdf-parser.ts` 使用 PDF.js 提取页面文字和几何位置，带文件大小限制、解析期限和 PDF.js 资源清理。
 - `src/lib/document/column-reorder.ts` 只在存在坐标时进行栏顺序处理。只有纯文本而没有版面坐标时保留原有顺序。
 - `src/lib/document/academic-semantic-chunker.ts` 按学术章节标题和段落切块，记录来源章节。页码仅从解析器观测到的页面块写入；无法映射时不赋默认页码。
+- `src/lib/document/document-chunk-index.ts` 为保存文档写入稳定 `DocumentChunk` ID、章节、可选页码、内容 hash 和 parser version。可选 embedding 由显式配置的本地 HTTP 服务生成，向量和 revision 存在 PostgreSQL JSON 字段。
+- `src/lib/document/search-conversation-chunks.ts` 组合 BM25 与可选 Dense cosine 召回，通过 RRF 汇合并保留来源映射。每次查询最多加载 1,000 个分块，不使用 pgvector；Dense 和本地 reranker 都需显式配置，异常可降级。
 - `src/lib/tools/academic-search-strategy.ts` 负责搜索 query 扩写、来源合并、URL 去重和全局引用编号。
-- `src/lib/document/rerank-gateway.ts` 支持可选外部 Reranker；不可用或返回数据无效时回退到词项排序，并对中文使用字符 bigram。它是规则排序，不是本项目训练的模型。
+- `src/lib/document/rerank-gateway.ts` 支持显式本地或已有外部 Reranker；响应无效或服务不可用时回退到词项排序，并对中文使用字符 bigram。词项回退是规则排序。
+
+独立研究工程 `../ScholarKernel-reranker` 实现可复现 BM25/Dense/RRF/预训练 Cross-Encoder 基线，并在 SciFact train/dev 上微调本地 Cross-Encoder。它不是应用默认模型，只有配置本地 endpoint 时才进入应用检索流程；模型权重不提交主仓库。
 
 PDF.js 可以提取含文本层的 PDF。扫描版或只有页面图像的 PDF 需要 OCR，而项目目前没有 OCR；空白 PDF、密码保护、损坏或不受支持的文件会返回错误说明。
 
@@ -65,4 +74,4 @@ PDF.js 可以提取含文本层的 PDF。扫描版或只有页面图像的 PDF �
 - `contextLimit` 不是硬性模型 Token 窗口限制；不同供应商的最大上下文、计费和重试行为仍可能不同。
 - 服务端 Job 有恢复入口，但系统没有自动侦测并接管所有进程崩溃后遗留的 `running` Job。
 - 普通 CI 使用 Mock 和本地服务；没有使用真实用户数据或真实模型 API。
-- 项目没有自主训练的模型、Embedding 或 Reranker，也没有可引用的准确率或性能提升数据。
+- SciFact dev 有检索评测，但没有独立 test split，也不是用户上传文档或生成答案评测；Agent 单/多智能体对照没有执行。项目包含一个本地微调 Cross-Encoder 研究 checkpoint，但不代表生产模型或统计显著的普适提升。

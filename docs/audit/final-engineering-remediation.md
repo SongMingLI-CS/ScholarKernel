@@ -2,6 +2,10 @@
 
 日期：2026-10-30
 
+本报告记录 Phase 0–F 普通工程修复的阶段性验收。之后继续完成的 SciFact 检索评测与独立 PyTorch Reranker 研究，以 `docs/upgrade/MASTER_REPORT.md` 及其 Phase 3/4 报告为当前升级总结；本文件保留原阶段结果和未验证事项，不作为 Phase 3/4 实验记录。
+
+本报告中的环境限制和“尚未验证”描述表示当时阶段的检查状态。之后 Phase 2 已在全新隔离数据库部署全部 10 条迁移；当前隔离数据库 `scholar_upgrade` 的 `prisma migrate status` 显示数据库 schema up to date，`prisma migrate diff` 输出 empty migration。新的检索评测和训练事实以 Phase 3/4 文件为准。
+
 分支：`fix/phase1-foundations`
 
 仓库：`/Users/dingcs/Documents/Codex/2026-10-29/files-pasted-by-the-user-scholarkernel/outputs/ScholarKernel`
@@ -104,9 +108,9 @@
 - 扫描版、纯页面图像 PDF 需要 OCR；ScholarKernel 当前不做 OCR。密码保护、损坏、空白或不支持的 PDF 不保证提取到正文，并会返回可读错误。
 - 没有真实 Provider API Key 时，真实模型输出、供应商重试语义、真实用量和真实账单均未验证。展示成本只是静态价格表估算。
 - `contextLimit` 按字符而非真实 Token 计算，且不能完全计入 system/tool schema 等所有供应商输入。
-- 新增 `agentId` 数据库迁移尚未在本地隔离数据库中实测；需由修复后的 CI Postgres job 或之后的隔离数据库运行确认。
+- 本报告撰写时，新增 `agentId` 迁移尚未完成本机重新验证；之后 Phase 2 已在全新隔离数据库验证全部 10 条迁移及 schema parity。当前 CI 远端运行仍未触发。
 - 普通聊天 UI 仍在浏览器执行部分 Agent 工作，而持久化恢复能力主要位于服务端 Job 路径；进程崩溃后的 `running` Job 也没有自动扫描接管。
-- 没有冻结学术语料、人工相关性标签或可比较的 RAG 质量指标；没有准确率、延迟或成本节省的量化结论。
+- 本报告撰写时没有冻结检索评测。后续 Phase 3/4 加入 SciFact dev evidence retrieval 指标；该结果不覆盖本地用户文档、答案真实性或产品端成本，仍没有生产效果结论。
 - 完整业务数据库浏览器流程未通过本机 Playwright 验证；本轮 UI E2E 只检查草稿输入，不点发送、不调用模型。
 
 ## 7. 未处理的安全审计事项
@@ -130,7 +134,7 @@ F12 也仍有普通架构差异：浏览器执行与服务端计费/检查点没
 1. 用新的隔离 PostgreSQL 实例运行包含 `20261030140000_agent_token_usage` 的全部迁移两次，并比较最终 schema；不要连接生产数据库。
 2. 检查 CI 实际运行记录，尤其是 GitHub Actions Postgres、Playwright Chromium 安装和迁移 parity 步骤。
 3. 决定是否将普通聊天 UI 迁移到服务端 Job 执行路径，并设计兼容的流式 UI、人工干预、用量记录和恢复体验。
-4. 若要声称 RAG 质量提升，先建立真实、可重复的文献语料和标注评估；若要支持扫描 PDF，再单独设计 OCR 流程。
+4. 若要声称 ScholarKernel 用户文档 RAG 质量提升，需建立相应的可复现语料与标注评估；SciFact dev 结果不能替代该验证。若要支持扫描 PDF，再单独设计 OCR 流程。
 5. 在单独授权和计划下处理上述安全审计事项；这些事项不应被本报告的工程修复结论覆盖。
 
 ## 9. 是否适合作为 AI/LLM 实习代表项目

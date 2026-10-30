@@ -52,6 +52,12 @@ npm run build      # prisma generate + next build
 
 架构和工程边界见 [架构说明](docs/ARCHITECTURE.md)。面试讲解建议结合 [面试指南](docs/INTERVIEW_GUIDE.md) 和 [最终工程修复报告](docs/audit/final-engineering-remediation.md)。
 
+## Academic Retrieval 评测与本地模型
+
+主应用支持显式配置的本地 Embedding 与 Cross-Encoder 接口；未配置本地模型时继续使用 BM25。一个独立的 PyTorch 研究工程位于本地同级目录 `../ScholarKernel-reranker`，它冻结了 SciFact 数据、比较 BM25/Dense/Hybrid/预训练 reranker，并训练一个小型 SciFact reranker。实验指标、原始预测、训练参数和许可记录见 `docs/upgrade/phase3-evaluation.md`、`docs/upgrade/phase4-reranker.md`。
+
+研究工程是独立 Git 仓库，不作为本项目子模块或源码依赖；权重与缓存未提交，需要按该仓库 README 下载/训练后才能启动本地 HTTP 服务。本地模型实测只验证了合成文档接线与公开 SciFact benchmark，不能据此宣称 ScholarKernel 用户文档或生成答案质量提升。限制见 [AI Evaluation 记录](docs/upgrade/AI_EVALUATION.md)。
+
 Agent 本地协作约定见 [AGENTS.md](./AGENTS.md) 与 [.cursor/rules/](.cursor/rules/)。
 
 ## 环境变量
@@ -71,6 +77,8 @@ Agent 本地协作约定见 [AGENTS.md](./AGENTS.md) 与 [.cursor/rules/](.curso
 | `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `GOOGLE_API_KEY` / `DEEPSEEK_API_KEY` | 否 | 服务端运行时模型密钥；也可在应用中配置。`GEMINI_API_KEY` 是 `GOOGLE_API_KEY` 的兼容别名 |
 | `TAVILY_API_KEY` / `SERPER_API_KEY` | 否 | 学术搜索 Provider；无密钥时不能执行对应在线检索 |
 | `COHERE_API_KEY` 或 `RERANK_API_URL` + `RERANK_API_KEY` | 否 | 可选服务端重排；缺少或调用失败时使用词项排序 |
+| `LOCAL_EMBEDDING_API_URL` + 模型/revision/dimensions | 否 | 显式启用本地稠密向量；请求失败降级到 BM25 |
+| `LOCAL_RERANKER_API_URL` + 模型/revision | 否 | 显式将文档片段发送到本机 Reranker；调用失败时保留检索结果 |
 
 生成生产密钥示例：`openssl rand -base64 32`
 
