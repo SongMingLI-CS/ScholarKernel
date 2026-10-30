@@ -1,0 +1,518 @@
+{
+  "status": "post-hoc sensitivity analysis; original NFCorpus full-test metrics remain in metrics.json",
+  "corpus_overlap_filter": {
+    "excluded_nfcorpus_document_ids": [
+      "MED-1527",
+      "MED-1529",
+      "MED-3815",
+      "MED-4144",
+      "MED-4612",
+      "MED-5225",
+      "MED-5303"
+    ],
+    "excluded_document_count": 7,
+    "queries_with_at_least_one_qrel_document_removed": 22,
+    "included_queries_with_remaining_qrels": 323,
+    "included_query_ids_sha256": "f3950f7914eaf889ccceeaa0c7d53c787e674db1e442f8fa07ff8d2aec991d44",
+    "method": "Remove all stored SimHash candidate-overlap documents from each saved ranking and its qrels; omit a query only if no judged relevant document remains. This filters saved candidate lists and does not rerun corpus retrieval or refill top-k."
+  },
+  "candidate_pool_note": "Every pretrained/fine-tuned reranker started with the same Hybrid top-50 candidates for every query; filtering removes the same overlap IDs from those candidate lists.",
+  "systems": {
+    "bm25": {
+      "query_count": 323,
+      "eligible_query_count": 323,
+      "queries_with_no_relevant_in_top20": 92,
+      "Recall@5": 0.11960029639505068,
+      "Recall@10": 0.1489522137627124,
+      "Recall@20": 0.1786608903015916,
+      "MRR@10": 0.5150830507641653,
+      "nDCG@10": 0.4594800334307264,
+      "latency_p50_ms": 7.2521,
+      "latency_p95_ms": 18.886049999999997
+    },
+    "dense": {
+      "query_count": 323,
+      "eligible_query_count": 323,
+      "queries_with_no_relevant_in_top20": 88,
+      "Recall@5": 0.11940959593549165,
+      "Recall@10": 0.1548042136782437,
+      "Recall@20": 0.18858344142273475,
+      "MRR@10": 0.5076539387684899,
+      "nDCG@10": 0.4951975213781079,
+      "latency_p50_ms": 10.1073,
+      "latency_p95_ms": 46.577089999999984
+    },
+    "hybrid": {
+      "query_count": 323,
+      "eligible_query_count": 323,
+      "queries_with_no_relevant_in_top20": 73,
+      "Recall@5": 0.12868210972622574,
+      "Recall@10": 0.16128002450351372,
+      "Recall@20": 0.20463842003411858,
+      "MRR@10": 0.5461902304781562,
+      "nDCG@10": 0.5181688211927789,
+      "latency_p50_ms": 18.0717,
+      "latency_p95_ms": 62.04898
+    },
+    "hybrid-rerank-finetuned-seed-20261030": {
+      "query_count": 323,
+      "eligible_query_count": 323,
+      "queries_with_no_relevant_in_top20": 76,
+      "Recall@5": 0.1356959001841276,
+      "Recall@10": 0.16719636747655373,
+      "Recall@20": 0.20114098559793725,
+      "MRR@10": 0.5780210329745934,
+      "nDCG@10": 0.5579412902044186,
+      "latency_p50_ms": 841.0963,
+      "latency_p95_ms": 929.9854599999999
+    },
+    "hybrid-rerank-finetuned-seed-20261031": {
+      "query_count": 323,
+      "eligible_query_count": 323,
+      "queries_with_no_relevant_in_top20": 77,
+      "Recall@5": 0.13531335098055894,
+      "Recall@10": 0.1680736061422382,
+      "Recall@20": 0.20140320634098302,
+      "MRR@10": 0.5787127131554376,
+      "nDCG@10": 0.5566115861450364,
+      "latency_p50_ms": 845.4986,
+      "latency_p95_ms": 974.21942
+    },
+    "hybrid-rerank-finetuned-seed-20261032": {
+      "query_count": 323,
+      "eligible_query_count": 323,
+      "queries_with_no_relevant_in_top20": 76,
+      "Recall@5": 0.13723818091932163,
+      "Recall@10": 0.169261356477643,
+      "Recall@20": 0.20160811094626066,
+      "MRR@10": 0.5827460808884958,
+      "nDCG@10": 0.5618712712042426,
+      "latency_p50_ms": 844.4869,
+      "latency_p95_ms": 960.1869299999998
+    },
+    "hybrid-rerank-pretrained": {
+      "query_count": 323,
+      "eligible_query_count": 323,
+      "queries_with_no_relevant_in_top20": 76,
+      "Recall@5": 0.13470865956360037,
+      "Recall@10": 0.1662901116866548,
+      "Recall@20": 0.19854787036457205,
+      "MRR@10": 0.579453535800285,
+      "nDCG@10": 0.5499093928334505,
+      "latency_p50_ms": 845.5887,
+      "latency_p95_ms": 1000.8880999999999
+    }
+  },
+  "full_test_fine_tuned_seed_average": {
+    "interpretation": "Arithmetic mean across three trained checkpoints; not an ensemble model.",
+    "training_seed_count": 3,
+    "mean_metrics": {
+      "Recall@5": 0.1362906523776186,
+      "Recall@10": 0.16826779808854767,
+      "Recall@20": 0.20153874184910825,
+      "MRR@10": 0.5798266090061756,
+      "nDCG@10": 0.5589007545433758
+    },
+    "paired_bootstrap_vs_bm25_nDCG10": [
+      {
+        "seed": 20261031,
+        "samples": 2000,
+        "mean_delta": 0.09924638825401126,
+        "ci95": [
+          0.06564802139286284,
+          0.13707403538938462
+        ]
+      },
+      {
+        "seed": 20261032,
+        "samples": 2000,
+        "mean_delta": 0.09924638825401126,
+        "ci95": [
+          0.06598638615311352,
+          0.1350041356528574
+        ]
+      },
+      {
+        "seed": 20261033,
+        "samples": 2000,
+        "mean_delta": 0.09924638825401126,
+        "ci95": [
+          0.06562906857738525,
+          0.1340300832415364
+        ]
+      }
+    ],
+    "paired_bootstrap_vs_pretrained_nDCG10": [
+      {
+        "seed": 20261031,
+        "samples": 2000,
+        "mean_delta": 0.008767344094770745,
+        "ci95": [
+          0.000673002808844506,
+          0.016682745234176587
+        ]
+      },
+      {
+        "seed": 20261032,
+        "samples": 2000,
+        "mean_delta": 0.008767344094770745,
+        "ci95": [
+          0.0011163179424526274,
+          0.01666129805703997
+        ]
+      },
+      {
+        "seed": 20261033,
+        "samples": 2000,
+        "mean_delta": 0.008767344094770745,
+        "ci95": [
+          0.0009364966716682807,
+          0.01703173840178121
+        ]
+      }
+    ]
+  },
+  "fine_tuned_seed_average": {
+    "interpretation": "Arithmetic mean of three separately trained checkpoint metrics; this is not an ensemble model or a fourth training run.",
+    "training_seed_count": 3,
+    "mean_metrics": {
+      "Recall@5": 0.13608247736133605,
+      "Recall@10": 0.16817711003214497,
+      "Recall@20": 0.201384100961727,
+      "MRR@10": 0.5798266090061756,
+      "nDCG@10": 0.5588080491845658
+    },
+    "paired_bootstrap_vs_bm25_nDCG10": [
+      {
+        "seed": 20261031,
+        "samples": 2000,
+        "mean_delta": 0.09932801575383944,
+        "ci95": [
+          0.06585092766825851,
+          0.13727304528642068
+        ]
+      },
+      {
+        "seed": 20261032,
+        "samples": 2000,
+        "mean_delta": 0.09932801575383944,
+        "ci95": [
+          0.0660271823354422,
+          0.13526676016554656
+        ]
+      },
+      {
+        "seed": 20261033,
+        "samples": 2000,
+        "mean_delta": 0.09932801575383944,
+        "ci95": [
+          0.06585557323213775,
+          0.13415890317643964
+        ]
+      }
+    ],
+    "paired_bootstrap_vs_pretrained_nDCG10": [
+      {
+        "seed": 20261031,
+        "samples": 2000,
+        "mean_delta": 0.00889865635111533,
+        "ci95": [
+          0.0007405242020539003,
+          0.016803797570965978
+        ]
+      },
+      {
+        "seed": 20261032,
+        "samples": 2000,
+        "mean_delta": 0.00889865635111533,
+        "ci95": [
+          0.001249131892339941,
+          0.016743976539091647
+        ]
+      },
+      {
+        "seed": 20261033,
+        "samples": 2000,
+        "mean_delta": 0.00889865635111533,
+        "ci95": [
+          0.0010026558797605366,
+          0.01717267153335902
+        ]
+      }
+    ]
+  },
+  "paired_bootstrap": {
+    "metric": "per-query nDCG@10 mean difference, paired query bootstrap",
+    "confidence_level": 0.95,
+    "bootstrap_seeds": [
+      20261031,
+      20261032,
+      20261033
+    ],
+    "samples_per_seed": 2000,
+    "interval_note": "Intervals resample test queries and do not estimate between-training-seed uncertainty.",
+    "comparisons": {
+      "dense_minus_bm25_nDCG10": [
+        {
+          "seed": 20261031,
+          "samples": 2000,
+          "mean_delta": 0.03571748794738152,
+          "ci95": [
+            -0.0011098151952358066,
+            0.07391334903360264
+          ]
+        },
+        {
+          "seed": 20261032,
+          "samples": 2000,
+          "mean_delta": 0.03571748794738152,
+          "ci95": [
+            -0.0018885875495162692,
+            0.07133482263237928
+          ]
+        },
+        {
+          "seed": 20261033,
+          "samples": 2000,
+          "mean_delta": 0.03571748794738152,
+          "ci95": [
+            -0.002592246986948794,
+            0.07277969314755015
+          ]
+        }
+      ],
+      "hybrid_minus_bm25_nDCG10": [
+        {
+          "seed": 20261031,
+          "samples": 2000,
+          "mean_delta": 0.058688787762052406,
+          "ci95": [
+            0.034730150964110106,
+            0.08608086740589484
+          ]
+        },
+        {
+          "seed": 20261032,
+          "samples": 2000,
+          "mean_delta": 0.058688787762052406,
+          "ci95": [
+            0.033967005274554526,
+            0.0859609058381677
+          ]
+        },
+        {
+          "seed": 20261033,
+          "samples": 2000,
+          "mean_delta": 0.058688787762052406,
+          "ci95": [
+            0.03361823077404032,
+            0.08559072186158126
+          ]
+        }
+      ],
+      "hybrid-rerank-finetuned-seed-20261030_minus_bm25_nDCG10": [
+        {
+          "seed": 20261031,
+          "samples": 2000,
+          "mean_delta": 0.09846125677369223,
+          "ci95": [
+            0.06427897814399976,
+            0.13600065486590798
+          ]
+        },
+        {
+          "seed": 20261032,
+          "samples": 2000,
+          "mean_delta": 0.09846125677369223,
+          "ci95": [
+            0.06435863770997743,
+            0.13406926763726473
+          ]
+        },
+        {
+          "seed": 20261033,
+          "samples": 2000,
+          "mean_delta": 0.09846125677369223,
+          "ci95": [
+            0.06477893984844092,
+            0.13374752298726644
+          ]
+        }
+      ],
+      "hybrid-rerank-finetuned-seed-20261030_minus_hybrid-rerank-pretrained_nDCG10": [
+        {
+          "seed": 20261031,
+          "samples": 2000,
+          "mean_delta": 0.008031897370968117,
+          "ci95": [
+            -0.000942834091599857,
+            0.01658443137498371
+          ]
+        },
+        {
+          "seed": 20261032,
+          "samples": 2000,
+          "mean_delta": 0.008031897370968117,
+          "ci95": [
+            -6.20197594794141e-05,
+            0.016699651572860033
+          ]
+        },
+        {
+          "seed": 20261033,
+          "samples": 2000,
+          "mean_delta": 0.008031897370968117,
+          "ci95": [
+            -0.0006384153187307567,
+            0.01681407190178194
+          ]
+        }
+      ],
+      "hybrid-rerank-finetuned-seed-20261031_minus_bm25_nDCG10": [
+        {
+          "seed": 20261031,
+          "samples": 2000,
+          "mean_delta": 0.09713155271430993,
+          "ci95": [
+            0.06335083363870529,
+            0.13494741355646114
+          ]
+        },
+        {
+          "seed": 20261032,
+          "samples": 2000,
+          "mean_delta": 0.09713155271430993,
+          "ci95": [
+            0.06326429200127894,
+            0.1333592350330489
+          ]
+        },
+        {
+          "seed": 20261033,
+          "samples": 2000,
+          "mean_delta": 0.09713155271430993,
+          "ci95": [
+            0.06288758022599612,
+            0.13289794839658006
+          ]
+        }
+      ],
+      "hybrid-rerank-finetuned-seed-20261031_minus_hybrid-rerank-pretrained_nDCG10": [
+        {
+          "seed": 20261031,
+          "samples": 2000,
+          "mean_delta": 0.006702193311585808,
+          "ci95": [
+            -0.0024050918151123832,
+            0.015253985525090536
+          ]
+        },
+        {
+          "seed": 20261032,
+          "samples": 2000,
+          "mean_delta": 0.006702193311585808,
+          "ci95": [
+            -0.002100195123192817,
+            0.01559112861770795
+          ]
+        },
+        {
+          "seed": 20261033,
+          "samples": 2000,
+          "mean_delta": 0.006702193311585808,
+          "ci95": [
+            -0.0024634038139200523,
+            0.01614092193425686
+          ]
+        }
+      ],
+      "hybrid-rerank-finetuned-seed-20261032_minus_bm25_nDCG10": [
+        {
+          "seed": 20261031,
+          "samples": 2000,
+          "mean_delta": 0.10239123777351618,
+          "ci95": [
+            0.06992890263410725,
+            0.1403454226629776
+          ]
+        },
+        {
+          "seed": 20261032,
+          "samples": 2000,
+          "mean_delta": 0.10239123777351618,
+          "ci95": [
+            0.06979854981152146,
+            0.1380078500865594
+          ]
+        },
+        {
+          "seed": 20261033,
+          "samples": 2000,
+          "mean_delta": 0.10239123777351618,
+          "ci95": [
+            0.06931767138763946,
+            0.13703105937302648
+          ]
+        }
+      ],
+      "hybrid-rerank-finetuned-seed-20261032_minus_hybrid-rerank-pretrained_nDCG10": [
+        {
+          "seed": 20261031,
+          "samples": 2000,
+          "mean_delta": 0.01196187837079206,
+          "ci95": [
+            0.004178702719078862,
+            0.020485310466835147
+          ]
+        },
+        {
+          "seed": 20261032,
+          "samples": 2000,
+          "mean_delta": 0.01196187837079206,
+          "ci95": [
+            0.004075825260714488,
+            0.020138134314835
+          ]
+        },
+        {
+          "seed": 20261033,
+          "samples": 2000,
+          "mean_delta": 0.01196187837079206,
+          "ci95": [
+            0.004627784162239323,
+            0.020280391568542947
+          ]
+        }
+      ],
+      "hybrid-rerank-pretrained_minus_bm25_nDCG10": [
+        {
+          "seed": 20261031,
+          "samples": 2000,
+          "mean_delta": 0.09042935940272412,
+          "ci95": [
+            0.05695379447566522,
+            0.12880094930815555
+          ]
+        },
+        {
+          "seed": 20261032,
+          "samples": 2000,
+          "mean_delta": 0.09042935940272412,
+          "ci95": [
+            0.058352320671359155,
+            0.12628099795917383
+          ]
+        },
+        {
+          "seed": 20261033,
+          "samples": 2000,
+          "mean_delta": 0.09042935940272412,
+          "ci95": [
+            0.05789122417982104,
+            0.1242950580918806
+          ]
+        }
+      ]
+    }
+  }
+}
