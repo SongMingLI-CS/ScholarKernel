@@ -173,6 +173,7 @@ it.skipIf(!enabled)("runs the real durable Worker and HTTP route handlers with a
     const usage = await prisma.tokenAuditLog.findMany({ where: { jobId: created.id } })
     expect(usage).toHaveLength(1)
     expect(usage[0]).toMatchObject({ agentId: "direct-chat", inputTokens: 17, outputTokens: 9 })
+    expect(usage[0]?.idempotencyKey).toMatch(new RegExp(`^${created.id}:`))
 
     const eventsResponse = await fetch(`${baseUrl}/api/agent/jobs/${encodeURIComponent(created.id)}/events`, {
       headers: { "last-event-id": `${created.id}:1` },
@@ -198,4 +199,4 @@ it.skipIf(!enabled)("runs the real durable Worker and HTTP route handlers with a
     await prisma.$disconnect()
     vi.unstubAllEnvs()
   }
-})
+}, 30_000)

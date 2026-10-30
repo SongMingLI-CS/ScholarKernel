@@ -27,19 +27,26 @@ export async function recordTokenUsage(input: RecordTokenUsageInput): Promise<vo
   const calculatedCost = calculateTokenCost(input.modelUsed, inputTokens, outputTokens)
 
   await prisma.$transaction(async (tx) => {
+    const auditData = {
+      userId: input.userId,
+      jobId: input.jobId ?? null,
+      agentId: input.agentId ?? null,
+      modelUsed: input.modelUsed,
+      inputTokens,
+      outputTokens,
+      calculatedCost,
+      ttftMs: input.ttftMs ?? null,
+    }
+    if (input.idempotencyKey) {
+      const inserted = await tx.tokenAuditLog.createMany({
+        data: [{ ...auditData, idempotencyKey: input.idempotencyKey }],
+        skipDuplicates: true,
+      })
+      if (inserted.count === 0) return
+    } else {
+      await tx.tokenAuditLog.create({ data: auditData })
+    }
     await ensureUserBillingInTx(tx, input.userId)
-    await tx.tokenAuditLog.create({
-      data: {
-        userId: input.userId,
-        jobId: input.jobId ?? null,
-        agentId: input.agentId ?? null,
-        modelUsed: input.modelUsed,
-        inputTokens,
-        outputTokens,
-        calculatedCost,
-        ttftMs: input.ttftMs ?? null,
-      },
-    })
     await tx.userBilling.update({
       where: { userId: input.userId },
       data: {

@@ -219,6 +219,7 @@ model TokenAuditLog {
   outputTokens   Int      @default(0)
   calculatedCost Float    @default(0)
   ttftMs         Int?
+  idempotencyKey String?  @unique
   createdAt      DateTime @default(now())
 
   @@index([userId, createdAt])

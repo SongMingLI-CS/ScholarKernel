@@ -72,7 +72,14 @@ describe("model call budgets and stream handling", () => {
       outputTokenDetails: { textTokens: 12, reasoningTokens: 0 },
     }
 
-    recordLlmUsageAsync({ userId: "user-1", jobId: "job-1", recordTokenUsage }, "model-x", usage, 18, "planner")
+    recordLlmUsageAsync(
+      { userId: "user-1", jobId: "job-1", recordTokenUsage },
+      "model-x",
+      usage,
+      18,
+      "planner",
+      "call-fixture"
+    )
 
     expect(recordTokenUsage).toHaveBeenCalledWith({
       userId: "user-1",
@@ -82,6 +89,7 @@ describe("model call budgets and stream handling", () => {
       inputTokens: 40,
       outputTokens: 12,
       ttftMs: 18,
+      idempotencyKey: "job-1:call-fixture",
     })
   })
 

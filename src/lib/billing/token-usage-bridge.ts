@@ -8,6 +8,7 @@ export type RecordTokenUsageInput = {
   inputTokens: number
   outputTokens: number
   ttftMs?: number | null
+  idempotencyKey?: string
 }
 
 export function extractUsageCounts(usage: LanguageModelUsage | undefined | null): {
@@ -28,7 +29,8 @@ export function recordLlmUsageAsync(
   modelUsed: string,
   usage: LanguageModelUsage | undefined | null,
   ttftMs?: number | null,
-  agentId?: string
+  agentId?: string,
+  usageCallId = globalThis.crypto.randomUUID()
 ): void {
   if (!ctx.userId || !ctx.recordTokenUsage) return
   const counts = extractUsageCounts(usage)
@@ -40,5 +42,6 @@ export function recordLlmUsageAsync(
     modelUsed,
     ...counts,
     ttftMs,
+    idempotencyKey: ctx.jobId ? `${ctx.jobId}:${usageCallId}` : usageCallId,
   })
 }
