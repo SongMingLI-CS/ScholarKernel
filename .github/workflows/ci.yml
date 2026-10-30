@@ -72,7 +72,7 @@ jobs:
         run: npx playwright install --with-deps chromium
 
       - name: Browser tests
-        run: npm run test:e2e
+        run: AGENT_DURABLE_JOBS=1 NEXT_PUBLIC_AGENT_EXECUTION=server OPENAI_API_KEY=local-fixture-key npm run test:e2e
 
       - name: Production build
         run: npm run build
