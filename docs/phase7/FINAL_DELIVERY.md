@@ -33,7 +33,7 @@ Phase 7 本地工程和离线答案评测工具已完成并提交；Node、Postg
 
 推送前最近的 Actions run #14：[GitHub Actions 链接](https://github.com/SongMingLI-CS/ScholarKernel/actions/runs/41173148866)，失败，head SHA 为旧 Phase 6 62055ecc...。旧测试等待不会发生的 GET 导致 30 秒超时；公开分支已改为等待 POST 并拆分 build job。推送前没有 Phase 7 run；推送后的 Actions 结果须按实际 head SHA 核对。
 
-公开同步前扫描发现原始本地分支包含机器路径和硬件/数据库位置。该分支未上传，原提交继续留在本地 archive 分支；公开分支从 Phase 6 基线建立，文档已净化并复扫。推送与 CI 的最终状态以本轮最终交付摘要为准。详情见 CI_RESULTS.md。
+公开同步前扫描发现原始本地分支包含机器路径和硬件/数据库位置。该分支未上传，原提交继续留在本地 archive 分支；公开分支从 Phase 6 基线建立，文档已净化并复扫。首次推送 SHA 8998168316021264e7fc19dc054e1227582ab8bb 的五个 Actions jobs 全部通过，详见 CI_RESULTS.md。此次报告更新推送后产生的新 SHA 与 Actions run 以最终交付摘要为准。
 
 ## Reranker 与 AI 评测
 

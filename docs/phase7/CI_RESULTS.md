@@ -40,6 +40,20 @@ YAML 结构静态解析识别五个 jobs。这不代表 GitHub runner 已执行�
 
 尚未验证：GitHub runner 上的 Node 22、PostgreSQL 16 首次及重复迁移、schema parity、独立 production build、Playwright Chromium、Python job。Docker daemon 在本机不可用，不能替代 Compose 生命周期测试；本机 PostgreSQL 为 18.1，不能代表 PostgreSQL 16。
 
+## 首次推送后的 GitHub Actions
+
+已通过普通 git push 创建 feature/phase7-engineering-research；首次推送时本地与远端 SHA 均为 8998168316021264e7fc19dc054e1227582ab8bb。推送触发 [run #15](https://github.com/SongMingLI-CS/ScholarKernel/actions/runs/41191072578)，事件为 push，head SHA 与首次推送 SHA 一致，最终结论 success。
+
+| Job | 结果 |
+|---|---|
+| Typecheck, lint, and fixture tests | success |
+| PostgreSQL 16 migrations and integration tests | success |
+| Playwright end-to-end tests | success |
+| Python offline answer-evaluation tests | success |
+| Production build | success |
+
+这证明首次公开 SHA 上的五个 CI jobs 均通过。后续若再推送报告修订，会产生新的 commit 和 workflow run；最终交付摘要记录了本次报告更新后的远端 SHA 与最新 run。
+
 ## 证据边界
 
 本次远端状态通过 git ls-remote 与只读 GitHub Actions API 核对；原始本地历史未被改写或删除，发布分支使用已检查的净化副本。推送后的 SHA、GitHub Actions 运行和 job 结果见最终交付摘要。没有 force push、main 合并或生产部署。
