@@ -5,13 +5,42 @@ on:
     branches:
       - main
       - "fix/**"
+      - "feature/**"
   pull_request:
   workflow_dispatch:
 
 jobs:
   quality:
+    name: Typecheck, lint, and fixture tests
     runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
 
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: TypeScript
+        run: npx tsc --noEmit
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Feature and workflow tests
+        run: npm run test:quality
+
+      - name: Agent job lifecycle tests
+        run: npm run test:workflow
+
+  integration:
+    name: PostgreSQL 16 migrations and integration tests
+    runs-on: ubuntu-latest
     services:
       postgres:
         image: postgres:16
@@ -26,12 +55,11 @@ jobs:
           --health-interval=10s
           --health-timeout=5s
           --health-retries=5
-
     env:
       DATABASE_URL: postgresql://postgres:password@127.0.0.1:55446/scholar_upgrade
       DIRECT_URL: postgresql://postgres:password@127.0.0.1:55446/scholar_upgrade
       ENCRYPTION_SECRET: ci-test-encryption-secret
-
+      SCHOLAR_UPGRADE_TEST_DATABASE: "1"
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -53,26 +81,92 @@ jobs:
           npx prisma migrate deploy
           npx prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --exit-code
 
-      - name: Ordinary feature tests
-        run: npm run test:quality
-
-      - name: Agent job lifecycle tests
-        run: npm run test:workflow
-
       - name: Persistent Job and document regressions
-        run: SCHOLAR_UPGRADE_TEST_DATABASE=1 npm run test:upgrade
+        run: npm run test:upgrade
 
-      - name: TypeScript
-        run: npx tsc --noEmit
+  build:
+    name: Production build
+    runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: postgresql://postgres:password@127.0.0.1:55446/scholar_build
+      DIRECT_URL: postgresql://postgres:password@127.0.0.1:55446/scholar_build
+      ENCRYPTION_SECRET: ci-test-encryption-secret
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: Lint
-        run: npm run lint
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Production build
+        run: npm run build
+
+  browser-tests:
+    name: Playwright end-to-end tests
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: password
+          POSTGRES_DB: scholar_e2e
+        ports:
+          - 55446:5432
+        options: >-
+          --health-cmd="pg_isready -U postgres -d scholar_e2e"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+    env:
+      DATABASE_URL: postgresql://postgres:password@127.0.0.1:55446/scholar_e2e
+      DIRECT_URL: postgresql://postgres:password@127.0.0.1:55446/scholar_e2e
+      ENCRYPTION_SECRET: ci-test-encryption-secret
+      AGENT_DURABLE_JOBS: "1"
+      NEXT_PUBLIC_AGENT_EXECUTION: server
+      OPENAI_API_KEY: local-fixture-key
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Apply database migrations
+        run: npx prisma migrate deploy
 
       - name: Install Playwright browser
         run: npx playwright install --with-deps chromium
 
       - name: Browser tests
-        run: AGENT_DURABLE_JOBS=1 NEXT_PUBLIC_AGENT_EXECUTION=server OPENAI_API_KEY=local-fixture-key npm run test:e2e
+        run: npm run test:e2e
 
-      - name: Production build
-        run: npm run build
+  python-evaluation:
+    name: Python offline answer-evaluation tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Answer-evaluation unit tests
+        run: python scripts/acceptance/test_answer_eval.py -v
+
+      - name: Python syntax check
+        run: python -m compileall -q scripts/acceptance

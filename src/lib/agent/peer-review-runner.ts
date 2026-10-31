@@ -59,6 +59,8 @@ export type PeerReviewDebateFn = (input: {
 export type ExecutePeerReviewGroupInput = {
   groupNodes: WorkflowNode[]
   userInput: string
+  /** Retrieved evidence and preceding tool outcomes; cite only verified URLs. */
+  evidenceContext?: string
   deps: AgentExecutorDeps
   hooks: Pick<
     AgentExecutorHooks,
@@ -340,7 +342,10 @@ export async function executePeerReviewGroup(input: ExecutePeerReviewGroupInput)
   }
 
   const [r1Node, r2Node, r3Node] = groupNodes
-  const subject = enrichPeerReviewSubject(resolveSubjectText(userInput, groupNodes))
+  const subject = enrichPeerReviewSubject([
+    resolveSubjectText(userInput, groupNodes),
+    input.evidenceContext ? `\n--- VERIFIED TOOL CONTEXT ---\n${input.evidenceContext}` : "",
+  ].join("\n"))
   const groupStartedAt = performance.now()
 
   const cpState = mergePeerReviewCheckpoint(input.checkpoint ?? null, { subject })

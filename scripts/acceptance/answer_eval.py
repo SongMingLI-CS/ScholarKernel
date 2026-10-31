@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Prepare controlled answer-evaluation requests and score human annotations."""
+"""Prepare three-condition answer-evaluation requests and score human annotations."""
 
 from __future__ import annotations
 
@@ -14,7 +14,8 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_FIXTURE = ROOT / "docs" / "acceptance" / "fixtures" / "citation-support-v1.jsonl"
-VARIANTS = ("single-agent", "multi-agent")
+VARIANTS = ("single-agent", "multi-agent-no-collaboration", "collaborative-multi-agent")
+LEGACY_VARIANTS = {"multi-agent": "multi-agent-no-collaboration"}
 SUPPORT_LABELS = {"supported", "partially_supported", "contradicted", "insufficient_evidence"}
 CITATION_TOKEN = re.compile(r"\[(\d+)\]")
 BRACKET_TOKEN = re.compile(r"\[([^\[\]]+)\]")
@@ -68,12 +69,13 @@ def prepare_requests(fixture: Path, output: Path, model: str, budget: int) -> in
             }
             for index, item in enumerate(evidence, start=1)
         ]
+        protocols = {
+            "single-agent": "Use one agent to evaluate the supplied evidence and produce the concise answer.",
+            "multi-agent-no-collaboration": "Use separate research and synthesis agents. The synthesis agent must not receive the research agent's intermediate findings; both agents may only use the supplied evidence.",
+            "collaborative-multi-agent": "Use separate research and synthesis agents and share intermediate findings between them. Every factual statement must remain grounded in the supplied evidence.",
+        }
         for variant in VARIANTS:
-            protocol = (
-                "Answer directly from the supplied evidence and give a concise conclusion."
-                if variant == "single-agent"
-                else "Use a research subtask to identify evidence, then a synthesis subtask to produce the final answer. Share only the supplied evidence and stay within the same total token budget."
-            )
+            protocol = protocols[variant]
             requests.append({
                 "task_id": task["task_id"],
                 "variant": variant,
@@ -215,11 +217,13 @@ def score_file(fixture: Path, answers: Path, output: Path) -> dict[str, Any]:
     seen: set[tuple[str, str]] = set()
     scored: list[dict[str, Any]] = []
     pair_config: dict[str, tuple[Any, Any]] = {}
+    common_config: tuple[Any, Any] | None = None
     for row in input_rows:
         task_id = str(row.get("task_id", ""))
-        variant = str(row.get("variant", ""))
+        input_variant = str(row.get("variant", ""))
+        variant = LEGACY_VARIANTS.get(input_variant, input_variant)
         if task_id not in task_by_id or variant not in VARIANTS:
-            raise ValueError(f"unknown task/variant pair: {task_id!r}/{variant!r}")
+            raise ValueError(f"unknown task/variant pair: {task_id!r}/{input_variant!r}")
         key = (task_id, variant)
         if key in seen:
             raise ValueError(f"duplicate answer row for {key}")
@@ -229,18 +233,21 @@ def score_file(fixture: Path, answers: Path, output: Path) -> dict[str, Any]:
         prior = pair_config.setdefault(variant, (model, token_budget))
         if prior != (model, token_budget):
             raise ValueError(f"variant {variant} has inconsistent model or token_budget")
+        if common_config is None:
+            common_config = (model, token_budget)
+        elif common_config != (model, token_budget):
+            raise ValueError("all variants must use the same model and token_budget")
         source_ids = {str(item["source_id"]) for item in task_by_id[task_id]["evidence"]}
-        scored.append(score_answer(row, source_ids))
+        normalized_row = {**row, "variant": variant}
+        if input_variant != variant:
+            normalized_row["legacy_variant"] = input_variant
+        scored.append(score_answer(normalized_row, source_ids))
 
     for task_id in task_by_id:
-        pair = [variant for variant in VARIANTS if (task_id, variant) in seen]
-        if len(pair) == 2:
-            single = next(row for row in scored if row["task_id"] == task_id and row["variant"] == "single-agent")
-            multi = next(row for row in scored if row["task_id"] == task_id and row["variant"] == "multi-agent")
-            if pair_config["single-agent"] != pair_config["multi-agent"]:
-                raise ValueError("single-agent and multi-agent must use the same model and token_budget")
-            single["paired_task_id"] = task_id
-            multi["paired_task_id"] = task_id
+        if all((task_id, variant) in seen for variant in VARIANTS):
+            for row in scored:
+                if row["task_id"] == task_id:
+                    row["paired_task_id"] = task_id
 
     by_variant: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for row in scored:
@@ -250,6 +257,7 @@ def score_file(fixture: Path, answers: Path, output: Path) -> dict[str, Any]:
         "answer_file_sha256": sha256_file(answers),
         "generated_answer_count": len(input_rows),
         "paired_task_count": sum(1 for task_id in task_by_id if all((task_id, variant) in seen for variant in VARIANTS)),
+        "incomplete_task_count": sum(1 for task_id in task_by_id if not all((task_id, variant) in seen for variant in VARIANTS)),
         "model_and_budget": {variant: {"model": config[0], "token_budget": config[1]} for variant, config in pair_config.items()},
         "variants": {variant: aggregate(rows) for variant, rows in sorted(by_variant.items())},
     }
@@ -261,7 +269,7 @@ def score_file(fixture: Path, answers: Path, output: Path) -> dict[str, Any]:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
-    prepare = sub.add_parser("prepare", help="write fixed paired generation requests; does not call a model")
+    prepare = sub.add_parser("prepare", help="write fixed three-condition generation requests; does not call a model")
     prepare.add_argument("--fixture", type=Path, default=DEFAULT_FIXTURE)
     prepare.add_argument("--out", type=Path, required=True)
     prepare.add_argument("--model", required=True)

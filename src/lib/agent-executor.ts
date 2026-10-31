@@ -667,6 +667,17 @@ export class AgentExecutor {
         this.throwIfAborted()
         if (n.type === "peer_review" && isPeerReviewGroupStart(nodes, ni)) {
           const group = collectPeerReviewGroup(nodes, ni)
+          if (nodes.some((node) => node.type === "research") && sources.length === 0) {
+            const error = "未检索到可核验来源；依赖文献的同行评审已停止。请配置检索 Key 或更换关键词后重试。"
+            for (const member of group) {
+              const index = nodes.findIndex((node) => node.id === member.id)
+              if (index >= 0) nodes[index] = { ...nodes[index]!, status: "error", error, metadata: { ...nodes[index]!.metadata, guardrail: "no-evidence" } }
+              this.hooks.onNodePatch?.(member.id, { status: "error", error, metadata: { guardrail: "no-evidence" } })
+              results.push({ id: member.id, ok: false, summary: error, output: { error_info: { node_id: member.id, message: error, guardrail: "no-evidence" } } })
+            }
+            ni += group.length - 1
+            continue
+          }
           const groupResults = await executePeerReviewGroup({
             groupNodes: group,
             userInput,
@@ -675,6 +686,9 @@ export class AgentExecutor {
             checkpoint: this.deps.peerReviewCheckpoint ?? null,
             onCheckpoint: this.deps.onPeerReviewCheckpoint,
             allWorkflowNodes: nodes,
+            evidenceContext: sources.length
+              ? ["已检索来源（只能引用以下 URL；摘要不是全文验证）：", citationsMarkdown, JSON.stringify(sources)].join("\n")
+              : "未检索到可核验来源。仅评审投稿内容，不得编造论文、URL 或引用编号。",
           })
           results.push(...groupResults)
           ni += group.length - 1
@@ -827,7 +841,8 @@ export class AgentExecutor {
                 : "检索工具未能找到相关文献，请提示用户更换关键词。")
             this.hooks.onNodeLog?.(n.id, `[${out.status === "failed" ? "Failed" : "Empty"}] ${emptyMsg}`)
             this.hooks.onNodePatch?.(n.id, {
-              status: "done",
+              status: out.status === "failed" ? "error" : "done",
+              ...(out.status === "failed" ? { error: emptyMsg } : {}),
               output: out,
               metadata: {
                 kind: "search",
@@ -985,6 +1000,7 @@ export class AgentExecutor {
               output,
             }
           }))
+          ni += failedNodes.length - 1
         } else {
           results.push({
             id: n.id,
@@ -1019,7 +1035,7 @@ export class AgentExecutor {
         return typeof rec["text"] === "string"
       })
 
-    const final =
+    const answer =
       typeof lastReasoning?.text === "string"
         ? normalizeReferenceSections(lastReasoning.text, citationsMarkdown)
         : [
@@ -1028,6 +1044,14 @@ export class AgentExecutor {
             "子任务摘要：",
             ...results.map((r) => `- ${r.id}: ${r.ok ? "OK" : "ERR"} · ${r.summary}`),
           ].join("\n")
+
+    const failureSummary =
+      typeof lastReasoning?.text === "string"
+        ? results.filter((result) => !result.ok).map((result) => `- ${result.id}: ${result.summary}`)
+        : []
+    const final = failureSummary.length
+      ? `${answer}\n\n## 未完成节点\n\n${failureSummary.join("\n")}`
+      : answer
 
     const failedCount = results.filter((result) => !result.ok).length
     const succeededCount = results.length - failedCount
@@ -1046,7 +1070,7 @@ export class AgentExecutor {
 
 export class AgentRunCancelledError extends Error {
   constructor() {
-    super("Agent run cancelled")
+    super("Agent run cancelled after abort signal")
     this.name = "AgentRunCancelledError"
   }
 }

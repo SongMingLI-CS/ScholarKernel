@@ -9,8 +9,14 @@ export const MAX_PDF_BYTES = 8 * 1024 * 1024
 export const PDF_PARSE_TIMEOUT_MS = 15_000
 
 const PDFJS_DATA_DIRECTORY = path.join(process.cwd(), "node_modules", "pdfjs-dist")
-const PDFJS_CMAP_DIRECTORY = `${path.join(PDFJS_DATA_DIRECTORY, "cmaps")}${path.sep}`
-const PDFJS_STANDARD_FONTS_DIRECTORY = `${path.join(PDFJS_DATA_DIRECTORY, "standard_fonts")}${path.sep}`
+
+export function normalizePdfJsDirectoryPath(directoryPath: string): string {
+  const normalized = directoryPath.replaceAll("\\", "/").replace(/\/+$/, "")
+  return `${normalized}/`
+}
+
+const PDFJS_CMAP_DIRECTORY = normalizePdfJsDirectoryPath(path.join(PDFJS_DATA_DIRECTORY, "cmaps"))
+const PDFJS_STANDARD_FONTS_DIRECTORY = normalizePdfJsDirectoryPath(path.join(PDFJS_DATA_DIRECTORY, "standard_fonts"))
 
 export type PdfParseErrorCode =
   | "PDF_TOO_LARGE"

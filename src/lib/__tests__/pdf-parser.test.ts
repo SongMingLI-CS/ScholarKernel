@@ -5,7 +5,7 @@ import {
   parseLayoutAwareDocument,
   setExternalLayoutParser,
 } from "@/lib/document/layout-aware-parser"
-import { MAX_PDF_BYTES } from "@/lib/document/pdf-text-extract"
+import { MAX_PDF_BYTES, normalizePdfJsDirectoryPath } from "@/lib/document/pdf-text-extract"
 
 function makePdf(content: string, compress = false): Buffer {
   const contentBytes = Buffer.from(content, "latin1")
@@ -66,6 +66,15 @@ describe("PDF parsing", () => {
   afterEach(() => {
     setExternalLayoutParser(null)
     vi.unstubAllEnvs()
+  })
+
+  it("normalizes Windows PDF.js resource paths to slash-terminated filesystem paths", () => {
+    expect(normalizePdfJsDirectoryPath("C:\\workspace\\node_modules\\pdfjs-dist\\cmaps\\")).toBe(
+      "C:/workspace/node_modules/pdfjs-dist/cmaps/"
+    )
+    expect(normalizePdfJsDirectoryPath("/workspace/node_modules/pdfjs-dist/cmaps/")).toBe(
+      "/workspace/node_modules/pdfjs-dist/cmaps/"
+    )
   })
 
   it("extracts text from a legal single-column PDF", async () => {

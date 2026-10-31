@@ -9,7 +9,7 @@ from answer_eval import aggregate, prepare_requests, score_answer, score_file
 
 
 class AnswerEvaluationTests(unittest.TestCase):
-    def test_prepare_writes_paired_requests_without_answers(self) -> None:
+    def test_prepare_writes_three_controlled_requests_without_answers(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             fixture = root / "fixture.jsonl"
@@ -20,11 +20,16 @@ class AnswerEvaluationTests(unittest.TestCase):
             output = root / "requests.jsonl"
             count = prepare_requests(fixture, output, "fixture-model", 1024)
             rows = [json.loads(line) for line in output.read_text(encoding="utf-8").splitlines()]
-        self.assertEqual(count, 2)
-        self.assertEqual({row["variant"] for row in rows}, {"single-agent", "multi-agent"})
+        self.assertEqual(count, 3)
+        by_variant = {row["variant"]: row for row in rows}
+        self.assertEqual(set(by_variant), {"single-agent", "multi-agent-no-collaboration", "collaborative-multi-agent"})
         self.assertTrue(all(row["status"] == "pending_generation" for row in rows))
         self.assertTrue(all("answer" not in row for row in rows))
         self.assertTrue(all(row["sources"][0]["page_number"] is None for row in rows))
+        self.assertIn("must not receive", by_variant["multi-agent-no-collaboration"]["instruction"])
+        self.assertIn("share intermediate findings", by_variant["collaborative-multi-agent"]["instruction"])
+        self.assertEqual({row["model"] for row in rows}, {"fixture-model"})
+        self.assertEqual({row["token_budget"] for row in rows}, {1024})
 
     def test_scores_resolution_and_manual_support_annotations(self) -> None:
         answer = {
@@ -54,7 +59,11 @@ class AnswerEvaluationTests(unittest.TestCase):
             }) + "\n", encoding="utf-8")
             answers = root / "answers.jsonl"
             rows = []
-            for variant, model in (("single-agent", "model-a"), ("multi-agent", "model-b")):
+            for variant, model in (
+                ("single-agent", "model-a"),
+                ("multi-agent-no-collaboration", "model-a"),
+                ("collaborative-multi-agent", "model-b"),
+            ):
                 rows.append({
                     "task_id": "task-1", "variant": variant, "model": model, "token_budget": 1024,
                     "answer": "Claim [1].", "sources": [{"citation_token": "[1]", "source_id": "source:1"}],
@@ -75,7 +84,7 @@ class AnswerEvaluationTests(unittest.TestCase):
             }) + "\n", encoding="utf-8")
             answers = root / "answers.jsonl"
             rows = []
-            for variant in ("single-agent", "multi-agent"):
+            for variant in ("single-agent", "multi-agent-no-collaboration", "collaborative-multi-agent"):
                 rows.append({
                     "task_id": "task-1", "variant": variant, "model": "fixture-model", "token_budget": 1024,
                     "answer": "Claim [1].", "sources": [{"citation_token": "[1]", "source_id": "source:1"}],
@@ -88,10 +97,34 @@ class AnswerEvaluationTests(unittest.TestCase):
             summary = score_file(fixture, answers, output)
             saved = json.loads(output.read_text(encoding="utf-8"))
         self.assertEqual(summary["paired_task_count"], 1)
-        self.assertEqual(summary["generated_answer_count"], 2)
-        self.assertEqual(set(saved["summary"]["variants"]), {"single-agent", "multi-agent"})
-        self.assertEqual(len(saved["per_answer"]), 2)
+        self.assertEqual(summary["generated_answer_count"], 3)
+        self.assertEqual(set(saved["summary"]["variants"]), {"single-agent", "multi-agent-no-collaboration", "collaborative-multi-agent"})
+        self.assertEqual(len(saved["per_answer"]), 3)
         self.assertEqual(saved["summary"]["variants"]["single-agent"]["input_tokens_reported_total"], 3)
+
+    def test_score_file_accepts_legacy_multi_agent_and_marks_incomplete_three_way_pair(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            fixture = root / "fixture.jsonl"
+            fixture.write_text(json.dumps({
+                "task_id": "task-1", "claim": "A claim", "prompt": "Use evidence.",
+                "evidence": [{"source_id": "source:1", "text": "Evidence text", "page_number": None}],
+            }) + "\n", encoding="utf-8")
+            answers = root / "answers.jsonl"
+            rows = []
+            for variant in ("single-agent", "multi-agent"):
+                rows.append({
+                    "task_id": "task-1", "variant": variant, "model": "fixture-model", "token_budget": 1024,
+                    "answer": "Claim [1].", "sources": [{"citation_token": "[1]", "source_id": "source:1"}],
+                    "claims": [{"claim_id": "c1", "text": "Claim", "support_label": "supported",
+                                "citations": [{"token": "[1]", "source_id": "source:1", "evidence_relation": "supported"}]}],
+                })
+            answers.write_text("".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
+            summary = score_file(fixture, answers, root / "scores.json")
+        self.assertEqual(summary["generated_answer_count"], 2)
+        self.assertEqual(summary["paired_task_count"], 0)
+        self.assertEqual(summary["incomplete_task_count"], 1)
+        self.assertEqual(set(summary["variants"]), {"single-agent", "multi-agent-no-collaboration"})
 
 
 if __name__ == "__main__":
