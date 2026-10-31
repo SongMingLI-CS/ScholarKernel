@@ -4,17 +4,17 @@
 
 ## 交付结论
 
-Phase 7 本地工程和离线答案评测工具已完成并提交；Node、PostgreSQL 18.1、Playwright 与 Python 本地验收通过。GitHub 远端没有 Phase 7 分支，当前 SHA 没有远端 Actions 结果。公开仓库历史文档含本机路径、数据库位置和硬件信息；按任务书的敏感内容规则，本次停止推送。独立 Reranker 工程和 checkpoint 未恢复；没有新的模型推理、训练或答案质量实验。
+Phase 7 本地工程和离线答案评测工具已完成并提交；Node、PostgreSQL 18.1、Playwright 与 Python 本地验收通过。原始本地提交链因包含机器路径和硬件标识而保留在本地 archive/phase7-engineering-research-unredacted 分支。用于公开同步的同名分支从 Phase 6 基线重新建立并移除了这些信息；实现文件与已测试版本一致。推送前远端没有同名 Phase 7 ref。独立 Reranker 工程和 checkpoint 未恢复；没有新的模型推理、训练或答案质量实验。
 
 ## 最终 Git 状态
 
 - 分支：feature/phase7-engineering-research。
-- Phase 7 实现 HEAD：db7e4ae76c2ac014e67bb984ba917fc34d557ddb，内容为三条件答案评测工具与 Python CI job。
-- 实现阶段提交：9565c5c、e63c6a4、ed0c81c、a9b8ae0、db7e4ae。
+- Phase 7 公开分支实现提交：85931be8333b759c02642f1ae9bdc5652307cab6，包含工程修复、CI 拆分和三条件离线答案评测。
+- 公开分支基于远端 Phase 6 创建；原始五个提交链保留在本地 archive/phase7-engineering-research-unredacted 分支，没有重写或删除。
 - 共同基线：远端 Phase 6 SHA 62055ecc7ced5738866f1b27b0032e3d31c76ba9；祖先关系已检查。
 - 旧设备提交 8c4c3ae425d1b564d4ce8a302ca8b1e7b79c4194 未在当前本地 Git 对象或已检查远端找到。
-- git ls-remote 核对：origin/main=e129eb65e6bcbf6c2df9696c282613a557b672f1；origin/phase6-final-reliability-ai-validation=62055ecc7ced5738866f1b27b0032e3d31c76ba9；没有 Phase 7 远端 ref。
-- 本报告与其余验收文档将作为实现提交后的独立文档提交；该提交 SHA 以提交完成后的 git rev-parse 输出为准，并记录在本轮交付摘要中。
+- 推送前 git ls-remote 核对：origin/main=e129eb65e6bcbf6c2df9696c282613a557b672f1；origin/phase6-final-reliability-ai-validation=62055ecc7ced5738866f1b27b0032e3d31c76ba9；没有 Phase 7 远端 ref。
+- 本报告位于公开分支文档提交中；最终 HEAD 以完成普通推送后的 git rev-parse 和远端 ref 核对为准。
 
 没有 force push、历史改写、main 合并、生产部署或真实数据删除；没有创建 PR。原 checkout 的未提交工作未改动。
 
@@ -31,9 +31,9 @@ Phase 7 本地工程和离线答案评测工具已完成并提交；Node、Postg
 
 ## GitHub 与远端 CI
 
-最新 Actions run #14：[GitHub Actions 链接](https://github.com/SongMingLI-CS/ScholarKernel/actions/runs/41173148866)，失败，head SHA 为旧 Phase 6 62055ecc...。旧测试等待不会发生的 GET 导致 30 秒超时；本地已修正等待 POST 的测试，且 build 拆分为独立 job，但这些变更没有 push，故没有 Phase 7 的 run 链接或远端通过结果。
+推送前最近的 Actions run #14：[GitHub Actions 链接](https://github.com/SongMingLI-CS/ScholarKernel/actions/runs/41173148866)，失败，head SHA 为旧 Phase 6 62055ecc...。旧测试等待不会发生的 GET 导致 30 秒超时；公开分支已改为等待 POST 并拆分 build job。推送前没有 Phase 7 run；推送后的 Actions 结果须按实际 head SHA 核对。
 
-公开同步前扫描发现已提交文档包含本地路径与硬件/数据库位置。由于 repo 为公开项目，按用户任务书暂停同步。需先对将发布的完整提交历史做隐私清理并重新审查，再决定如何正常推送；不能只修工作树后直接推送，因为旧内容仍在历史中。详情见 CI_RESULTS.md。
+公开同步前扫描发现原始本地分支包含机器路径和硬件/数据库位置。该分支未上传，原提交继续留在本地 archive 分支；公开分支从 Phase 6 基线建立，文档已净化并复扫。推送与 CI 的最终状态以本轮最终交付摘要为准。详情见 CI_RESULTS.md。
 
 ## Reranker 与 AI 评测
 
@@ -51,6 +51,6 @@ Phase 7 本地工程和离线答案评测工具已完成并提交；Node、Postg
 
 ## 下一步最有价值的三项工作
 
-1. 清理历史文档的本地绝对路径和硬件/数据库细节；对整个待发布历史重新运行凭据、隐私和大文件扫描，然后在确认安全后正常推送并等待五个 CI job。
+1. 核对公开分支的远端 SHA 与五个 GitHub Actions jobs；修复任何真实 CI 失败并复验。
 2. 从合法备份恢复独立 Reranker 仓库、数据、许可证和 checkpoint，逐项比对 manifest 与实际 SHA-256，再做轻量推理复现。
 3. 取得明确模型预算和人工标注流程，固定基模型、任务、检索和 token 预算，生成 30 条答案并完成 claim/evidence 标注后报告三条件效果。

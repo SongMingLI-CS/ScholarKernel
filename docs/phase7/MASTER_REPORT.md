@@ -11,10 +11,10 @@
 ## 基线与接管
 
 - 开发分支：`feature/phase7-engineering-research`，基于远端 Phase 6 HEAD `62055ecc7ced5738866f1b27b0032e3d31c76ba9`。
-- 远端 `main` HEAD：`e129eb65e6bcbf6c2df9696c282613a557b672f1`；未发现远端 Phase 7 分支。
+- 推送前核对的远端 main HEAD：e129eb65e6bcbf6c2df9696c282613a557b672f1；当时尚无同名 Phase 7 远端分支。
 - 旧设备待迁移提交 `8c4c3ae425d1b564d4ce8a302ca8b1e7b79c4194` 未在远端或本地对象中找到，没有伪造恢复。
 - 原 checkout 存在用户未提交工作，保持未修改。Phase 7 改动只在隔离 worktree。
-- 本地工程 commits：`9565c5c`（workflow/PDF/证据处理）和 `e63c6a4`（CI job 拆分）。本报告随后的文档 commit 记录见最终 `git log`。
+- 公开分支工程提交：85931be8333b759c02642f1ae9bdc5652307cab6；原始工程提交链保存在本地 archive/phase7-engineering-research-unredacted 分支。
 
 ## Phase 7 已实现并验证
 
@@ -58,4 +58,4 @@ Phase 6 报告记录 NFCorpus 官方 test 的 3,633 篇语料、323 个 test que
 
 ## 提交与远端状态
 
-变更保存在本地 `feature/phase7-engineering-research`。公开仓库已提交 handover / 部署材料中含本机路径、数据库位置和硬件信息，按任务书停止 push；本阶段没有 push、main merge 或部署，当前 Phase 7 SHA 没有远端 Actions 结果。最新远端 Actions run 属于 Phase 6 SHA。详细结果见 [CI_RESULTS.md](CI_RESULTS.md)、[TEST_RESULTS.md](TEST_RESULTS.md)，模型恢复及答案评测边界见 [ML_RECOVERY.md](ML_RECOVERY.md) 与 [AI_VALIDATION.md](AI_VALIDATION.md)。
+原始本地提交链已保留在本机 archive/phase7-engineering-research-unredacted 分支。公开同步分支从 Phase 6 基线重建并经本地信息扫描；原本待发布文档中的机器路径和硬件标识已移除。推送前远端无 Phase 7 ref；最终远端 SHA 与 Actions 结果以最终交付摘要为准。详细结果见 CI_RESULTS.md、TEST_RESULTS.md，模型恢复及答案评测边界见 ML_RECOVERY.md 与 AI_VALIDATION.md。

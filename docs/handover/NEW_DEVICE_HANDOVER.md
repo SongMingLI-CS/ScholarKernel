@@ -50,4 +50,4 @@
 
 ## 保留边界
 
-本轮没有 push、force push、合并 main、生产部署、数据删除、攻击模拟或真实模型调用。公开仓库已提交交接/部署文档包含本机路径、数据库位置及硬件信息，按任务书停止公开同步；Phase 7 当前 SHA 没有远端 Actions 结果。当前五个本地 CI jobs 仅经静态 YAML 解析和本地对应命令验证。三条件答案评测工具已准备 30 条 pending_generation 请求，但没有答案评分。详细结论见 [Phase 7 总报告](../phase7/MASTER_REPORT.md)、[最终交付](../phase7/FINAL_DELIVERY.md)、[CI 结果](../phase7/CI_RESULTS.md)、[ML 恢复](../phase7/ML_RECOVERY.md) 和 [AI 验收](../phase7/AI_VALIDATION.md)。
+原始未净化提交链保留在本机 archive/phase7-engineering-research-unredacted 分支，没有被覆盖或上传。公开同步分支从 Phase 6 基线重建，已去除机器路径和具体硬件型号并通过本地扫描。推送后的远端 SHA 与 GitHub Actions 结果见 docs/phase7/FINAL_DELIVERY.md 和 docs/phase7/CI_RESULTS.md。

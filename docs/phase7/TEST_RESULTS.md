@@ -41,4 +41,4 @@ E2E 使用本地 PostgreSQL 和实际 Next 路由/Worker；模型由本机 HTTP 
 
 ## 远端验收状态
 
-Phase 7 SHA 没有触发 GitHub Actions：推送审查在已提交 handover 文档中发现本机路径与硬件细节，按任务书停止公开同步。CI YAML 已静态解析，但 Node 22 / PostgreSQL 16 容器 / Playwright browser job 的 Phase 7 远端结果均**尚未验证**。本机只有 PostgreSQL 18.1；不能用本地结果代表 PostgreSQL 16 兼容性。
+这些是本地验收结果。Phase 7 公开分支在本报告准备时尚未推送；推送后的 Node 22 / PostgreSQL 16 容器 / Playwright browser job 结果须按实际 SHA 在 CI_RESULTS.md 和最终交付摘要中核对。本机只有 PostgreSQL 18.1；不能用本地结果代表 PostgreSQL 16 兼容性。

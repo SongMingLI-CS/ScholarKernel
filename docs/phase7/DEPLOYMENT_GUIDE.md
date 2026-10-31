@@ -57,7 +57,7 @@ Playwright CI job 会安装 Chromium；本机也可用已安装的 Chrome 设置
 - `browser-tests`：PostgreSQL 16、migration、Playwright Chromium、mock-only E2E。
 - `python-evaluation`：Python 3.12、离线答案评测单测和 compileall；不调用模型。
 
-本地只静态解析 YAML，未运行远端 Actions。代码没有 push，因此 PostgreSQL 16 的迁移兼容性、GitHub runner 实际构建和浏览器 job 都仍需由之后触发的远端运行验证。
+本地静态解析 YAML 不等于远端 Actions 运行。发布后应检查 PostgreSQL 16 的迁移兼容性、GitHub runner 构建、浏览器与 Python jobs 对应的实际 head SHA 与结论。
 
 ## 部署边界
 
