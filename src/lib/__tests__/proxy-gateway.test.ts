@@ -1,9 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
 
 import {
+  RATE_LIMIT_BUCKET_MAX,
   checkProxyAuth,
   checkRateLimit,
   isKnownProxyProvider,
+  proxyRateLimitBucketCountForTests,
   resolveProxyUpstreamUrl,
   resetProxyRateLimitsForTests,
 } from "@/lib/proxy-gateway"
@@ -66,5 +68,23 @@ describe("proxy-gateway", () => {
     expect(checkRateLimit("1.2.3.4")).toEqual({ ok: true })
     expect(checkRateLimit("1.2.3.4")).toEqual({ ok: false, status: 429, message: "Rate limit exceeded" })
     expect(checkRateLimit("5.6.7.8")).toEqual({ ok: true })
+  })
+
+  it("drops expired buckets instead of keeping every IP forever", () => {
+    const t0 = 1_700_000_000_000
+    for (let i = 0; i < 500; i++) checkRateLimit(`10.1.${Math.floor(i / 256)}.${i % 256}`, t0)
+    expect(proxyRateLimitBucketCountForTests()).toBe(500)
+
+    // 两分钟后所有窗口都已过期；请求一次即可触发清理
+    checkRateLimit("10.9.9.9", t0 + 120_000)
+    expect(proxyRateLimitBucketCountForTests()).toBe(1)
+  })
+
+  it("keeps the bucket map bounded even when every window is still live", () => {
+    const t0 = 1_700_000_000_000
+    for (let i = 0; i < RATE_LIMIT_BUCKET_MAX + 50; i++) {
+      checkRateLimit(`172.16.${Math.floor(i / 256) % 256}.${i % 256}-${i}`, t0)
+    }
+    expect(proxyRateLimitBucketCountForTests()).toBeLessThanOrEqual(RATE_LIMIT_BUCKET_MAX)
   })
 })

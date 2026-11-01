@@ -19,7 +19,49 @@ export type ProxyRateLimitResult =
   | { ok: false; status: number; message: string }
 
 const DEFAULT_RATE_LIMIT_PER_MIN = 60
+const RATE_WINDOW_MS = 60_000
+
+/**
+ * 内存限流表的条目硬上限。
+ *
+ * 原实现只有 `set` 没有 `delete`：每个出现过的客户端 IP 都会永久占一条，
+ * 进程活多久表就长多久。单实例长期运行时这是稳定的内存增长，
+ * 且 `x-forwarded-for` 可伪造，等于允许外部控制 key 空间。
+ */
+export const RATE_LIMIT_BUCKET_MAX = 10_000
+
 const rateBuckets = new Map<string, { count: number; windowStartMs: number }>()
+let lastPruneMs = 0
+
+/** 每个窗口周期最多清理一次，避免每次请求都全表扫描。 */
+function maybePruneExpired(nowMs: number) {
+  if (nowMs - lastPruneMs < RATE_WINDOW_MS) return
+  lastPruneMs = nowMs
+  pruneExpiredBuckets(nowMs)
+}
+
+/** 清掉窗口已过期的条目；这些条目即使保留也不会再被命中。 */
+function pruneExpiredBuckets(nowMs: number) {
+  for (const [ip, bucket] of rateBuckets) {
+    if (nowMs - bucket.windowStartMs >= RATE_WINDOW_MS) rateBuckets.delete(ip)
+  }
+}
+
+/**
+ * 保证表大小不超过上限。
+ * 若清理过期条目后仍然超限（一分钟内有超过 1 万个不同来源，本身即异常），
+ * 则按插入顺序淘汰最老的条目。代价是被淘汰 IP 的计数被重置，
+ * 取舍是「宁可少计一次限流，也不要无界内存增长」。
+ */
+function enforceBucketBound(nowMs: number) {
+  if (rateBuckets.size < RATE_LIMIT_BUCKET_MAX) return
+  pruneExpiredBuckets(nowMs)
+  while (rateBuckets.size >= RATE_LIMIT_BUCKET_MAX) {
+    const oldest = rateBuckets.keys().next()
+    if (oldest.done) break
+    rateBuckets.delete(oldest.value)
+  }
+}
 
 function readProxyAccessToken(): string | undefined {
   const raw = process.env.PROXY_ACCESS_TOKEN
@@ -87,7 +129,9 @@ export function resolveClientIp(req: Request): string {
 
 export function checkRateLimit(clientIp: string, nowMs = Date.now()): ProxyRateLimitResult {
   const limit = readRateLimitPerMin()
-  const windowMs = 60_000
+  const windowMs = RATE_WINDOW_MS
+  maybePruneExpired(nowMs)
+  enforceBucketBound(nowMs)
   const bucket = rateBuckets.get(clientIp)
 
   if (!bucket || nowMs - bucket.windowStartMs >= windowMs) {
@@ -117,4 +161,10 @@ export function logProxyRequest(input: {
 /** Test-only helper to reset in-memory counters. */
 export function resetProxyRateLimitsForTests() {
   rateBuckets.clear()
+  lastPruneMs = 0
+}
+
+/** Test-only helper：观察限流表规模，用于断言其有界。 */
+export function proxyRateLimitBucketCountForTests(): number {
+  return rateBuckets.size
 }
