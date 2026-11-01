@@ -89,6 +89,33 @@ describe("不变量 3：crypto.randomUUID 必须带可用性守卫", () => {
   })
 })
 
+describe("不变量 5：模块级 /g 正则不得用于 .test()", () => {
+  /**
+   * `RegExp` 带 `g` 标志时 `test()` 会推进并保留 `lastIndex`，
+   * 同一个正则第二次调用会从上次位置继续找 —— 于是「第一次 true、第二次 false」，
+   * 而且结果取决于调用顺序，测试里时红时绿。
+   *
+   * 这不是假想：`peer-review-score-gap` 里把否定式短语的屏蔽正则（`/g`）
+   * 直接拿去 `test()`，同一进程内第二次判定就会漏掉否定前缀。
+   */
+  it("模块级 /g 正则只用 replace/matchAll/exec 循环，不用 test()", () => {
+    const DECL = /^(?:const|let)\s+([A-Za-z_$][\w$]*)\s*=\s*\/(?:[^/\\\n]|\\.)+\/([gimsuy]*)/
+    const offenders: string[] = []
+    for (const f of SOURCE_FILES) {
+      const text = read(f)
+      const globalNames: string[] = []
+      for (const line of text.split("\n")) {
+        const m = line.match(DECL)
+        if (m?.[1] && m[2]?.includes("g")) globalNames.push(m[1])
+      }
+      if (!globalNames.length) continue
+      const hit = globalNames.some((name) => new RegExp(`\\b${name}\\.test\\(`).test(text))
+      if (hit) offenders.push(rel(f))
+    }
+    expect(offenders).toEqual([])
+  })
+})
+
 describe("不变量 4：路由不得裸读请求体", () => {
   it("request body 一律经 parseJsonBody / 有界读取，避免无上限缓冲", () => {
     const offenders = ROUTE_FILES.filter((f) => /await\s+req\.json\(\)/.test(read(f))).map(rel)
