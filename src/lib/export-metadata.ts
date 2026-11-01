@@ -30,14 +30,24 @@ export type ExportMetadataResolveInput = {
   exportedAt?: string | number | Date
 }
 
+/**
+ * 只清理**我们注入过**的引用块形式表头（以 `>` 开头）。
+ * 原正则把 `>` 写成可选项，于是正文里任何以 `Model:` / `模型：` 开头的行
+ * 都会在导出时被删掉 —— 讲模型结构的正文就这样丢了。
+ */
 const STALE_METADATA_LINE_RE =
-  /^\s*(?:>\s*)?(?:\*\*)?(?:Model|模型|底层模型|Inference Model)(?:\*\*)?\s*[:：]\s*.+$/gim
+  /^[ \t]*>[ \t]*(?:\*\*)?(?:Model|模型|底层模型|Inference Model)(?:\*\*)?[ \t]*[:：][ \t]*.*$/gim
 
 const STALE_RETRIEVAL_LINE_RE =
-  /^\s*(?:>\s*)?(?:\*\*)?(?:Retrieval Date|检索日期|检索时间|Search Date)(?:\*\*)?\s*[:：]\s*.+$/gim
+  /^[ \t]*>[ \t]*(?:\*\*)?(?:Retrieval Date|检索日期|检索时间|Search Date)(?:\*\*)?[ \t]*[:：][ \t]*.*$/gim
 
 const STALE_EXPORT_TIME_LINE_RE =
-  /^\s*(?:>\s*)?(?:\*\*)?(?:导出时间|Exported(?: at)?|Export Time)(?:\*\*)?\s*[:：]\s*.+$/gim
+  /^[ \t]*>[ \t]*(?:\*\*)?(?:导出时间|Exported(?: at)?|Export Time)(?:\*\*)?[ \t]*[:：][ \t]*.*$/gim
+
+/** 元数据值必须是单行，否则模型名里的换行会把表头撑开、甚至注入新的 Markdown 行。 */
+function oneLine(value: string): string {
+  return value.replace(/[\r\n\u2028\u2029]+/g, " ").replace(/[ \t]{2,}/g, " ").trim()
+}
 
 export function formatExportDateTime(
   value: string | number | Date = new Date(),
@@ -162,27 +172,33 @@ export function buildExportMetadata(input: ExportMetadataResolveInput): ExportMe
 }
 
 export function buildExportMetadataMarkdown(meta: ExportMetadata, lang: Lang = "zh"): string {
+  const model = oneLine(meta.model) || "unknown"
+  const retrievalDate = oneLine(meta.retrievalDate)
+  const exportedAt = oneLine(meta.exportedAt)
   if (lang === "zh") {
     return [
-      `> 模型：${meta.model}`,
-      `> 检索日期：${meta.retrievalDate}`,
-      `> 导出时间：${meta.exportedAt}`,
+      `> 模型：${model}`,
+      `> 检索日期：${retrievalDate}`,
+      `> 导出时间：${exportedAt}`,
       "",
     ].join("\n")
   }
   return [
-    `> Model: ${meta.model}`,
-    `> Retrieval Date: ${meta.retrievalDate}`,
-    `> Exported: ${meta.exportedAt}`,
+    `> Model: ${model}`,
+    `> Retrieval Date: ${retrievalDate}`,
+    `> Exported: ${exportedAt}`,
     "",
   ].join("\n")
 }
 
 export function buildExportMetadataHtml(meta: ExportMetadata, lang: Lang = "zh"): string {
+  const model = escapeHtml(oneLine(meta.model) || "unknown")
+  const retrievalDate = escapeHtml(oneLine(meta.retrievalDate))
+  const exportedAt = escapeHtml(oneLine(meta.exportedAt))
   if (lang === "zh") {
-    return `<p class="meta">模型：${escapeHtml(meta.model)} · 检索日期：${escapeHtml(meta.retrievalDate)} · 导出时间：${escapeHtml(meta.exportedAt)}</p>`
+    return `<p class="meta">模型：${model} · 检索日期：${retrievalDate} · 导出时间：${exportedAt}</p>`
   }
-  return `<p class="meta">Model: ${escapeHtml(meta.model)} · Retrieval Date: ${escapeHtml(meta.retrievalDate)} · Exported: ${escapeHtml(meta.exportedAt)}</p>`
+  return `<p class="meta">Model: ${model} · Retrieval Date: ${retrievalDate} · Exported: ${exportedAt}</p>`
 }
 
 function escapeHtml(text: string): string {
