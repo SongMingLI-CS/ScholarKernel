@@ -3,6 +3,22 @@ import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from "node:
 const ALGO = "aes-256-gcm" as const
 const IV_LEN = 12
 const KEY_LEN = 32
+const KEY_SALT = "scholarkernel-runtime-keys"
+
+/**
+ * 派生密钥缓存，键为 secret 字符串本身。
+ *
+ * scrypt 是**故意**慢的 KDF，但它的输入在整个进程生命周期里是常量
+ * （`ENCRYPTION_SECRET` 不会在运行时变）。不缓存的话每一轮
+ * 「解密 → 修改 → 加密」都要付两遍 KDF，而 `scryptSync` 还是同步的 ——
+ * 实测单次 ≈ 39.4 ms 且额外分配约 16 MiB，`GET /api/settings` 等于
+ * 白等 39 ms，`PATCH` 约 79 ms，同时把事件循环按住不放。
+ *
+ * 键用 secret 本身而不是「是否已缓存」的布尔量：测试与密钥轮换会改环境变量，
+ * 换了 secret 就必须重新派生，否则会用旧密钥去解新密文。
+ */
+const KEY_CACHE_MAX_ENTRIES = 8
+const derivedKeyCache = new Map<string, Buffer>()
 
 /** Dev-only fallback; never used when NODE_ENV=production. */
 export const DEV_FALLBACK_ENCRYPTION_SECRET = "scholarkernel-dev-secret"
@@ -43,7 +59,14 @@ export function assertEncryptionSecretForProduction(): void {
 
 function deriveKey(): Buffer {
   const secret = resolveEncryptionSecret()
-  return scryptSync(secret, "scholarkernel-runtime-keys", KEY_LEN)
+  const cached = derivedKeyCache.get(secret)
+  if (cached) return cached
+
+  const derived = scryptSync(secret, KEY_SALT, KEY_LEN)
+  // 正常只有 1 个 secret；设上限是为了避免「运行时反复换 secret」把内存拖成无界
+  if (derivedKeyCache.size >= KEY_CACHE_MAX_ENTRIES) derivedKeyCache.clear()
+  derivedKeyCache.set(secret, derived)
+  return derived
 }
 
 /** AES-256-GCM encrypt plaintext for database persistence */
