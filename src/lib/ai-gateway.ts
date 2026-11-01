@@ -483,16 +483,38 @@ export async function validateProvider(
   return { ok: false, latencyMs: 0, kind: "unknown", status: 400, detail: "UnsupportedProvider" }
 }
 
-function mergeAbortSignals(primary?: AbortSignal, timeoutMs = LLM_GATEWAY_STREAM_TIMEOUT_MS): AbortSignal | undefined {
+/**
+ * 合并「调用方取消」与「超时」两个信号。
+ *
+ * 旧实现在 `AbortSignal.any` 不可用时直接 `return primary`，把超时信号整个丢掉 ——
+ * 于是一条不返回数据的连接可以永久挂着，而且这个降级是静默的。
+ * 这里补一条手工合并路径：任一信号 abort 即 abort 输出信号。
+ */
+export function mergeAbortSignals(
+  primary?: AbortSignal,
+  timeoutMs = LLM_GATEWAY_STREAM_TIMEOUT_MS
+): AbortSignal | undefined {
+  const timeoutSignal = typeof AbortSignal.timeout === "function" ? AbortSignal.timeout(timeoutMs) : undefined
   const signals: AbortSignal[] = []
   if (primary) signals.push(primary)
-  if (typeof AbortSignal.timeout === "function") {
-    signals.push(AbortSignal.timeout(timeoutMs))
-  }
+  if (timeoutSignal) signals.push(timeoutSignal)
   if (signals.length === 0) return undefined
   if (signals.length === 1) return signals[0]
   if (typeof AbortSignal.any === "function") return AbortSignal.any(signals)
-  return primary
+
+  const controller = new AbortController()
+  const forward = (event: Event) => {
+    const source = event.target as AbortSignal
+    controller.abort(source.reason)
+  }
+  for (const signal of signals) {
+    if (signal.aborted) {
+      controller.abort(signal.reason)
+      return controller.signal
+    }
+    signal.addEventListener("abort", forward, { once: true })
+  }
+  return controller.signal
 }
 
 function warnSkippedStreamChunk(label: string, chunk: unknown, err?: unknown) {
@@ -522,6 +544,29 @@ async function* readNdjsonStream(res: Response): TextStream {
   if (tail) yield tail
 }
 
+/**
+ * SSE 事件之间的空行分隔。RFC 允许 LF，也允许 CRLF。
+ * 只认 "\n\n" 的实现在遇到 CRLF 流时永远找不到边界，整个响应会被缓冲到
+ * 结束才当作一个事件处理 —— 逐事件推送退化成一次性输出（甚至完全解析失败）。
+ * 不少网关/代理会把上游流规范化成 CRLF，所以这里必须两种都认。
+ */
+const SSE_EVENT_BOUNDARY = /\r?\n\r?\n/
+
+/** 从缓冲区头部切出一个完整事件；没有完整事件时返回 null。 */
+function takeSseEvent(buf: string): { raw: string; rest: string } | null {
+  const m = SSE_EVENT_BOUNDARY.exec(buf)
+  if (!m || m.index === undefined) return null
+  return { raw: buf.slice(0, m.index), rest: buf.slice(m.index + m[0].length) }
+}
+
+function sseDataOf(raw: string): string {
+  const dataLines: string[] = []
+  for (const line of raw.split(/\r?\n/)) {
+    if (line.startsWith("data:")) dataLines.push(line.slice(5).trim())
+  }
+  return dataLines.join("\n").trim()
+}
+
 async function* readSseDataLines(res: Response): TextStream {
   if (!res.body) return
   const reader = res.body.getReader()
@@ -531,32 +576,16 @@ async function* readSseDataLines(res: Response): TextStream {
     const { value, done } = await reader.read()
     if (done) break
     buf += decoder.decode(value, { stream: true })
-
-    // SSE events are separated by a blank line (\n\n). Some providers only use `data:` lines.
     while (true) {
-      const sep = buf.indexOf("\n\n")
-      if (sep < 0) break
-      const rawEvent = buf.slice(0, sep)
-      buf = buf.slice(sep + 2)
-
-      const lines = rawEvent.split("\n")
-      const dataLines: string[] = []
-      for (const line of lines) {
-        if (line.startsWith("data:")) dataLines.push(line.slice(5).trim())
-      }
-      const data = dataLines.join("\n").trim()
+      const event = takeSseEvent(buf)
+      if (!event) break
+      buf = event.rest
+      const data = sseDataOf(event.raw)
       if (data) yield data
     }
   }
 
-  const tail = buf.trim()
-  if (!tail) return
-  const lines = tail.split("\n")
-  const dataLines: string[] = []
-  for (const line of lines) {
-    if (line.startsWith("data:")) dataLines.push(line.slice(5).trim())
-  }
-  const data = dataLines.join("\n").trim()
+  const data = sseDataOf(buf)
   if (data) yield data
 }
 
@@ -572,7 +601,7 @@ async function* readSseEvents(res: Response): AsyncIterable<SseEvent> {
   let buf = ""
 
   const flushEvent = function* (raw: string): Generator<SseEvent> {
-    const lines = raw.split("\n")
+    const lines = raw.split(/\r?\n/)
     let eventName: string | undefined
     const dataLines: string[] = []
     for (const line of lines) {
@@ -589,11 +618,10 @@ async function* readSseEvents(res: Response): AsyncIterable<SseEvent> {
     if (done) break
     buf += decoder.decode(value, { stream: true })
     while (true) {
-      const sep = buf.indexOf("\n\n")
-      if (sep < 0) break
-      const rawEvent = buf.slice(0, sep)
-      buf = buf.slice(sep + 2)
-      yield* flushEvent(rawEvent)
+      const event = takeSseEvent(buf)
+      if (!event) break
+      buf = event.rest
+      yield* flushEvent(event.raw)
     }
   }
   const tail = buf.trim()
