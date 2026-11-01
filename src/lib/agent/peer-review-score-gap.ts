@@ -14,24 +14,39 @@ const LEFT = "(?<![A-Za-z])"
 const RIGHT = "(?![A-Za-z])"
 
 const ACCEPT_VERDICT = new RegExp(
-  `${LEFT}(?:accept|weak\\s*accept|oral|spotlight|录用|接收|小修|minor\\s*revision)${RIGHT}`,
+  `${LEFT}(?:accept|weak\\s*accept|oral|spotlight|录用|接收|接受|小修|minor\\s*revision)${RIGHT}`,
   "i"
 )
 const REJECT_VERDICT = new RegExp(
-  `${LEFT}(?:reject|strong\\s*reject|desk\\s*reject|拒稿|大修|major\\s*revision|不予接收|不予录用|不予发表)${RIGHT}`,
+  `${LEFT}(?:reject|strong\\s*reject|desk\\s*reject|拒稿|退稿|拒绝|大修|major\\s*revision|不予接收|不予录用|不予发表)${RIGHT}`,
   "i"
 )
+
+/** 中文里的「录用」同义/近义说法：接受、接收、录用、发表、刊登。 */
+const ACCEPT_VERB = "(?:接收|接受|录用|发表|刊登|accept)"
 
 /**
  * 「不予接收」「不予录用」内部含「接收 / 录用」，会同时命中两套关键词，
  * 在 `dominantVerdict` 里退化成 neutral（既不录用也不拒稿）。
  * 判定 acception 前先把这些否定式短语屏蔽掉，让拒稿语义单独成立。
+ *
+ * 前缀必须覆盖真实审稿意见里的说法：`不拟录用`、`不宜录用`、`不建议录用`、
+ * `无法录用`、`不能接受` —— 少一个就等于把「不宜录用」读成「录用」，
+ * 分歧方向直接判反。
  */
-const NEGATED_ACCEPT_PHRASE = /(?:不予|不拟|不同意|未予)(?:接收|录用|发表|刊登)/g
+const NEGATION_PREFIX =
+  "(?:不予|不拟|不同意|未予|不宜|不能|无法|不建议|不推荐|不主张|拒绝|不)"
+const NEGATED_ACCEPT_PHRASE = new RegExp(`${NEGATION_PREFIX}\\s*${ACCEPT_VERB}`, "g")
+/** 同一规则的非全局副本：`test` 用 /g 正则会带 lastIndex 状态，跨次调用会漏判。 */
+const NEGATED_ACCEPT_TEST = new RegExp(`${NEGATION_PREFIX}\\s*${ACCEPT_VERB}`, "i")
 const NEGATED_MASK = "〇〇〇〇"
 
 function maskNegatedAccept(text: string): string {
   return text.replace(NEGATED_ACCEPT_PHRASE, NEGATED_MASK)
+}
+
+function hasNegatedAccept(text: string): boolean {
+  return NEGATED_ACCEPT_TEST.test(text)
 }
 
 const NUMERIC_SCORE = new RegExp(
@@ -59,8 +74,11 @@ function extractNumericScores(text: string): number[] {
 }
 
 function dominantVerdict(text: string): "accept" | "reject" | "neutral" {
+  // 否定式短语本身就是拒稿信号：「不宜录用」被屏蔽后不再命中 accept，
+  // 但也未必出现在拒稿词表里，必须显式记成 reject，否则会退回 neutral。
+  const negated = hasNegatedAccept(text)
   const accept = ACCEPT_VERDICT.test(maskNegatedAccept(text))
-  const reject = REJECT_VERDICT.test(text)
+  const reject = negated || REJECT_VERDICT.test(text)
   if (accept && !reject) return "accept"
   if (reject && !accept) return "reject"
   return "neutral"

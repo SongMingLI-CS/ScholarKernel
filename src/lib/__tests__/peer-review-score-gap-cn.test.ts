@@ -94,3 +94,38 @@ describe("断点触发口径", () => {
     expect(shouldTriggerPeerReviewBreakpoint("建议录用", "建议接收", opt)).toBe(false)
   })
 })
+
+/**
+ * 关键词覆盖面：产品输出的中文审稿结论不止「拒稿/不予录用」两种说法。
+ * 下面每一条都是真实审稿意见里会出现的表述，缺一个就意味着这类分歧永远不会
+ * 触发人类介入断点（`forceBeforeAreaChair: false` 时只看这个判据）。
+ */
+describe("中文否定与同义表述", () => {
+  it("「建议拒绝」是拒稿，不能因为没收进词表就当成中立", () => {
+    expect(hasPeerReviewScoreGap("建议拒绝该稿件。", "建议录用。")).toBe(true)
+  })
+
+  it("「建议退稿」同理", () => {
+    expect(hasPeerReviewScoreGap("建议退稿。", "建议录用。")).toBe(true)
+  })
+
+  it("「不宜录用」不能被读成「录用」", () => {
+    expect(hasPeerReviewScoreGap("该文不宜录用。", "建议录用。")).toBe(true)
+  })
+
+  it("「不建议录用」不能被读成「录用」", () => {
+    expect(hasPeerReviewScoreGap("不建议录用。", "建议录用。")).toBe(true)
+  })
+
+  it("「无法录用」不能被读成「录用」", () => {
+    expect(hasPeerReviewScoreGap("按现有实验无法录用。", "建议录用。")).toBe(true)
+  })
+
+  it("「建议接受」与「建议录用」同义，不误报分歧", () => {
+    expect(hasPeerReviewScoreGap("建议接受，小修。", "建议录用，补充实验。")).toBe(false)
+  })
+
+  it("「不接受」不被读成「接受」", () => {
+    expect(hasPeerReviewScoreGap("不能接受当前的论证。", "建议接受。")).toBe(true)
+  })
+})
