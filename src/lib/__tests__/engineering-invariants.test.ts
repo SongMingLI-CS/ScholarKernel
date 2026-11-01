@@ -94,4 +94,22 @@ describe("不变量 4：路由不得裸读请求体", () => {
     const offenders = ROUTE_FILES.filter((f) => /await\s+req\.json\(\)/.test(read(f))).map(rel)
     expect(offenders).toEqual([])
   })
+
+  /**
+   * 上一版只查路由 —— 但 `parseJsonBody` 自己就是 `await req.json()`，
+   * 等于把「有界」两个字写在了注释里。现在改成全仓库禁裸调：
+   * 任何 `req.json()` / `request.json()` 都意味着有人在绕过体积上限。
+   * 注释里出现该字样不算违规，所以按「行内非注释」判定。
+   */
+  it("全仓库都不直接调用 req.json()（含 api-utils 自身）", () => {
+    const offenders: string[] = []
+    for (const f of SOURCE_FILES) {
+      const hit = read(f)
+        .split("\n")
+        .filter((line) => !/^\s*(?:\/\/|\*|\/\*)/.test(line))
+        .some((line) => /\b(req|request)\.json\(\)/.test(line))
+      if (hit) offenders.push(rel(f))
+    }
+    expect(offenders).toEqual([])
+  })
 })
