@@ -396,7 +396,13 @@ const BLOCKED_STRAY_TAG_RE = /<\/?\s*(script|style|iframe|object|embed|form|link
  */
 const EVENT_ATTR_RE = /(?<![a-z0-9_-])on[a-z]{3,}\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi
 
-const URL_ATTR_RE = /(\s(?:href|src|xlink:href)\s*=\s*)("(?:[^"]*)"|'(?:[^']*)'|[^\s>]+)/gi
+/**
+ * 承载 URL 的属性。`formaction` / `action` 必须在内：
+ * `<button formaction="javascript:…">` 点一下就会执行，而 `button` 不在危险标签
+ * 黑名单里、也没有事件属性 —— 于是 `formaction` 曾是全链路上唯一没被检查的 URL 通道。
+ * 不列 `data`：`data-*` 是普通自定义属性，误剥离会破坏正文。
+ */
+const URL_ATTR_RE = /(\s(?:href|src|xlink:href|formaction|action)\s*=\s*)("(?:[^"]*)"|'(?:[^']*)'|[^\s>]+)/gi
 
 const SAFE_URL_SCHEMES = new Set(["http", "https", "mailto", "tel"])
 const NAMED_URL_ENTITY: Record<string, string> = { colon: ":", tab: "\t", newline: "\n", amp: "&" }
