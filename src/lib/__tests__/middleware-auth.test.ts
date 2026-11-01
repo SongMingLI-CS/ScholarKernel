@@ -14,18 +14,27 @@ describe("middleware-auth", () => {
     expect(isPublicPath("/api/auth/session")).toBe(true)
     expect(isPublicPath("/api/auth/login")).toBe(true)
     expect(isPublicPath("/api/health")).toBe(true)
+    expect(isPublicPath("/api/healthcheck")).toBe(false)
     expect(isPublicPath("/login")).toBe(true)
     expect(isPublicPath("/")).toBe(true)
   })
 
-  it("classifies protected API prefixes", () => {
+  it("API 默认受保护，只有白名单公开", () => {
     expect(isProtectedApiPath("/api/conversations")).toBe(true)
     expect(isProtectedApiPath("/api/conversations/abc/messages")).toBe(true)
     expect(isProtectedApiPath("/api/agent/run")).toBe(true)
     expect(isProtectedApiPath("/api/agent/jobs/1")).toBe(true)
     expect(isProtectedApiPath("/api/canvas/export")).toBe(true)
-    expect(isProtectedApiPath("/api/settings")).toBe(false)
-    expect(isProtectedApiPath("/api/proxy/openai")).toBe(false)
+    // 新增端点默认受保护：曾因不在枚举列表里而裸奔的 /api/source
+    expect(isProtectedApiPath("/api/source")).toBe(true)
+    expect(isProtectedApiPath("/api/settings")).toBe(true)
+    expect(isProtectedApiPath("/api/user/billing-metrics")).toBe(true)
+    expect(isProtectedApiPath("/api/documents/parse")).toBe(true)
+    // 代理路由靠自身的 PROXY_ACCESS_TOKEN，但同样先过登录
+    expect(isProtectedApiPath("/api/proxy/openai")).toBe(true)
+    // 公开白名单
+    expect(isProtectedApiPath("/api/auth/session")).toBe(false)
+    expect(isProtectedApiPath("/api/health")).toBe(false)
   })
 
   it("classifies protected workspace pages", () => {
@@ -41,6 +50,8 @@ describe("middleware-auth", () => {
     expect(isAuthRequiredInMiddleware("/api/conversations", "secret")).toBe(true)
     expect(isAuthRequiredInMiddleware("/api/health", "secret")).toBe(false)
     expect(isAuthRequiredInMiddleware("/dashboard", "secret")).toBe(true)
+    expect(isAuthRequiredInMiddleware("/api/source", "secret")).toBe(true)
+    expect(isAuthRequiredInMiddleware("/api/source", "")).toBe(false)
   })
 
   it("returns standard unauthorized JSON shape", () => {
@@ -49,9 +60,7 @@ describe("middleware-auth", () => {
 
   it("matcher only lists protected API and workspace paths", () => {
     expect(MIDDLEWARE_MATCHER).toEqual([
-      "/api/conversations/:path*",
-      "/api/agent/:path*",
-      "/api/canvas/:path*",
+      "/api/:path*",
       "/dashboard",
       "/dashboard/:path*",
       "/workspace",

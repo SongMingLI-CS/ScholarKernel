@@ -49,10 +49,10 @@ export async function middleware(req: NextRequest) {
 }
 
 export const config = {
+  // `/api/:path*` 让中间件覆盖全部 API —— 具体哪些是公开的由
+  // `isPublicPath()` 判定（`/api/auth/*`、`/api/health`），其余默认要求登录。
   matcher: [
-    "/api/conversations/:path*",
-    "/api/agent/:path*",
-    "/api/canvas/:path*",
+    "/api/:path*",
     "/dashboard",
     "/dashboard/:path*",
     "/workspace",
