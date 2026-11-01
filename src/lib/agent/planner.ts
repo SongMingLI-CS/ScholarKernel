@@ -80,21 +80,20 @@ function tryJsonParse(value: string): unknown | null {
   }
 }
 
-function extractBalancedJsonBlock(text: string): { block: string; start: number; end: number } | null {
-  const t = text
-  const start = Math.min(
-    ...[t.indexOf("["), t.indexOf("{")].filter((i) => i >= 0)
-  )
-  if (!Number.isFinite(start) || start < 0) return null
-
-  const open = t[start]!
+/** 从指定位置起扫描一个括号平衡块；起点必须是 `[` 或 `{`。 */
+function scanBalancedAt(
+  text: string,
+  start: number
+): { block: string; start: number; end: number } | null {
+  const open = text[start]
+  if (open !== "[" && open !== "{") return null
   const close = open === "[" ? "]" : "}"
   let depth = 0
   let inStr = false
   let esc = false
 
-  for (let i = start; i < t.length; i++) {
-    const ch = t[i]!
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i]!
     if (inStr) {
       if (esc) {
         esc = false
@@ -117,11 +116,59 @@ function extractBalancedJsonBlock(text: string): { block: string; start: number;
     if (ch === close) depth--
     if (depth === 0) {
       const end = i + 1
-      return { block: t.slice(start, end), start, end }
+      return { block: text.slice(start, end), start, end }
     }
   }
 
   return null
+}
+
+function extractBalancedJsonBlock(text: string): { block: string; start: number; end: number } | null {
+  const start = Math.min(...[text.indexOf("["), text.indexOf("{")].filter((i) => i >= 0))
+  if (!Number.isFinite(start) || start < 0) return null
+  return scanBalancedAt(text, start)
+}
+
+/**
+ * 给解析出的 JSON 打分，用于在多个候选块中挑「最像任务清单」的那个。
+ *
+ * 正文里的 `[1]` 引用标记本身是合法 JSON（数组含一个数字），
+ * 若只按「第一个能解析的块」取值，规划就会被一个引用编号顶掉。
+ */
+function rankParsedJson(value: unknown): number {
+  if (Array.isArray(value)) {
+    const objects = value.filter((v) => v !== null && typeof v === "object" && !Array.isArray(v))
+    return objects.length > 0 ? 100 + Math.min(objects.length, 50) : 10
+  }
+  if (value !== null && typeof value === "object") {
+    const rec = value as Record<string, unknown>
+    if (TASK_ARRAY_KEYS.some((k) => Array.isArray(rec[k]))) return 80
+    if (typeof rec["type"] === "string") return 60
+    return 20
+  }
+  return 0
+}
+
+/** 收集文本中所有顶层的括号平衡块（找到块后直接跳过块内嵌的块）。 */
+function collectJsonCandidates(text: string): Array<{ value: unknown; rank: number }> {
+  const out: Array<{ value: unknown; rank: number }> = []
+  let i = 0
+  while (i < text.length) {
+    const ch = text[i]
+    if (ch !== "[" && ch !== "{") {
+      i++
+      continue
+    }
+    const block = scanBalancedAt(text, i)
+    if (!block) {
+      i++
+      continue
+    }
+    const parsed = tryJsonParse(block.block)
+    if (parsed !== null) out.push({ value: parsed, rank: rankParsedJson(parsed) })
+    i = block.end
+  }
+  return out
 }
 
 /**
@@ -756,18 +803,14 @@ export function parsePlan(raw: string, structured?: unknown): unknown {
 
   const content = String(raw ?? "").trim()
 
-  const bracketArr = content.match(/\[[\s\S]*\]/)
-  if (bracketArr) {
-    const cleanJson = bracketArr[0].replace(/```json|```/gi, "").trim()
-    const parsed = tryJsonParse(cleanJson)
-    if (parsed != null) return parsed
-  }
-
-  const braceObj = content.match(/\{[\s\S]*\}/)
-  if (braceObj) {
-    const cleanJson = braceObj[0].replace(/```json|```/gi, "").trim()
-    const parsed = tryJsonParse(cleanJson)
-    if (parsed != null) return parsed
+  // 逐个候选块打分取最优，而不是「第一个贪婪匹配」。
+  // 规划正文常带 `[1]` 这类引用编号，贪婪 `\[[\s\S]*\]` 会跨过正文抓到
+  // 「第一个 [ 到最后一个 ]」，或在成对引用时直接返回 `[1]`。
+  const candidates = collectJsonCandidates(content)
+  if (candidates.length > 0) {
+    let best = candidates[0]!
+    for (const c of candidates) if (c.rank > best.rank) best = c
+    return best.value
   }
 
   const stripped = stripMarkdownCodeFencesInline(content).trim()
