@@ -23,6 +23,13 @@ const SECTION_HEADING_RE =
 
 const MARKDOWN_HEADING_RE = /^(#{1,3})\s+(.+)$/
 
+/** 标题行长度上限：超过这个长度的行是正文，不是标题。 */
+const MAX_SECTION_HEADING_CHARS = 80
+/** 关键字之后的残余长度上限：标题在关键字之后只允许「A」「I」这类编号。 */
+const MAX_SECTION_HEADING_TAIL_CHARS = 40
+/** 句末/分句标点：正文句子才有，标题不该有。 */
+const SENTENCE_END_RE = /[.。!?！？;；,，]$/
+
 const KEYWORD_SECTION_MAP: Array<[RegExp, string]> = [
   [/^abstract\b/i, "Abstract"],
   [/^introduction\b/i, "Introduction"],
@@ -50,16 +57,22 @@ export function detectSectionTitle(line: string): string | null {
     return title.replace(/^\d+(?:\.\d+)*\.?\s+/, "").trim() || title
   }
 
-  const numbered = trimmed.match(SECTION_HEADING_RE)
-  if (numbered) {
-    const raw = numbered[1]!
-    for (const [re, name] of KEYWORD_SECTION_MAP) {
-      if (re.test(raw)) return name
-    }
-    return raw.charAt(0).toUpperCase() + raw.slice(1).toLowerCase()
-  }
+  // 非 Markdown 行必须通过三项「像标题」的判据，否则把正文首词当章节名会切碎全文：
+  //   1) 足够短；2) 不以句末标点结尾；3) 关键字之后几乎没有残余文本。
+  if (trimmed.length > MAX_SECTION_HEADING_CHARS) return null
+  if (SENTENCE_END_RE.test(trimmed)) return null
 
-  return null
+  const numbered = trimmed.match(SECTION_HEADING_RE)
+  if (!numbered) return null
+
+  const tail = trimmed.slice(numbered[0].length).trim()
+  if (tail.length > MAX_SECTION_HEADING_TAIL_CHARS) return null
+
+  const raw = numbered[1]!
+  for (const [re, name] of KEYWORD_SECTION_MAP) {
+    if (re.test(raw)) return name
+  }
+  return raw.charAt(0).toUpperCase() + raw.slice(1).toLowerCase()
 }
 
 function buildLinePageMap(blocks: LayoutTextBlock[]): Map<string, number> {
