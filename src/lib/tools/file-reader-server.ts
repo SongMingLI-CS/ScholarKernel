@@ -1,3 +1,5 @@
+import path from "node:path"
+
 import {
   isLayoutAwareBinaryPath,
   parseLayoutAwareDocument,
@@ -20,6 +22,18 @@ function isErrnoLike(e: unknown, code: string) {
   if (!e || typeof e !== "object") return false
   const c = (e as { code?: unknown }).code
   return typeof c === "string" && c.toUpperCase() === code.toUpperCase()
+}
+
+/**
+ * 判断 target 是否位于 root 之内（含 root 自身排除）。
+ * 用于阻止 Agent 文件工具的路径穿越：入参由模型产生，可能包含 `../` 或绝对路径。
+ */
+function isPathInsideRoot(root: string, target: string): boolean {
+  const rel = path.relative(root, target)
+  if (!rel) return false
+  if (path.isAbsolute(rel)) return false
+  const first = rel.split(/[\\/]/)[0]
+  return first !== ".."
 }
 
 async function readFileBuffer(abs: string): Promise<Buffer> {
@@ -59,6 +73,15 @@ export async function safeReadTextFile(
   const root = process.cwd()
   const abs = pathMod.join(root, p)
 
+  const outsideError = {
+    ok: false as const,
+    path: p,
+    error: "PathOutsideRoot",
+    hint: "只能读取项目根目录内的相对路径。",
+  }
+  // 绝对路径直接拒绝（在 existsSync 之前，避免通过存在性判断泄露盘外文件信息）
+  if (pathMod.isAbsolute(p)) return outsideError
+
   try {
     if (!fs.existsSync(abs)) {
       if (isLogLikePath(p)) {
@@ -66,6 +89,10 @@ export async function safeReadTextFile(
       }
       return { ok: false, path: p, error: "NotFound" }
     }
+
+    // 路径穿越防护：`../` 逃逸与符号链接逃逸一律拒绝。
+    // 校验 realpath 而不是拼接结果，避免 symlink 指向根目录之外。
+    if (!isPathInsideRoot(fs.realpathSync(root), fs.realpathSync(abs))) return outsideError
 
     if (isLayoutAwareBinaryPath(p)) {
       const buffer = await readFileBuffer(abs)
