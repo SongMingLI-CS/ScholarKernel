@@ -10,6 +10,32 @@ const ROLE_LABEL: Record<ChatMessage["role"], string> = {
   system: "系统",
 }
 
+/** Markdown 是行敏感的：标题/链接文字里的换行会直接改变文档结构。 */
+function oneLine(text: string): string {
+  return text.replace(/[\r\n\u2028\u2029]+/g, " ").replace(/[ \t]{2,}/g, " ").trim()
+}
+
+/** 链接文字里的方括号会提前闭合 `[text]`，必须转义。 */
+function escapeMarkdownLinkText(text: string): string {
+  return oneLine(text).replace(/[\\[\]]/g, (c) => `\\${c}`)
+}
+
+/**
+ * URL 里的括号/空格/尖括号会提前闭合 `(url)`，统一百分号编码。
+ * 注意 `encodeURIComponent` **不转义** `( ) ! * ' ~`，括号必须显式映射。
+ */
+const LINK_URL_ESCAPES: Record<string, string> = {
+  "(": "%28",
+  ")": "%29",
+  "<": "%3C",
+  ">": "%3E",
+  "\\": "%5C",
+}
+
+function encodeMarkdownLinkUrl(url: string): string {
+  return oneLine(url).replace(/[\s()<>\\]/g, (c) => LINK_URL_ESCAPES[c] ?? encodeURIComponent(c))
+}
+
 export function formatConversationAsMarkdown(
   title: string,
   messages: ChatMessage[],
@@ -17,7 +43,7 @@ export function formatConversationAsMarkdown(
   lang: Lang = "zh"
 ): string {
   const headerMeta = meta ? buildExportMetadataMarkdown(meta, lang) : ""
-  const lines: string[] = [`# ${title.trim() || "对话"}`, "", ...headerMeta.split("\n").filter((l) => l.length > 0), ""]
+  const lines: string[] = [`# ${oneLine(title) || "对话"}`, "", ...headerMeta.split("\n").filter((l) => l.length > 0), ""]
 
   for (const m of messages) {
     if (m.role === "system" && !m.content.trim()) continue
@@ -25,7 +51,7 @@ export function formatConversationAsMarkdown(
     if (m.role === "assistant" && m.sources && m.sources.length > 0) {
       lines.push("### 引用来源", "")
       for (const s of m.sources) {
-        lines.push(`- [${s.title}](${s.url})`)
+        lines.push(`- [${escapeMarkdownLinkText(s.title)}](${encodeMarkdownLinkUrl(s.url)})`)
       }
       lines.push("")
     }
@@ -43,9 +69,32 @@ export function filterConversationsByQuery(
   return conversations.filter((c) => c.title.toLowerCase().includes(q))
 }
 
+/** Windows 设备名不能作文件名（带不带扩展名都不行）。 */
+const RESERVED_BASENAMES = new Set([
+  "con",
+  "prn",
+  "aux",
+  "nul",
+  ...Array.from({ length: 9 }, (_, i) => `com${i + 1}`),
+  ...Array.from({ length: 9 }, (_, i) => `lpt${i + 1}`),
+])
+
+/** 文件名主体上限，给扩展名和可能的 " (1)" 后缀留余量。 */
+const MAX_FILENAME_BASE_CHARS = 100
+
 export function sanitizeExportFilename(title: string): string {
-  const base = title.trim().replace(/[/\\?%*:|"<>]/g, "-").replace(/\s+/g, " ").trim()
-  return `${base || "scholarkernel-conversation"}.md`
+  const cleaned = title
+    .replace(/[\u0000-\u001f\u007f]/g, "")
+    .replace(/[/\\?%*:|"<>]/g, "-")
+    .replace(/\s+/g, " ")
+    .trim()
+  // 开头不能是点（Unix 隐藏文件），结尾不能是点或空格（Windows 会静默截掉）
+  const trimmed = cleaned.replace(/^\.+/, "").replace(/[. ]+$/, "").trim()
+  const chars = Array.from(trimmed)
+  const base = chars.length > MAX_FILENAME_BASE_CHARS ? chars.slice(0, MAX_FILENAME_BASE_CHARS).join("") : trimmed
+  if (!base) return "scholarkernel-conversation.md"
+  const stem = base.split(".")[0]!.toLowerCase()
+  return `${RESERVED_BASENAMES.has(stem) ? `_${base}` : base}.md`
 }
 
 export function downloadTextFile(filename: string, content: string, mime = "text/markdown;charset=utf-8") {
