@@ -1,5 +1,6 @@
 import type { Message as PrismaMessage } from "../../generated/prisma/client"
 
+import { normalizeSources } from "@/lib/source-metadata"
 import type { ChatMessage, RuntimeKeys, ThemeMode } from "@/store/useAgentStore"
 
 /** Sidebar list item — no messages payload (JSON dates are ISO strings) */
@@ -75,25 +76,8 @@ export type PatchDocumentBody = {
 function parseMessageMetadata(raw: unknown): MessageMetadata {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {}
   const rec = raw as Record<string, unknown>
-  const sources = rec.sources
-  if (!Array.isArray(sources)) return {}
-  const parsed = sources
-    .map((s) => {
-      if (!s || typeof s !== "object" || Array.isArray(s)) return null
-      const item = s as Record<string, unknown>
-      const title = typeof item.title === "string" ? item.title : ""
-      const url = typeof item.url === "string" ? item.url : ""
-      if (!title || !url) return null
-      return {
-        title,
-        url,
-        ...(typeof item.snippet === "string" ? { snippet: item.snippet } : {}),
-        ...(typeof item.publishedAt === "string" ? { publishedAt: item.publishedAt } : {}),
-        ...(typeof item.source_id === "string" ? { source_id: item.source_id } : {}),
-      }
-    })
-    .filter((s): s is NonNullable<typeof s> => s != null)
-  return parsed.length ? { sources: parsed } : {}
+  const sources = normalizeSources(rec.sources)
+  return sources.length ? { sources } : {}
 }
 
 export function prismaMessageToChat(m: {

@@ -2,6 +2,7 @@ import { jsonError, jsonOk, parseJsonBody } from "@/lib/api-utils"
 import { conversationOwnerWhere, resolveUserIdFromRequest } from "@/lib/auth-user"
 import type { CreateMessageBody } from "@/lib/db-types"
 import { prisma } from "@/lib/prisma"
+import { normalizeSources } from "@/lib/source-metadata"
 
 type RouteCtx = { params: Promise<{ id: string }> }
 
@@ -28,10 +29,16 @@ export async function POST(req: Request, ctx: RouteCtx) {
     if (!conversation) return jsonError("Conversation not found", 404)
 
     const messageId = body.id?.trim() || undefined
-    const metadata =
+    // body.metadata 是客户端输入，原来只判了 typeof 就原样落库：
+    // `sources[].url = "javascript:..."` 会被存进 message.metadata，
+    // 前端 SourcesFoldout 直接拿它当 `<a href>`。写库前按协议白名单清洗，
+    // 与读库路径（parseMessageMetadata）共用同一实现。
+    const sources = normalizeSources(
       body.metadata && typeof body.metadata === "object" && !Array.isArray(body.metadata)
-        ? body.metadata
+        ? (body.metadata as { sources?: unknown }).sources
         : undefined
+    )
+    const metadata = sources.length ? { sources } : undefined
 
     // 归属校验只覆盖了 conversationId，管不到 messageId。
     // 而下面 upsert 的 `where: { id: messageId }` 只按主键定位 —— 不校验的话，

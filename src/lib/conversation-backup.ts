@@ -1,4 +1,5 @@
 import type { ChatMessage } from "@/store/types"
+import { normalizeSources } from "@/lib/source-metadata"
 
 export type ConversationBackupEntry = {
   title: string
@@ -130,11 +131,12 @@ export function parseConversationBackupPayload(raw: unknown): ConversationBackup
       const content = msg.content
       if (role !== "user" && role !== "assistant" && role !== "system") continue
       if (typeof content !== "string") continue
+      const sources = normalizeSources(msg.sources)
       messages.push({
         id: ids.claim(msg.id),
         role,
         content,
-        ...(Array.isArray(msg.sources) ? { sources: msg.sources as ChatMessage["sources"] } : {}),
+        ...(sources.length ? { sources } : {}),
       })
     }
     conversations.push({ title, isPinned, messages })

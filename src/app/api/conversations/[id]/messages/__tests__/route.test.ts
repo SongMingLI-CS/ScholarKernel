@@ -155,4 +155,35 @@ describe("/api/conversations/[id]/messages", () => {
 
     expect(res.status).toBe(201)
   })
+
+  it("POST 写库前清洗来源协议，javascript: 不会落库", async () => {
+    findFirst.mockResolvedValueOnce({ id: "conv-1" })
+    upsert.mockResolvedValueOnce({ id: "m1", role: "assistant", content: "x" })
+    update.mockResolvedValueOnce({ id: "conv-1" })
+
+    const req = new Request("http://localhost/api/conversations/conv-1/messages", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        id: "m1",
+        role: "assistant",
+        content: "x",
+        metadata: {
+          sources: [
+            { title: "evil", url: "javascript:alert(1)" },
+            { title: "ok", url: "https://a.com/1" },
+          ],
+        },
+      }),
+    })
+    const res = await POST(req, ctx)
+
+    expect(res.status).toBe(201)
+    const arg = upsert.mock.calls[0]![0] as {
+      create: { metadata?: { sources: Array<{ url: string }> } }
+      update: { metadata?: { sources: Array<{ url: string }> } }
+    }
+    expect(arg.create.metadata?.sources.map((s) => s.url)).toEqual(["https://a.com/1"])
+    expect(arg.update.metadata?.sources.map((s) => s.url)).toEqual(["https://a.com/1"])
+  })
 })

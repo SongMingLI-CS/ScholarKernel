@@ -84,3 +84,33 @@ describe("恢复备份时的消息 id 唯一性", () => {
     expect(parsed!.conversations[0]!.messages.map((m) => m.id)).toEqual(["m1", "m2"])
   })
 })
+
+/**
+ * 备份文件是第二个不受信任的 sources 入口：原来直接 `msg.sources as ChatMessage["sources"]`
+ * 强转，`javascript:` 的 url 会原样进前端 `<a href>`。
+ */
+describe("恢复备份时的来源清洗", () => {
+  it("丢弃备份文件里的危险协议", () => {
+    const parsed = parseConversationBackupPayload(
+      payload([
+        {
+          id: "m1",
+          role: "assistant",
+          content: "a",
+          sources: [
+            { title: "evil", url: "javascript:alert(1)" },
+            { title: "ok", url: "https://a.com/1" },
+          ],
+        },
+      ])
+    )
+    expect(parsed!.conversations[0]!.messages[0]!.sources?.map((s) => s.url)).toEqual(["https://a.com/1"])
+  })
+
+  it("没有安全来源时不留下空的 sources 字段", () => {
+    const parsed = parseConversationBackupPayload(
+      payload([{ id: "m1", role: "assistant", content: "a", sources: [{ title: "x", url: "data:text/html,1" }] }])
+    )
+    expect(parsed!.conversations[0]!.messages[0]!.sources).toBeUndefined()
+  })
+})
