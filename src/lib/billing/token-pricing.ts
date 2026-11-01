@@ -22,14 +22,29 @@ const DEFAULT_PRICING: ModelPricing = { inputPerM: 1, outputPerM: 2 }
 
 export const DEFAULT_FREE_TOKEN_QUOTA = 500_000
 
+/**
+ * 子串匹配必须「最长模式优先」。
+ *
+ * 表里同时存在 `gpt-4o` 与 `gpt-4o-mini`、`gpt-4.1` 与 `gpt-4.1-mini`，
+ * 若按声明顺序遍历，带日期后缀的真实 model id（`gpt-4o-mini-2024-07-18`）
+ * 会先命中更短的全尺寸版本，把 mini 的价格抬高 16.7 倍。
+ * 按模式长度降序预排序后，更具体的模式天然先命中。
+ */
+const PRICING_PATTERNS: ReadonlyArray<readonly [string, ModelPricing]> = Object.entries(
+  MODEL_PRICING
+).sort((a, b) => b[0].length - a[0].length)
+
 export function normalizeModelKey(modelUsed: string): string {
   return modelUsed.trim().toLowerCase().replace(/^[^/]+\//, "")
 }
 
 export function resolveModelPricing(modelUsed: string): ModelPricing {
   const key = normalizeModelKey(modelUsed)
-  if (MODEL_PRICING[key]) return MODEL_PRICING[key]!
-  for (const [pattern, pricing] of Object.entries(MODEL_PRICING)) {
+  const exact = Object.prototype.hasOwnProperty.call(MODEL_PRICING, key)
+    ? MODEL_PRICING[key]
+    : undefined
+  if (exact) return exact
+  for (const [pattern, pricing] of PRICING_PATTERNS) {
     if (key.includes(pattern)) return pricing
   }
   return DEFAULT_PRICING
@@ -49,8 +64,21 @@ export function estimateTokensFromText(text: string): number {
   return Math.max(1, Math.ceil(chars / 4))
 }
 
+/**
+ * 直接按字符数估算，不构造等长字符串。
+ * 旧实现用 `"x".repeat(resultChars)` 只是为了取长度，大结果集时会白白分配
+ * 同等体积的字符串；传入负数或 Infinity 还会抛 RangeError 打断计费。
+ */
+export function estimateTokensFromCharCount(chars: number): number {
+  if (typeof chars !== "number" || !Number.isFinite(chars) || chars <= 0) return 0
+  const n = Math.floor(chars)
+  if (n <= 0) return 0
+  return Math.max(1, Math.ceil(n / 4))
+}
+
+const SEARCH_BASE_TOKENS = 2000
+
 /** 单次 Tavily/Serper 检索的等效 Token 消耗 */
 export function estimateSearchTokenUsage(query: string, resultChars = 0): number {
-  const base = 2000
-  return base + estimateTokensFromText(query) + estimateTokensFromText("x".repeat(resultChars))
+  return SEARCH_BASE_TOKENS + estimateTokensFromText(query) + estimateTokensFromCharCount(resultChars)
 }
