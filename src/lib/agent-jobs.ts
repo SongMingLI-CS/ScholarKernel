@@ -93,12 +93,39 @@ export async function completeAgentJob(
   })
 }
 
+/**
+ * 把错误写进 job 时**合并**已有 checkpoint，而不是整体替换。
+ *
+ * 之前的实现直接把传入的 checkpoint 覆盖上去，而调用方习惯传 `{ phase: "error" }`，
+ * 于是 `peerReview` 里已完成的 reviewer 文本一起被抹掉 —— 断点续跑随即失效，
+ * 恢复时会为同一份产出再付一次 LLM 费用。
+ */
+function mergeErrorCheckpoint(
+  prev: unknown,
+  patch: AgentJobCheckpoint | undefined
+): AgentJobCheckpoint {
+  const base = prev && typeof prev === "object" ? (prev as AgentJobCheckpoint) : undefined
+  return { ...(base ?? {}), ...(patch ?? {}), phase: "error" }
+}
+
 export async function failAgentJob(
   id: string,
   error: unknown,
   checkpoint?: AgentJobCheckpoint
 ) {
   const { errorMessage, errorStack } = serializeAgentJobError(error)
+
+  let prev: unknown
+  try {
+    const row = await prisma.agentJob.findUnique({ where: { id }, select: { checkpoint: true } })
+    prev = row?.checkpoint
+  } catch {
+    // 读不到历史 checkpoint 不能阻断「把错误写进去」这件更重要的事
+    prev = undefined
+  }
+
+  const shouldWriteCheckpoint = Boolean(prev) || Boolean(checkpoint)
+
   return prisma.agentJob.update({
     where: { id },
     data: {
@@ -106,7 +133,9 @@ export async function failAgentJob(
       error: errorMessage,
       errorMessage,
       errorStack: errorStack || null,
-      ...(checkpoint ? { checkpoint: checkpoint as Prisma.InputJsonValue } : {}),
+      ...(shouldWriteCheckpoint
+        ? { checkpoint: mergeErrorCheckpoint(prev, checkpoint) as Prisma.InputJsonValue }
+        : {}),
     },
   })
 }
@@ -125,7 +154,7 @@ export function persistAgentJobError(userId: string, error: unknown, ctx: AgentJ
             error: errorMessage,
             errorMessage,
             errorStack: errorStack || null,
-            checkpoint: { phase: "error" } as Prisma.InputJsonValue,
+            checkpoint: mergeErrorCheckpoint(owned.checkpoint, { phase: "error" }) as Prisma.InputJsonValue,
           },
         })
         return
@@ -144,7 +173,7 @@ export function persistAgentJobError(userId: string, error: unknown, ctx: AgentJ
           error: errorMessage,
           errorMessage,
           errorStack: errorStack || null,
-          checkpoint: { phase: "error" } as Prisma.InputJsonValue,
+          checkpoint: mergeErrorCheckpoint(active.checkpoint, { phase: "error" }) as Prisma.InputJsonValue,
         },
       })
       return
