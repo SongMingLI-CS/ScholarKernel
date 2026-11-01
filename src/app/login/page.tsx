@@ -4,14 +4,14 @@ import { Suspense, useEffect } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 
 import { LoginGate } from "@/components/login-gate"
+import { resolveSafeCallbackPath } from "@/lib/api-fetch"
 
 function LoginRedirect() {
   const router = useRouter()
   const searchParams = useSearchParams()
 
   useEffect(() => {
-    const raw = searchParams.get("callbackUrl")
-    const target = raw && raw.startsWith("/") && !raw.startsWith("//") ? raw : "/"
+    const target = resolveSafeCallbackPath(searchParams.get("callbackUrl"), window.location.origin)
     router.replace(target)
   }, [router, searchParams])
 

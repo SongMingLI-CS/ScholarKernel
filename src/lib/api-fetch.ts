@@ -18,6 +18,30 @@ let sessionExpiredNotified = false
 
 const SESSION_EXPIRED_REDIRECT_MS = 1200
 
+/**
+ * 登录后回跳目标必须落在站内。
+ *
+ * 只判 `startsWith("/") && !startsWith("//")` 是不够的：WHATWG URL 解析会把
+ * 反斜杠与制表符当作路径分隔符，`/\evil.com`、`/\t/evil.com` 都会解析成
+ * `https://evil.com/`，而它们都以单个 `/` 开头 —— 检查通过，人被送去站外。
+ *
+ * 所以按 origin 比对，并额外拒绝归一化后以 `//` 开头的路径
+ * （`/..//evil.com` 归一化后就是 `//evil.com`，交给路由仍是协议相对地址）。
+ */
+export function resolveSafeCallbackPath(raw: string | null | undefined, origin: string): string {
+  if (!raw) return "/"
+  try {
+    const base = new URL(origin)
+    const target = new URL(raw, base)
+    if (target.origin !== base.origin) return "/"
+    const path = `${target.pathname}${target.search}${target.hash}`
+    if (!path.startsWith("/") || path.startsWith("//")) return "/"
+    return path
+  } catch {
+    return "/"
+  }
+}
+
 /** 构造 session 过期后的登录重定向 URL；已在 /login 时返回 null */
 export function buildLoginRedirectUrl(origin: string, pathname: string, search = ""): string | null {
   if (pathname === appPath("/login")) return null
