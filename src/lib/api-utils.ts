@@ -30,20 +30,29 @@ export function resolveMaxJsonBodyBytes(): number {
 }
 
 /**
- * 有界读取请求体文本。超限返回 `null`。
+ * 有界读取请求体的结果。区分「超限」与「编码非法」是必要的：
+ * 超限是客户端要改行为（413，通常也确实发错了），
+ * 编码非法是内容本身不是 UTF-8（400）。混成一个码会让桥接方无从判断。
+ */
+export type BoundedTextResult =
+  | { ok: true; text: string }
+  | { ok: false; reason: "too_large" | "invalid_encoding" }
+
+/**
+ * 有界读取请求体文本，并报告失败原因。
  *
  * 先看 `content-length` 做快速拒绝（该头可被伪造，所以只用于提前失败，不作为放行依据），
  * 再边读边累加，越界立即取消剩余读取 —— 与 `proxy-gateway.readBoundedRequestBody` 同一策略。
  * 解码用 `fatal: true`：非法 UTF-8 直接判失败，而不是悄悄替换成 U+FFFD。
  */
-export async function readBoundedText(
+export async function readBoundedTextDetailed(
   req: Request,
   maxBytes = resolveMaxJsonBodyBytes()
-): Promise<string | null> {
+): Promise<BoundedTextResult> {
   const declaredRaw = req.headers.get("content-length")
   const declared = declaredRaw === null ? Number.NaN : Number.parseInt(declaredRaw, 10)
-  if (Number.isFinite(declared) && declared > maxBytes) return null
-  if (!req.body) return ""
+  if (Number.isFinite(declared) && declared > maxBytes) return { ok: false, reason: "too_large" }
+  if (!req.body) return { ok: true, text: "" }
 
   const reader = req.body.getReader()
   const chunks: Uint8Array[] = []
@@ -56,7 +65,7 @@ export async function readBoundedText(
       total += value.byteLength
       if (total > maxBytes) {
         await reader.cancel().catch(() => undefined)
-        return null
+        return { ok: false, reason: "too_large" }
       }
       chunks.push(value)
     }
@@ -75,10 +84,19 @@ export async function readBoundedText(
     offset += c.byteLength
   }
   try {
-    return new TextDecoder("utf-8", { fatal: true }).decode(buf)
+    return { ok: true, text: new TextDecoder("utf-8", { fatal: true }).decode(buf) }
   } catch {
-    return null
+    return { ok: false, reason: "invalid_encoding" }
   }
+}
+
+/** 有界读取请求体文本。超限或编码非法一律返回 `null`。 */
+export async function readBoundedText(
+  req: Request,
+  maxBytes = resolveMaxJsonBodyBytes()
+): Promise<string | null> {
+  const result = await readBoundedTextDetailed(req, maxBytes)
+  return result.ok ? result.text : null
 }
 
 /**

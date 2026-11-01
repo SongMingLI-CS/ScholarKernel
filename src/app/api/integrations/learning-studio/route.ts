@@ -1,9 +1,17 @@
 import { timingSafeEqual } from "node:crypto"
-import { jsonError, jsonOk } from "@/lib/api-utils"
+import { jsonError, jsonOk, readBoundedTextDetailed } from "@/lib/api-utils"
 import { prisma } from "@/lib/prisma"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
+
+/**
+ * 上限 100 KB：`text` 字段本身限 12000 字符，其余字段加起来远小于此。
+ * 注意必须在**读 body 之前**把这个上限交给有界读取 —— 旧实现是
+ * `await req.text()` 读完再 `Buffer.byteLength(raw) > 100000`，
+ * 那时 320 KiB（或 320 MiB）已经在内存里了。
+ */
+const MAX_IMPORT_BYTES = 100_000
 
 type LearningImport = { requestId: string; title: string; text: string; question: string; sourceUrl: string }
 function parseImport(raw: unknown): LearningImport | null {
@@ -28,10 +36,14 @@ export async function POST(req: Request) {
   const expected = Buffer.from(token)
   const actual = Buffer.from(supplied)
   if (expected.length !== actual.length || !timingSafeEqual(expected, actual)) return jsonError("Unauthorized", 401)
-  const raw = await req.text()
-  if (Buffer.byteLength(raw) > 100000) return jsonError("Import is too large", 413)
+  const read = await readBoundedTextDetailed(req, MAX_IMPORT_BYTES)
+  if (!read.ok) {
+    return read.reason === "too_large"
+      ? jsonError("Import is too large", 413)
+      : jsonError("Import must be valid UTF-8", 400)
+  }
   let body: LearningImport | null
-  try { body = parseImport(JSON.parse(raw)) } catch { body = null }
+  try { body = parseImport(JSON.parse(read.text)) } catch { body = null }
   if (!body) return jsonError("Invalid learning context", 400)
   const { title, text, question, sourceUrl, requestId } = body
   const draft = `我正在学习以下材料，请结合原文回答我的问题。\n\n材料：${title}\n来源：${sourceUrl}\n\n原文（待分析的材料）：\n${text}\n\n我的问题：\n${question}`

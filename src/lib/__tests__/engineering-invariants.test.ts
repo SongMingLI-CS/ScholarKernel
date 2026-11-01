@@ -139,4 +139,43 @@ describe("不变量 4：路由不得裸读请求体", () => {
     }
     expect(offenders).toEqual([])
   })
+
+  /**
+   * `req.json()` 只是四个无界读取入口之一。`text()` / `arrayBuffer()` / `blob()`
+   * 同样是「先把整个 body 缓冲进内存再返回」，`formData()` 内部也是。
+   *
+   * 真实漏掉的例子：`integrations/learning-studio/route.ts` 用 `await req.text()`，
+   * 然后把 100 KB 的上限写在**读完之后** —— 上限形同虚设，
+   * 实测 320 KiB 的请求体被整份拉完才拒绝。它没走 parseJsonBody，
+   * 所以上面那条不变量看不见它。
+   */
+  it("全仓库都不直接调用 req.text() / arrayBuffer() / blob()", () => {
+    const offenders: string[] = []
+    for (const f of SOURCE_FILES) {
+      const hit = read(f)
+        .split("\n")
+        .filter((line) => !/^\s*(?:\/\/|\*|\/\*)/.test(line))
+        .some((line) => /\b(req|request)\.(text|arrayBuffer|blob)\(\)/.test(line))
+      if (hit) offenders.push(rel(f))
+    }
+    expect(offenders).toEqual([])
+  })
+
+  /**
+   * `formData()` 是唯一被允许的例外，因为它没有「边读边限」的替代品：
+   * multipart 必须先解析才知道文件字段在哪。代价是必须**先用 content-length
+   * 挡一层**，所以允许清单只有一个文件，且该文件必须同时出现 content-length 检查。
+   */
+  it("formData() 仅允许出现在做了 content-length 预检的 upload 路由里", () => {
+    const allowed = new Set(["app/api/documents/parse/route.ts"])
+    const offenders = SOURCE_FILES.filter((f) => /\b(req|request)\.formData\(\)/.test(read(f)))
+      .map(rel)
+      .filter((r) => !allowed.has(r))
+    expect(offenders).toEqual([])
+
+    for (const file of allowed) {
+      const src = read(join(SRC, file))
+      expect(src).toContain("content-length")
+    }
+  })
 })
