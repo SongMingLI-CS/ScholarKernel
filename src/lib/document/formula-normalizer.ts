@@ -39,13 +39,26 @@ const LATEX_ENV_RE =
 const RAW_LATEX_COMMAND_RE =
   /\\(?:sum|prod|int|iint|iiint|oint|alpha|beta|gamma|delta|epsilon|theta|lambda|mu|pi|sigma|phi|omega|partial|nabla|sqrt|frac|left|right|cdot|times|leq|geq|neq|approx|pm|infty|log|exp|sin|cos|tan|max|min|arg|lim|sup|inf|mathbb|mathcal|mathrm|mathbf|vec|hat|bar|tilde|overline|underline)\b/
 
+function escapeCharClass(ch: string): string {
+  return ch.replace(/[\\\]^-]/g, "\\$&")
+}
+
+/**
+ * 单次扫描的符号匹配器。
+ * 历史实现对每个符号各做一次 split/join（27 次全串扫描 + 拷贝），
+ * 在 200KB 文档上是整条解析流水线的主要开销；合并为一次正则替换后行为完全等价。
+ */
+const UNICODE_MATH_CLASS = new RegExp(
+  `[${Object.keys(UNICODE_MATH_MAP).map(escapeCharClass).join("")}]`
+)
+const UNICODE_MATH_GLOBAL = new RegExp(UNICODE_MATH_CLASS.source, "g")
+
 /** 将常见 Unicode 数学符号替换为 LaTeX 命令。 */
 export function replaceUnicodeMathSymbols(text: string): string {
-  let out = text
-  for (const [sym, latex] of Object.entries(UNICODE_MATH_MAP)) {
-    out = out.split(sym).join(latex)
-  }
-  return out
+  if (!text) return text
+  // 先用一次廉价判定跳过绝大多数不含数学符号的段落（正文占比很高）
+  if (!UNICODE_MATH_CLASS.test(text)) return text
+  return text.replace(UNICODE_MATH_GLOBAL, (sym) => UNICODE_MATH_MAP[sym] ?? sym)
 }
 
 /** 捕获独立公式块 → `$$...$$` */
@@ -150,10 +163,7 @@ function dedupeAdjacentMathDelimiters(text: string): string {
 export function containsMathSignals(text: string): boolean {
   if (RAW_LATEX_COMMAND_RE.test(text)) return true
   if (/[\^_]|\\begin\{(matrix|pmatrix|bmatrix)/.test(text)) return true
-  for (const sym of Object.keys(UNICODE_MATH_MAP)) {
-    if (text.includes(sym)) return true
-  }
-  return false
+  return UNICODE_MATH_CLASS.test(text)
 }
 
 /** 完整公式规范化流水线。 */
