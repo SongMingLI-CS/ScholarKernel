@@ -1,5 +1,7 @@
 import { z } from "zod"
 
+import { bibTeXKeyFromTitle, collapseWhitespace, escapeBibTeXField, uniqueBibTeXKey } from "@/lib/bibtex-format"
+
 export const ReferenceTypeSchema = z.enum(["article", "book", "conference", "unknown"])
 export type ReferenceType = z.infer<typeof ReferenceTypeSchema>
 
@@ -359,33 +361,27 @@ export function parseCitations(input: string): AcademicReference[] {
 /** @deprecated Use parseCitations */
 export const parseCitationText = parseCitations
 
-function bibTeXEscape(value: string): string {
-  return value.replace(/[{}]/g, "")
-}
-
 function referenceBibKey(ref: AcademicReference, index: number): string {
-  if (ref.id.trim()) return ref.id.replace(/\W/g, "") || `ref${index}`
-  const fromTitle = ref.title
-    .replace(/[^\w\s-]/g, "")
-    .trim()
-    .split(/\s+/)
-    .slice(0, 3)
-    .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
-    .join("")
-  return (fromTitle || `ref${index}`).replace(/\W/g, "") || `ref${index}`
+  // 导入的文献自带 id（BibTeX citekey）时优先沿用，保持与用户原有引用一致
+  if (ref.id.trim()) {
+    const fromId = ref.id.replace(/\W/g, "")
+    if (fromId) return fromId
+  }
+  return bibTeXKeyFromTitle(ref.title, `ref${index}`)
 }
 
 export function serializeReferencesAsBibTeX(refs: AcademicReference[]): string {
   const lines: string[] = []
+  const usedKeys = new Set<string>()
   refs.forEach((ref, i) => {
-    const key = referenceBibKey(ref, i + 1)
+    const key = uniqueBibTeXKey(referenceBibKey(ref, i + 1), usedKeys)
     const type = mapReferenceToBibType(ref.type)
     lines.push(`@${type}{${key},`)
-    if (ref.title) lines.push(`  title = {${bibTeXEscape(ref.title)}},`)
-    if (ref.authors.length) lines.push(`  author = {${ref.authors.map(bibTeXEscape).join(" and ")}},`)
-    if (ref.year) lines.push(`  year = {${ref.year}},`)
-    if (ref.journal) lines.push(`  journal = {${bibTeXEscape(ref.journal)}},`)
-    if (ref.doi) lines.push(`  doi = {${bibTeXEscape(ref.doi)}},`)
+    if (ref.title) lines.push(`  title = {${escapeBibTeXField(ref.title)}},`)
+    if (ref.authors.length) lines.push(`  author = {${ref.authors.map(escapeBibTeXField).join(" and ")}},`)
+    if (ref.year) lines.push(`  year = {${escapeBibTeXField(ref.year)}},`)
+    if (ref.journal) lines.push(`  journal = {${escapeBibTeXField(ref.journal)}},`)
+    if (ref.doi) lines.push(`  doi = {${escapeBibTeXField(ref.doi)}},`)
     lines.push("}")
     lines.push("")
   })
@@ -402,11 +398,11 @@ function mapRisExportType(type: ReferenceType): string {
 export function serializeReferencesAsRIS(refs: AcademicReference[]): string {
   const blocks: string[] = []
   for (const ref of refs) {
-    const lines = [`TY  - ${mapRisExportType(ref.type)}`, `TI  - ${ref.title}`]
-    for (const au of ref.authors) lines.push(`AU  - ${au}`)
-    if (ref.year) lines.push(`PY  - ${ref.year}`)
-    if (ref.journal) lines.push(`JO  - ${ref.journal}`)
-    if (ref.doi) lines.push(`DO  - ${ref.doi}`)
+    const lines = [`TY  - ${mapRisExportType(ref.type)}`, `TI  - ${collapseWhitespace(ref.title)}`]
+    for (const au of ref.authors) lines.push(`AU  - ${collapseWhitespace(au)}`)
+    if (ref.year) lines.push(`PY  - ${collapseWhitespace(ref.year)}`)
+    if (ref.journal) lines.push(`JO  - ${collapseWhitespace(ref.journal)}`)
+    if (ref.doi) lines.push(`DO  - ${collapseWhitespace(ref.doi)}`)
     lines.push("ER  - ")
     blocks.push(lines.join("\n"))
   }

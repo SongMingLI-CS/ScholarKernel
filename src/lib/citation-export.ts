@@ -1,3 +1,5 @@
+import { bibTeXKeyFromTitle, bibTeXYear, collapseWhitespace, escapeBibTeXField, uniqueBibTeXKey } from "@/lib/bibtex-format"
+
 export type CitationSource = {
   source_id?: string
   title: string
@@ -29,67 +31,11 @@ export function collectCitationSources(
   return out
 }
 
-const BIBTEX_ESCAPE: Record<string, string> = {
-  "\\": "\\textbackslash{}",
-  "&": "\\&",
-  "%": "\\%",
-  $: "\\$",
-  "#": "\\#",
-  _: "\\_",
-  "{": "\\{",
-  "}": "\\}",
-  "~": "\\textasciitilde{}",
-  "^": "\\textasciicircum{}",
-}
-
-/** 记录型格式（RIS）与 BibTeX 都不允许字段里出现裸换行，先折成空格。 */
-function collapseWhitespace(value: string): string {
-  return value.replace(/[\r\n]+/g, " ").replace(/[ \t]{2,}/g, " ").trim()
-}
-
-function escapeBibTeXField(value: string): string {
-  // 单次扫描替换，避免「先替换反斜杠、再把新插入的花括号又转义一遍」
-  return collapseWhitespace(value).replace(/[\\&%$#_{}~^]/g, (c) => BIBTEX_ESCAPE[c] ?? c)
-}
-
-/** BibTeX 的 year 字段要求四位年份，`publishedAt` 常带完整日期。 */
-function bibTeXYear(raw: string): string | null {
-  const m = /(?:^|\D)(\d{4})(?:\D|$)/.exec(raw)
-  return m ? m[1]! : null
-}
-
-function bibTeXKey(source: CitationSource, index: number): string {
-  const fromTitle = source.title
-    .replace(/[^\w\s-]/g, "")
-    .trim()
-    .split(/\s+/)
-    .slice(0, 3)
-    .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
-    .join("")
-  return (fromTitle || `ref${index}`).replace(/\W/g, "") || `ref${index}`
-}
-
-/**
- * 引用键必须唯一：两篇标题前缀相同的论文（"Deep Learning Approach for A/B"）
- * 会算出同一个键，BibTeX 直接报重复条目，引用全部错位。
- */
-function uniqueBibTeXKey(base: string, used: Set<string>): string {
-  if (!used.has(base)) {
-    used.add(base)
-    return base
-  }
-  let n = 2
-  while (used.has(`${base}${n}`)) n += 1
-  const key = `${base}${n}`
-  used.add(key)
-  return key
-}
-
 export function exportSourcesAsBibTeX(sources: CitationSource[]): string {
   const lines: string[] = []
   const usedKeys = new Set<string>()
   sources.forEach((s, i) => {
-    const key = uniqueBibTeXKey(bibTeXKey(s, i + 1), usedKeys)
+    const key = uniqueBibTeXKey(bibTeXKeyFromTitle(s.title, `ref${i + 1}`), usedKeys)
     lines.push(`@misc{${key},`)
     lines.push(`  title = {${escapeBibTeXField(s.title)}},`)
     lines.push(`  url = {${escapeBibTeXField(s.url)}},`)
