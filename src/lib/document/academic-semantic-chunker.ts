@@ -263,9 +263,40 @@ export function semanticChunkAcademicText(input: SemanticChunkInput): AcademicCh
   return AcademicChunkArraySchema.parse(chunks)
 }
 
+/** 没有正文信息量的章节：参考文献表、致谢、附录。它们不该占用上下文预算。 */
+const NOISE_SECTIONS = new Set(["References", "Acknowledgments", "Appendix", "参考文献", "致谢", "附录"])
+
+/**
+ * 按预算挑选切片。
+ *
+ * 原实现是 `chunks.slice(0, maxChunks)` —— 只留文档**头部**。一篇 22 个切片的论文，
+ * Discussion / Conclusion 永远进不了上下文，于是「这篇论文的结论是什么」这类
+ * 最常见的问题必然答不上来；而 References 只要落在前 12 个里就照样占名额。
+ *
+ * 三条规则，顺序很重要：
+ * 1. **装得下就原样全给**。噪声过滤只在「必须挑」时才允许丢东西 ——
+ *    否则文档里若出现一个 References 标题，它后面的正文会被整段误删
+ *    （拼接论文、附录里放正文的情况真实存在）。
+ * 2. 需要截断时优先用有信息量的章节；若噪声章节占多数，退回原文再截。
+ * 3. 截断固定保留**末尾 2 个**（结论/讨论通常在文档尾部），其余名额给头部；
+ *    输出仍按原文顺序，读起来像一篇论文而不是拼贴。
+ */
+export function selectContextChunks(chunks: AcademicChunk[], maxChunks = 12): AcademicChunk[] {
+  if (maxChunks <= 0) return []
+  if (chunks.length <= maxChunks) return chunks
+
+  const contentful = chunks.filter((c) => !NOISE_SECTIONS.has(c.metadata.section))
+  const pool = contentful.length >= maxChunks ? contentful : chunks
+  if (pool.length <= maxChunks) return pool
+
+  const tailCount = Math.min(2, Math.floor(maxChunks / 2))
+  const headCount = maxChunks - tailCount
+  return [...pool.slice(0, headCount), ...pool.slice(pool.length - tailCount)]
+}
+
 /** 将语义切片格式化为 Peer Review / RAG 上下文块。 */
 export function formatAcademicChunksForContext(chunks: AcademicChunk[], maxChunks = 12): string {
-  const selected = chunks.slice(0, maxChunks)
+  const selected = selectContextChunks(chunks, maxChunks)
   if (!selected.length) return ""
 
   const lines = selected.map((c) => {
