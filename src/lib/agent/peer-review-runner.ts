@@ -357,23 +357,32 @@ export async function executePeerReviewGroup(input: ExecutePeerReviewGroupInput)
     hooks.onNodePatch?.(r2Node!.id, { status: r2Cached ? "done" : "running" })
   }
 
-  const [r1Out, r2Out] = await Promise.all([
+  // 两路 reviewer 是独立的计费单元。用 Promise.all 时只要一路失败，
+  // 另一路已经产出的文本就不会落盘，恢复时会重新付一次 LLM 费用。
+  // 因此改为 allSettled：先持久化所有成功路，再抛出失败原因。
+  const [r1Settled, r2Settled] = await Promise.allSettled([
     runSingleReviewer(r1Node!, r1PersonaId, subject, deps, hooks, generateStream, groupStartedAt, r1Cached),
     runSingleReviewer(r2Node!, r2PersonaId, subject, deps, hooks, generateStream, groupStartedAt, r2Cached),
   ])
 
-  if (!r1Out.skipped) {
+  if (r1Settled.status === "fulfilled" && !r1Settled.value.skipped) {
     await persistStageCheckpoint(input, cpState, {
-      methodologyReview: r1Out.text,
+      methodologyReview: r1Settled.value.text,
       markComplete: "r1",
     })
   }
-  if (!r2Out.skipped) {
+  if (r2Settled.status === "fulfilled" && !r2Settled.value.skipped) {
     await persistStageCheckpoint(input, cpState, {
-      innovationReview: r2Out.text,
+      innovationReview: r2Settled.value.text,
       markComplete: "r2",
     })
   }
+
+  if (r1Settled.status === "rejected") throw r1Settled.reason
+  if (r2Settled.status === "rejected") throw r2Settled.reason
+
+  const r1Out = r1Settled.value
+  const r2Out = r2Settled.value
 
   hooks.onNodeLog?.(r1Node!.id, "【Debate Stream】Reviewer #1 批判意见已提交，进入激辩…")
   hooks.onNodeLog?.(r2Node!.id, "【Debate Stream】等待 Reviewer #2 回应…")

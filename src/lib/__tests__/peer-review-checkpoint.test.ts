@@ -77,6 +77,59 @@ describe("executePeerReviewGroup checkpoint resume", () => {
   })
 })
 
+describe("executePeerReviewGroup partial failure", () => {
+  it("persists the reviewer that already finished when the sibling reviewer fails", async () => {
+    const nodes = buildPeerReviewWorkflowNodes()
+    const checkpoints: Array<{ markComplete?: string; methodologyReview?: string }> = []
+
+    const generateReview = vi.fn(async ({ personaId }: { personaId: string }) => {
+      if (personaId === "methodology_critic") return "R1 finished critique"
+      if (personaId === "innovation_scout") throw new Error("RateLimitExceeded")
+      return "## Summary\nok"
+    })
+
+    await expect(
+      executePeerReviewGroup({
+        groupNodes: nodes,
+        userInput: "Abstract: partial failure",
+        deps: { activeProvider: { providerId: "deepseek_openai_compat", model: "deepseek-chat" } },
+        hooks: { onNodeLog: () => {}, onNodePatch: () => {} },
+        onCheckpoint: (cp) => {
+          checkpoints.push(cp as { markComplete?: string; methodologyReview?: string })
+        },
+        generateReview,
+        generateDebate: async () => "debate ok",
+      })
+    ).rejects.toThrow(/RateLimitExceeded/)
+
+    // R1 的 token 已经花掉了；如果不落盘，恢复时必然重跑一次 LLM。
+    const r1Checkpoint = checkpoints.find((c) => c.markComplete === "r1")
+    expect(r1Checkpoint).toBeDefined()
+    expect(r1Checkpoint?.methodologyReview).toBe("R1 finished critique")
+  })
+
+  it("still surfaces the first failure when both reviewers fail", async () => {
+    const nodes = buildPeerReviewWorkflowNodes()
+    const generateReview = vi.fn(async ({ personaId }: { personaId: string }) => {
+      if (personaId === "methodology_critic") throw new Error("R1 boom")
+      if (personaId === "innovation_scout") throw new Error("R2 boom")
+      return "## Summary\nok"
+    })
+
+    await expect(
+      executePeerReviewGroup({
+        groupNodes: nodes,
+        userInput: "Abstract: both fail",
+        deps: { activeProvider: { providerId: "deepseek_openai_compat", model: "deepseek-chat" } },
+        hooks: { onNodeLog: () => {}, onNodePatch: () => {} },
+        onCheckpoint: () => {},
+        generateReview,
+        generateDebate: async () => "debate ok",
+      })
+    ).rejects.toThrow(/R1 boom|R2 boom/)
+  })
+})
+
 describe("executePeerReviewGroup stream isolation", () => {
   it("emits onProgress with distinct streamId for parallel reviewers", async () => {
     const nodes = buildPeerReviewWorkflowNodes()
