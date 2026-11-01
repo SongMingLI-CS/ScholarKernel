@@ -427,7 +427,15 @@ export function formatReferencesContextBlock(refs: AcademicReference[], lang: "z
   return [header, body, "---", ""].join("\n")
 }
 
-const MD_REF_HEADING_RE = /^#{1,3}\s*(参考文献|references?)(?:\s|\(|$)/i
+/**
+ * 文献区标题的判据必须与 `reference-sections.ts` 保持一致：
+ * 层级 `#{1,6}`（不是 `#{1,3}`）、名称含 Bibliography（IEEE/ACM 常见）、
+ * 允许编号前缀（「6 参考文献」）。
+ * 两处不一致时，规范化器把 `## Bibliography` 当文献区搬走，
+ * 解析器却一条都取不到 —— 导出时文献列表凭空清空。
+ */
+const MD_REF_HEADING_RE =
+  /^#{1,6}\s*(?:\d+(?:\.\d+)*[.、]?\s*)?(?:参考文献|references?|bibliography)(?:\s|\(|（|:|：|$)/i
 /** 任意 ATX 标题：参考文献区遇到下一个标题即结束（否则附录正文会被当作文献条目）。 */
 const MD_ANY_HEADING_RE = /^#{1,6}\s+\S/
 
