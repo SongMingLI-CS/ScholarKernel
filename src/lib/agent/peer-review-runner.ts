@@ -31,7 +31,6 @@ import {
   logLlmCallFailure,
   normalizeModelId,
   providerSelfIntro,
-  type StreamTextCallExtras,
 } from "@/lib/agent/llm-utils"
 import { recordLlmUsageAsync } from "@/lib/billing/token-usage-bridge"
 import type { WorkflowNode } from "@/lib/agent/planner"
