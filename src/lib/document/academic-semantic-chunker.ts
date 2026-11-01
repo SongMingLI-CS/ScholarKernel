@@ -71,7 +71,7 @@ function buildLinePageMap(blocks: LayoutTextBlock[]): Map<string, number> {
   return map
 }
 
-function inferPageForText(text: string, linePageMap: Map<string, number>, fallback = 1): number {
+function inferPageForText(text: string, linePageMap: Map<string, number>): number | undefined {
   const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean)
   for (const line of lines) {
     if (line.length < 4) continue
@@ -81,7 +81,7 @@ function inferPageForText(text: string, linePageMap: Map<string, number>, fallba
       if (line.includes(key) || key.includes(line)) return page
     }
   }
-  return fallback
+  return undefined
 }
 
 function estimatePageFromOffset(
@@ -163,9 +163,11 @@ export function semanticChunkAcademicText(input: SemanticChunkInput): AcademicCh
     const body = sec.lines.join("\n").trim()
     if (!body) return
 
+    // 优先级：坐标块命中的真实页码 → 按字符偏移估算 → 未知时回落第 1 页
     const page =
       inferPageForText(body, linePageMap) ??
-      estimatePageFromOffset(sec.startOffset, normalized.length, input.pageGeometries ?? [])
+      estimatePageFromOffset(sec.startOffset, normalized.length, input.pageGeometries ?? []) ??
+      1
 
     chunks.push(
       AcademicChunkSchema.parse({
