@@ -82,6 +82,17 @@ const RESERVED_BASENAMES = new Set([
 /** 文件名主体上限，给扩展名和可能的 " (1)" 后缀留余量。 */
 const MAX_FILENAME_BASE_CHARS = 100
 
+/**
+ * 按 UTF-16 长度截断（文件系统限制的就是这个），但不能留下半个代理对 ——
+ * 否则会得到一个孤立的高位代理，写盘时变成乱码字符。
+ */
+function truncateFileNameBase(value: string, limit: number): string {
+  if (value.length <= limit) return value
+  let out = value.slice(0, limit)
+  if (/[\uD800-\uDBFF]$/.test(out)) out = out.slice(0, -1)
+  return out
+}
+
 export function sanitizeExportFilename(title: string): string {
   const cleaned = title
     .replace(/[\u0000-\u001f\u007f]/g, "")
@@ -90,11 +101,12 @@ export function sanitizeExportFilename(title: string): string {
     .trim()
   // 开头不能是点（Unix 隐藏文件），结尾不能是点或空格（Windows 会静默截掉）
   const trimmed = cleaned.replace(/^\.+/, "").replace(/[. ]+$/, "").trim()
-  const chars = Array.from(trimmed)
-  const base = chars.length > MAX_FILENAME_BASE_CHARS ? chars.slice(0, MAX_FILENAME_BASE_CHARS).join("") : trimmed
+  // 先截断、再去尾部点（截断可能刚好停在点上）
+  let base = truncateFileNameBase(trimmed, MAX_FILENAME_BASE_CHARS).replace(/[. ]+$/, "")
   if (!base) return "scholarkernel-conversation.md"
   const stem = base.split(".")[0]!.toLowerCase()
-  return `${RESERVED_BASENAMES.has(stem) ? `_${base}` : base}.md`
+  if (RESERVED_BASENAMES.has(stem)) base = `_${truncateFileNameBase(base, MAX_FILENAME_BASE_CHARS - 1)}`
+  return `${base}.md`
 }
 
 export function downloadTextFile(filename: string, content: string, mime = "text/markdown;charset=utf-8") {

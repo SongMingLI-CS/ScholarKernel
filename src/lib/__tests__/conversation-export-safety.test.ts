@@ -79,4 +79,12 @@ describe("导出文件名的边界", () => {
     expect(name.length).toBeLessThanOrEqual(104)
     expect(name.endsWith(".md")).toBe(true)
   })
+
+  it("按 UTF-16 长度截断，且不留下半个代理对（emoji 标题）", () => {
+    const name = sanitizeExportFilename("😀".repeat(120))
+    expect(name.length).toBeLessThanOrEqual(104)
+    // 文件名里不能出现孤立的高位代理
+    expect(name).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/)
+    expect(name.endsWith(".md")).toBe(true)
+  })
 })
