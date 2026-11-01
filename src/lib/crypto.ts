@@ -13,6 +13,17 @@ const PBKDF2_ITERATIONS = 210_000
 const SALT_LEN = 16
 const NONCE_LEN = 12
 
+/**
+ * PBKDF2 迭代次数的可接受区间。
+ *
+ * 信封是从 localStorage 读出来的，其内容对同源脚本（或被诱导导入的备份）完全可控：
+ * - 调低 iterations（例如 1）→ 离线爆破成本归零，等于绕过 KDF；
+ * - 调高 iterations（例如 1e12）→ deriveKey 永不返回，页面直接挂死。
+ * 两端都必须在进入 WebCrypto 之前拒绝。
+ */
+export const MIN_PBKDF2_ITERATIONS = 100_000
+export const MAX_PBKDF2_ITERATIONS = 2_000_000
+
 function utf8ToBytes(s: string) {
   return new TextEncoder().encode(s)
 }
@@ -93,15 +104,10 @@ export async function encryptString(masterPassword: string, plaintext: string): 
 }
 
 export async function decryptString(masterPassword: string, stored: StoredCipherV1): Promise<string> {
-  if (stored.v !== 1) throw new Error("UnsupportedCipherVersion")
-  if (stored.algo !== "AES-256-GCM") throw new Error("UnsupportedCipherAlgo")
-  if (stored.kdf !== "PBKDF2" || stored.hash !== "SHA-256") throw new Error("UnsupportedKdf")
+  // 先做纯逻辑校验，任何非法信封都不应进入 WebCrypto（尤其是超大 iterations）
+  const { salt, nonce, ct } = parseCipherEnvelope(stored)
 
   const crypto = requireWebCrypto()
-  const salt = b64Decode(stored.salt_b64)
-  const nonce = b64Decode(stored.nonce_b64)
-  const ct = b64Decode(stored.ct_b64)
-
   const key = await deriveAesKey(masterPassword, salt, stored.iterations)
   const pt = await crypto.subtle.decrypt(
     { name: "AES-GCM", iv: new Uint8Array(nonce) },
@@ -109,6 +115,52 @@ export async function decryptString(masterPassword: string, stored: StoredCipher
     ct
   )
   return bytesToUtf8(pt)
+}
+
+function decodeChecked(b64: unknown, minLen: number, maxLen: number, code: string): ArrayBuffer {
+  if (typeof b64 !== "string" || !b64) throw new Error(code)
+  let bytes: Uint8Array
+  try {
+    bytes = new Uint8Array(b64Decode(b64))
+  } catch {
+    throw new Error(code)
+  }
+  if (bytes.length < minLen || bytes.length > maxLen) throw new Error(code)
+  return bytes.buffer as ArrayBuffer
+}
+
+/**
+ * 校验信封形状并解码出三个二进制段。
+ * 所有字段都来自持久化数据，必须当作不可信输入处理。
+ */
+export function parseCipherEnvelope(stored: StoredCipherV1): {
+  salt: ArrayBuffer
+  nonce: ArrayBuffer
+  ct: ArrayBuffer
+} {
+  if (!stored || typeof stored !== "object") throw new Error("InvalidCipherEnvelope")
+  if (stored.v !== 1) throw new Error("UnsupportedCipherVersion")
+  if (stored.algo !== "AES-256-GCM") throw new Error("UnsupportedCipherAlgo")
+  if (stored.kdf !== "PBKDF2" || stored.hash !== "SHA-256") throw new Error("UnsupportedKdf")
+
+  const iterations = stored.iterations
+  if (typeof iterations !== "number" || !Number.isInteger(iterations)) {
+    throw new Error("InvalidKdfIterations")
+  }
+  if (iterations < MIN_PBKDF2_ITERATIONS) throw new Error("WeakKdfIterations")
+  if (iterations > MAX_PBKDF2_ITERATIONS) throw new Error("ExcessiveKdfIterations")
+
+  const salt = decodeChecked(stored.salt_b64, SALT_LEN, SALT_LEN * 4, "InvalidSalt")
+  // AES-GCM 的 nonce 必须与加密时一致，当前实现固定 12 字节
+  const nonce = decodeChecked(stored.nonce_b64, NONCE_LEN, NONCE_LEN, "InvalidNonce")
+  const ct = decodeChecked(stored.ct_b64, 1, Number.MAX_SAFE_INTEGER, "InvalidCiphertext")
+
+  return { salt, nonce, ct }
+}
+
+/** 只校验不解码；给调用方在解密前做快速拒绝用。 */
+export function validateCipherEnvelope(stored: StoredCipherV1): void {
+  parseCipherEnvelope(stored)
 }
 
 const STORAGE_KEY = "sk:keys:v1"
