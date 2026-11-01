@@ -44,6 +44,34 @@ describe("reference sections", () => {
   it("does not fabricate references for a normal answer", () => {
     expect(normalizeReferenceSections("普通解释。", "")).toBe("普通解释。")
   })
+  it("keeps every citation number when sources accumulate past the old 24-entry cut", () => {
+    const sources = Array.from({ length: 30 }, (_, i) => ({
+      source_id: String(i + 1),
+      title: `Paper ${i + 1}`,
+      url: `https://arxiv.org/abs/${i + 1}`,
+      snippet: "",
+      publishedAt: "2026",
+    }))
+    const result = synthesizeCitationsMarkdown(sources)
+    // 正文可能引用 [25]..[30]，参考文献必须同样存在，否则是悬空引用
+    expect(result.markdown).toContain("- [25]")
+    expect(result.markdown).toContain("- [30]")
+    expect(result.count).toBe(30)
+    expect(result.rendered).toBe(30)
+  })
+
+  it("reports how many entries were actually rendered when the hard cap kicks in", () => {
+    const sources = Array.from({ length: 205 }, (_, i) => ({
+      source_id: String(i + 1),
+      title: `Paper ${i + 1}`,
+      url: `https://arxiv.org/abs/${i + 1}`,
+      snippet: "",
+    }))
+    const result = synthesizeCitationsMarkdown(sources)
+    expect(result.count).toBe(205)
+    expect(result.rendered).toBe(200)
+  })
+
   it("formats generated references as separate linked list items", () => {
     const result = synthesizeCitationsMarkdown([{ source_id: "7", title: "NumPy [guide]", url: "https://numpy.org/doc/", snippet: "", publishedAt: "2026" }])
     expect(result.markdown).toContain("- [7]")
