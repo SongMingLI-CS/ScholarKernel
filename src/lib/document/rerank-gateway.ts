@@ -2,6 +2,7 @@ import type { AcademicSearchHit } from "@/lib/tools/search-tool"
 
 export const RETRIEVAL_RECALL_TOP_K = 28
 export const RERANK_FINAL_TOP_K = 5
+export const DEFAULT_RERANK_TIMEOUT_MS = 8000
 
 export type RerankScore = {
   index: number
@@ -58,7 +59,52 @@ export function lexicalRerankScores(query: string, docs: string[]): RerankScore[
   })
 }
 
-async function cohereRerank(query: string, docs: string[]): Promise<RerankScore[] | null> {
+function rerankTimeoutMs(): number {
+  const raw = Number.parseInt(safeEnv("RERANK_TIMEOUT_MS"), 10)
+  return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_RERANK_TIMEOUT_MS
+}
+
+/**
+ * 外部 reranker 是可选增强层：任何异常、超时或响应格式异常都必须降级到下一级，
+ * 不能把整条检索链一起拖死。
+ */
+async function requestRerankScores(
+  label: string,
+  docsCount: number,
+  fn: (signal: AbortSignal) => Promise<RerankScore[] | null>
+): Promise<RerankScore[] | null> {
+  const signal = AbortSignal.timeout(rerankTimeoutMs())
+  try {
+    return sanitizeRerankScores(await fn(signal), docsCount)
+  } catch (e) {
+    const msg = e instanceof Error ? `${e.name}:${e.message}` : String(e)
+    console.warn(`[rerank-gateway] ${label} failed, degrading to next provider (${msg})`)
+    return null
+  }
+}
+
+/** 丢弃越界索引、重复索引与非有限分数，避免下游 spread 出空引用。 */
+export function sanitizeRerankScores(
+  scores: RerankScore[] | null | undefined,
+  docsCount: number
+): RerankScore[] | null {
+  if (!Array.isArray(scores) || scores.length === 0) return null
+  const seen = new Set<number>()
+  const out: RerankScore[] = []
+  for (const s of scores) {
+    if (!s || typeof s !== "object") continue
+    const index = Number(s.index)
+    const score = Number(s.score)
+    if (!Number.isInteger(index) || index < 0 || index >= docsCount) continue
+    if (!Number.isFinite(score)) continue
+    if (seen.has(index)) continue
+    seen.add(index)
+    out.push({ index, score })
+  }
+  return out.length ? out : null
+}
+
+async function cohereRerank(query: string, docs: string[], signal: AbortSignal): Promise<RerankScore[] | null> {
   const apiKey = safeEnv("COHERE_API_KEY")
   if (!apiKey || docs.length === 0) return null
 
@@ -68,6 +114,7 @@ async function cohereRerank(query: string, docs: string[]): Promise<RerankScore[
       "content-type": "application/json",
       Authorization: `Bearer ${apiKey}`,
     },
+    signal,
     body: JSON.stringify({
       model: "rerank-english-v3.0",
       query,
@@ -82,7 +129,7 @@ async function cohereRerank(query: string, docs: string[]): Promise<RerankScore[
   return data.results.map((r) => ({ index: r.index, score: r.relevance_score }))
 }
 
-async function bgeRerankViaHttp(query: string, docs: string[]): Promise<RerankScore[] | null> {
+async function bgeRerankViaHttp(query: string, docs: string[], signal: AbortSignal): Promise<RerankScore[] | null> {
   const url = safeEnv("RERANK_API_URL")
   const apiKey = safeEnv("RERANK_API_KEY")
   if (!url || docs.length === 0) return null
@@ -93,6 +140,7 @@ async function bgeRerankViaHttp(query: string, docs: string[]): Promise<RerankSc
   const res = await fetch(url, {
     method: "POST",
     headers,
+    signal,
     body: JSON.stringify({
       model: safeEnv("RERANK_MODEL") || "BAAI/bge-reranker-large",
       query,
@@ -123,6 +171,27 @@ function hitToRerankDoc(hit: AcademicSearchHit): string {
   return parts.join("\n")
 }
 
+function normalizeKeyPart(value: string | undefined): string {
+  return (value ?? "").toLowerCase().replace(/\s+/g, " ").trim()
+}
+
+/** 同一篇文献可能以不同 URL / 大小写标题多次召回：url 或归一化标题任一相同即视为重复。 */
+export function dedupeAcademicHits(hits: AcademicSearchHit[]): AcademicSearchHit[] {
+  const seenUrls = new Set<string>()
+  const seenTitles = new Set<string>()
+  const out: AcademicSearchHit[] = []
+  for (const h of hits) {
+    const url = normalizeKeyPart(h.url)
+    const title = normalizeKeyPart(h.title)
+    if (url && seenUrls.has(url)) continue
+    if (title && seenTitles.has(title)) continue
+    if (url) seenUrls.add(url)
+    if (title) seenTitles.add(title)
+    out.push(h)
+  }
+  return out
+}
+
 export type RerankGatewayResult = {
   hits: AcademicSearchHit[]
   recallCount: number
@@ -141,22 +210,28 @@ export async function rerankAcademicHits(
 ): Promise<RerankGatewayResult> {
   const recallLimit = opts?.recallLimit ?? RETRIEVAL_RECALL_TOP_K
   const finalTopK = opts?.finalTopK ?? RERANK_FINAL_TOP_K
-  const recall = hits.slice(0, recallLimit)
+  // 去重放在召回侧：重复条目不应占用 Top-K 名额，也不应产生重复引用
+  const recall = dedupeAcademicHits(hits).slice(0, recallLimit)
   if (recall.length === 0) {
     return { hits: [], recallCount: 0, rerankProvider: "lexical" }
   }
 
   const docs = recall.map(hitToRerankDoc)
-  let scores: RerankScore[] | null = await cohereRerank(query, docs)
+  let scores = await requestRerankScores("cohere", docs.length, (signal) => cohereRerank(query, docs, signal))
   let provider: RerankGatewayResult["rerankProvider"] = "cohere"
 
   if (!scores) {
-    scores = await bgeRerankViaHttp(query, docs)
+    scores = await requestRerankScores("bge-http", docs.length, (signal) => bgeRerankViaHttp(query, docs, signal))
     provider = "bge-http"
   }
   if (!scores) {
-    scores = lexicalRerankScores(query, docs)
+    scores = sanitizeRerankScores(lexicalRerankScores(query, docs), docs.length)
     provider = "lexical"
+  }
+  if (!scores) {
+    // 词项重排全零分（例如查询词全被过滤）时，保留原始召回顺序而不是返回空结果
+    const fallback = recall.slice(0, finalTopK).map((h, idx) => ({ ...h, source_id: String(idx + 1) }))
+    return { hits: fallback, recallCount: recall.length, rerankProvider: "lexical" }
   }
 
   const ranked = [...scores].sort((a, b) => b.score - a.score).slice(0, finalTopK)
