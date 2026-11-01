@@ -260,6 +260,43 @@ function escapeHtml(text: string): string {
     .replace(/"/g, "&quot;")
 }
 
+/**
+ * 引用链接的协议白名单。只放行绝对 http(s)。
+ * 导出文件会被用户下载、用浏览器打开，`javascript:` / `data:text/html` 必须挡掉。
+ */
+function safeHref(raw: string | undefined): string | null {
+  const trimmed = (raw ?? "").trim()
+  if (!trimmed) return null
+  if (!/^https?:\/\//i.test(trimmed)) return null
+  return trimmed
+}
+
+const BLOCKED_PAIRED_TAG_RE =
+  /<\s*(script|style|iframe|object|embed|form)\b[\s\S]*?<\s*\/\s*(script|style|iframe|object|embed|form)\s*>/gi
+const BLOCKED_STRAY_TAG_RE = /<\/?\s*(script|style|iframe|object|embed|form|link|meta|base)\b[^>]*>/gi
+const EVENT_ATTR_RE = /\son[a-z]+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi
+const DANGEROUS_URL_ATTR_RE =
+  /\s(href|src|xlink:href)\s*=\s*(?:"\s*(?:javascript|vbscript|data:text\/html)[^"]*"|'\s*(?:javascript|vbscript|data:text\/html)[^']*')/gi
+
+/**
+ * 导出用 HTML 的净化。
+ *
+ * `markdownToHtml` 走的是 marked 默认配置 —— 它**允许原始 HTML 透传**。
+ * 而对话内容来自用户输入与 LLM 输出，且 `downloadConversationAsPdf` 会把这段
+ * HTML 通过 `innerHTML` 插进真实 DOM：一个 `<img src=x onerror=...>` 就会
+ * 在导出 PDF 的瞬间执行。导出的 .html 文件被再次打开时同理。
+ *
+ * 这里是字符串级纵深防御，不做完整 HTML 解析（那需要 DOMParser，在本模块要
+ * 求的纯函数环境下不可用）。目标是挡住已知的执行面，而不是做到完美。
+ */
+export function sanitizeExportHtml(html: string): string {
+  return html
+    .replace(BLOCKED_PAIRED_TAG_RE, "")
+    .replace(BLOCKED_STRAY_TAG_RE, "")
+    .replace(EVENT_ATTR_RE, "")
+    .replace(DANGEROUS_URL_ATTR_RE, "")
+}
+
 /** Build print-ready HTML for PDF export (messages only, no chrome). */
 export function buildConversationPrintHtml(
   title: string,
@@ -272,11 +309,16 @@ export function buildConversationPrintHtml(
   const sections = filtered
     .map((m) => {
       const role = EXPORT_ROLE_LABEL[m.role]
-      const body = markdownToHtml(m.content.trim())
+      const body = sanitizeExportHtml(markdownToHtml(m.content.trim()))
       const sources =
         m.role === "assistant" && m.sources?.length
           ? `<ul class="sources">${m.sources
-              .map((s) => `<li><a href="${escapeHtml(s.url)}">${escapeHtml(s.title)}</a></li>`)
+              .map((s) => {
+                const label = escapeHtml(s.title)
+                const href = safeHref(s.url)
+                // 非 http(s) 链接只保留标题，不给可点击的 href
+                return href ? `<li><a href="${escapeHtml(href)}">${label}</a></li>` : `<li>${label}</li>`
+              })
               .join("")}</ul>`
           : ""
       return `<section class="msg msg-${m.role}"><h2>${escapeHtml(role)}</h2><div class="body">${body}</div>${sources}</section>`
