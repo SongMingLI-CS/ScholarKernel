@@ -98,7 +98,13 @@ function resolveSubjectText(userInput: string, groupNodes: WorkflowNode[]): stri
   return userInput.trim()
 }
 
-/** 对长文本注入语义切片 RAG 上下文，供审稿智能体精准引用公式与章节。 */
+/**
+ * 对长文本注入语义切片 RAG 上下文，供审稿智能体精准引用公式与章节。
+ *
+ * 注意：切片本身已包含全文内容，因此这里用「带章节标记的切片视图」**替换**原文，
+ * 而不是在原文之后再追加一份切片（历史实现会让同一篇稿件在 prompt 里出现两次，
+ * 实测字符量 ×2.10，token 成本翻倍且长稿容易超出上下文窗口）。
+ */
 export function enrichPeerReviewSubject(subject: string): string {
   const trimmed = subject.trim()
   if (trimmed.length < 1200) return trimmed
@@ -106,8 +112,8 @@ export function enrichPeerReviewSubject(subject: string): string {
   const chunks = semanticChunkAcademicText({ text: trimmed })
   if (chunks.length <= 1) return trimmed
 
-  const rag = formatAcademicChunksForContext(chunks)
-  return [trimmed, "", rag].join("\n")
+  // 不截断章节：审稿需要看到 Conclusion / Limitations，缺章节会直接改变评审结论
+  return formatAcademicChunksForContext(chunks, chunks.length)
 }
 
 function personaIdFromNode(node: WorkflowNode, fallback: PeerReviewPersonaId): PeerReviewPersonaId {
