@@ -42,6 +42,18 @@ export function isSurveyOrProgressTopic(text: string): boolean {
   return SURVEY_PROGRESS_RE.test(text.trim())
 }
 
+/** 中文口语化检索意图词，属于查询外壳而非主题本身。 */
+const CN_QUERY_FILLER_RE =
+  /(帮我|请|麻烦|想|要|需要|一下|一份|一个|关于|有关|调研|梳理|总结|介绍|综述|文献综述|研究进展|核心进展|最新进展|发展现状|前沿|现状|应用|相关)/g
+
+function stripChineseQueryFiller(text: string): string {
+  return text
+    .replace(CN_QUERY_FILLER_RE, " ")
+    .replace(/[，。！？、；：“”‘’（）【】]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+}
+
 /** 从 query / 用户输入提取核心主题词（用于扩写） */
 export function extractResearchTopic(userInput: string, draftQuery?: string): string {
   const q = (draftQuery ?? "").trim()
@@ -66,13 +78,22 @@ export function extractResearchTopic(userInput: string, draftQuery?: string): st
     if (re.test(u) || re.test(q)) return en
   }
 
-  const cleaned = (q || u)
+  const source = q || u
+  const cleaned = source
     .replace(/[\u4e00-\u9fff]+/g, " ")
     .replace(/\b(survey|review|research|papers|arxiv|latest|recent|202[4-6])\b/gi, " ")
     .replace(/\s+/g, " ")
     .trim()
 
   if (cleaned.length >= 3 && cleaned.length <= 80) return cleaned
+
+  // 纯中文主题（如「图神经网络推荐系统」「联邦学习隐私保护」）不在映射表里时，
+  // 不能退化成 "AI research" —— 那会让检索完全跑偏。保留去掉意图词后的中文主题。
+  if (/[\u4e00-\u9fff]/.test(source)) {
+    const cn = stripChineseQueryFiller(source)
+    if (cn.length >= 2) return cn.slice(0, 60)
+  }
+
   return "AI research"
 }
 

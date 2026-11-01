@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest"
 import {
   buildDualSearchQueries,
   expandSearchQueries,
+  extractResearchTopic,
   formatResearchHitLines,
   isBroadTopicQuery,
   isSurveyOrProgressTopic,
@@ -117,5 +118,41 @@ describe("academic-search-strategy", () => {
     const merged = mergeAcademicSearchResponses([r1, r2], "q1 | q2")
     expect(merged.total).toBe(2)
     expect(merged.results.map((x) => x.url)).toEqual(["https://a", "https://b"])
+  })
+})
+
+/**
+ * 回归：纯中文主题不在 cnMap 映射表里时，历史实现把主题替换成 "AI research"，
+ * 扩写后的三条检索式全部丢失原主题（实测「图神经网络推荐系统」「联邦学习隐私保护」
+ * 都被降级），对中文用户等于随机检索。
+ */
+describe("extractResearchTopic for Chinese topics", () => {
+  it("keeps the Chinese topic instead of collapsing to a generic phrase", () => {
+    const topic = extractResearchTopic("图神经网络在推荐系统中的应用综述", "图神经网络 推荐系统")
+    expect(topic).not.toBe("AI research")
+    expect(topic).toContain("图神经网络")
+    expect(topic).toContain("推荐系统")
+  })
+
+  it("strips intent filler words from the preserved topic", () => {
+    const topic = extractResearchTopic("请帮我调研联邦学习隐私保护的最新进展", "")
+    expect(topic).not.toBe("AI research")
+    expect(topic).not.toContain("帮我")
+    expect(topic).not.toContain("最新进展")
+    expect(topic).toContain("联邦学习")
+  })
+
+  it("propagates the Chinese topic into expanded queries", () => {
+    const qs = expandSearchQueries("图神经网络在推荐系统中的应用综述", "图神经网络 推荐系统")
+    expect(qs).toHaveLength(3)
+    const joined = qs.join(" | ")
+    expect(joined).toContain("图神经网络")
+    expect(joined).not.toContain("AI research")
+  })
+
+  it("still maps known English and Chinese domains to canonical terms", () => {
+    expect(extractResearchTopic("LLM 综述", "LLM")).toBe("LLM")
+    expect(extractResearchTopic("大语言模型综述", "")).toBe("large language models")
+    expect(extractResearchTopic("computer vision survey", "")).toBe("computer vision")
   })
 })
