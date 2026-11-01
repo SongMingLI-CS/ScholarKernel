@@ -1,33 +1,29 @@
 import { NextResponse } from "next/server"
-import path from "node:path"
-import { existsSync, promises as fs } from "node:fs"
+import { promises as fs } from "node:fs"
+
+import { resolveUserIdFromRequest } from "@/lib/auth-user"
+import { isAuthEnabled } from "@/lib/session-auth"
+import { resolveSourceFilePath } from "@/lib/source-route-guard"
 
 export const runtime = "nodejs"
 
-function isSafeRelative(p: string) {
-  if (!p || p.includes("\0")) return false
-  if (path.isAbsolute(p)) return false
-  const norm = p.replace(/\\/g, "/")
-  if (norm.startsWith("../") || norm.includes("/../")) return false
-  if (norm.startsWith("node_modules/") || norm.includes("/node_modules/")) return false
-  return true
-}
-
 export async function GET(req: Request) {
+  // 该路由不在 middleware 的保护列表里（只覆盖 conversations / agent / canvas），
+  // 因此必须在路由内自行校验身份；否则任何能访问端口的人都能读源码与配置文件。
+  if (isAuthEnabled()) {
+    const userId = await resolveUserIdFromRequest(req)
+    if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+  }
+
   const url = new URL(req.url)
   const rel = url.searchParams.get("path") ?? ""
-  if (!isSafeRelative(rel)) {
+
+  const abs = resolveSourceFilePath(process.cwd(), rel)
+  if (!abs) {
     return NextResponse.json({ error: "InvalidPath" }, { status: 400 })
   }
 
-  const root = process.cwd()
-  const abs = path.join(root, rel)
-
   try {
-    // Fast path: avoid throwing on missing files.
-    if (!existsSync(abs)) {
-      return NextResponse.json({ error: "NotFound" }, { status: 404 })
-    }
     const st = await fs.stat(abs)
     if (!st.isFile()) return NextResponse.json({ error: "NotAFile" }, { status: 400 })
     const text = await fs.readFile(abs, "utf8")
@@ -39,10 +35,10 @@ export async function GET(req: Request) {
       },
     })
   } catch (e) {
-    const msg = e instanceof Error ? e.message : "ReadFailed"
+    console.error("[GET /api/source]", e)
     const code = e && typeof e === "object" ? String((e as { code?: unknown }).code ?? "") : ""
     if (code === "ENOENT") return NextResponse.json({ error: "NotFound" }, { status: 404 })
-    return NextResponse.json({ error: "ReadFailed", detail: msg }, { status: 404 })
+    // 不回显内部异常文本（可能含绝对路径）
+    return NextResponse.json({ error: "ReadFailed" }, { status: 500 })
   }
 }
-
