@@ -1,6 +1,13 @@
-import { describe, expect, it } from "vitest"
+import { describe, expect, it, vi } from "vitest"
+
+// 路由现在自带鉴权（不依赖中间件单点）。这里直接放行，测试聚焦体积守卫。
+vi.mock("@/lib/auth-user", () => ({
+  resolveUserIdFromRequest: vi.fn(async () => "user-test"),
+  DEFAULT_USER_ID: "default_user_id",
+}))
 
 import { POST } from "@/app/api/documents/parse/route"
+import { resolveUserIdFromRequest } from "@/lib/auth-user"
 
 const MAX_UPLOAD_BYTES = 8 * 1024 * 1024
 
@@ -104,5 +111,17 @@ describe("/api/documents/parse upload guard", () => {
     expect(res.status).toBe(200)
     const json = (await res.json()) as { warnings: string[] }
     expect(Array.isArray(json.warnings)).toBe(true)
+  })
+
+  it("鉴权先于体积检查：未授权 + 超大声明体积返回 401 而不是 413", async () => {
+    vi.mocked(resolveUserIdFromRequest).mockResolvedValueOnce(null)
+    const req = new Request("http://localhost/api/documents/parse", {
+      method: "POST",
+      headers: { "content-length": String(MAX_UPLOAD_BYTES + 1), "content-type": "text/plain" },
+      body: "x",
+    })
+
+    const res = await POST(req)
+    expect(res.status).toBe(401)
   })
 })
