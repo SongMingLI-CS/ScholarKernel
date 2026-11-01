@@ -138,7 +138,12 @@ function extractBalancedJsonBlock(text: string): { block: string; start: number;
 function rankParsedJson(value: unknown): number {
   if (Array.isArray(value)) {
     const objects = value.filter((v) => v !== null && typeof v === "object" && !Array.isArray(v))
-    return objects.length > 0 ? 100 + Math.min(objects.length, 50) : 10
+    if (objects.length === 0) return 10
+    // 任务项必有 type 字段；没有 type 的对象数组只是普通数据
+    const looksLikeTasks = objects.some(
+      (o) => typeof (o as Record<string, unknown>)["type"] === "string"
+    )
+    return looksLikeTasks ? 100 + Math.min(objects.length, 50) : 40
   }
   if (value !== null && typeof value === "object") {
     const rec = value as Record<string, unknown>
@@ -149,9 +154,11 @@ function rankParsedJson(value: unknown): number {
   return 0
 }
 
-/** 收集文本中所有顶层的括号平衡块（找到块后直接跳过块内嵌的块）。 */
-function collectJsonCandidates(text: string): Array<{ value: unknown; rank: number }> {
-  const out: Array<{ value: unknown; rank: number }> = []
+type JsonSpan = { block: string; start: number; end: number; rank: number; value: unknown }
+
+/** 收集文本中所有顶层的括号平衡块（找到块后直接跳过块内嵌的块），附带结构评分。 */
+function collectJsonSpans(text: string): JsonSpan[] {
+  const out: JsonSpan[] = []
   let i = 0
   while (i < text.length) {
     const ch = text[i]
@@ -165,7 +172,7 @@ function collectJsonCandidates(text: string): Array<{ value: unknown; rank: numb
       continue
     }
     const parsed = tryJsonParse(block.block)
-    if (parsed !== null) out.push({ value: parsed, rank: rankParsedJson(parsed) })
+    if (parsed !== null) out.push({ ...block, rank: rankParsedJson(parsed), value: parsed })
     i = block.end
   }
   return out
@@ -806,7 +813,7 @@ export function parsePlan(raw: string, structured?: unknown): unknown {
   // 逐个候选块打分取最优，而不是「第一个贪婪匹配」。
   // 规划正文常带 `[1]` 这类引用编号，贪婪 `\[[\s\S]*\]` 会跨过正文抓到
   // 「第一个 [ 到最后一个 ]」，或在成对引用时直接返回 `[1]`。
-  const candidates = collectJsonCandidates(content)
+  const candidates = collectJsonSpans(content)
   if (candidates.length > 0) {
     let best = candidates[0]!
     for (const c of candidates) if (c.rank > best.rank) best = c
@@ -815,6 +822,21 @@ export function parsePlan(raw: string, structured?: unknown): unknown {
 
   const stripped = stripMarkdownCodeFencesInline(content).trim()
   return parseJsonFromLlmText(stripped)
+}
+
+/** 计划块被包在 ```json 围栏里时，把 span 向外扩到围栏边界，避免正文残留围栏标记。 */
+function expandSpanToFence(
+  text: string,
+  span: { start: number; end: number }
+): { start: number; end: number } {
+  const before = text.slice(0, span.start)
+  const openIdx = before.lastIndexOf("```")
+  if (openIdx < 0) return span
+  if (!/^\s*(?:json)?\s*$/i.test(before.slice(openIdx + 3))) return span
+  const closeIdx = text.indexOf("```", span.end)
+  if (closeIdx < 0) return span
+  if (!/^\s*$/.test(text.slice(span.end, closeIdx))) return span
+  return { start: openIdx, end: closeIdx + 3 }
 }
 
 /** 尝试从「对话可见文本」中剥离合法任务规划；用于与执行器规划路径解耦。不修改原始 Markdown 代码块。 */
@@ -829,9 +851,18 @@ export function interceptWorkflowPlanInAssistantBubble(
   type Span = { block: string; start: number; end: number }
   let span: Span | null = null
 
-  const rawBal = extractBalancedJsonBlock(trimmed)
-  if (rawBal) {
-    span = { block: rawBal.block, start: lead + rawBal.start, end: lead + rawBal.end }
+  // 只接受「任务数组」或「含任务数组键的对象」（rank ≥ 80）。
+  // 旧实现取第一个平衡块，于是正文里的 `[1]` 引用会被当成计划：
+  // 既从可见文本里删掉引用编号，又伪造出一个空 reasoning 节点，
+  // 而真正的 ```json 计划块原封不动留在正文里。
+  let best: JsonSpan | null = null
+  for (const c of collectJsonSpans(trimmed)) {
+    if (c.rank < 80) continue
+    if (!best || c.rank > best.rank) best = c
+  }
+  if (best) {
+    const expanded = expandSpanToFence(trimmed, best)
+    span = { block: best.block, start: lead + expanded.start, end: lead + expanded.end }
   }
 
   if (!span) {
