@@ -204,13 +204,45 @@ function normalizeKeyPart(value: string | undefined): string {
   return (value ?? "").toLowerCase().replace(/\s+/g, " ").trim()
 }
 
+/** 只影响归因、不影响内容的参数。留着它们会让同一页被当成不同文献。 */
+const TRACKING_PARAM_RE = /^(?:utm_|fbclid$|gclid$|mc_cid$|mc_eid$|ref$|ref_src$|source$|spm$|share$)/
+
+/**
+ * URL 归一化键。
+ *
+ * 同一篇论文会被多路检索以不同形态召回：`#abstract` 锚点、结尾斜杠、
+ * `?utm_source=…` 追踪参数、`http` vs `https`。只做小写化的话这些全是「不同文献」，
+ * 于是同一篇论文占满重排预算，把真正的新结果挤掉（`recallCount` 看着很高，
+ * 实际去重后只剩一半语义覆盖）。
+ *
+ * 保守起见只归一「确定不影响内容」的维度：fragment、追踪参数、结尾斜杠、协议与
+ * host 大小写。查询串里的其他参数保持原样 —— `?v=1` 与 `?v=2` 可能是不同版本。
+ */
+export function canonicalUrlKey(raw: string | undefined): string {
+  const trimmed = (raw ?? "").trim()
+  if (!trimmed) return ""
+  let url: URL
+  try {
+    url = new URL(trimmed)
+  } catch {
+    // 非法 URL（检索结果里确实存在）：退化成字符串比较，至少不会漏掉完全相同的串
+    return normalizeKeyPart(trimmed)
+  }
+
+  const kept = [...url.searchParams.entries()].filter(([key]) => !TRACKING_PARAM_RE.test(key.toLowerCase()))
+  const search = kept.length ? new URLSearchParams(kept).toString() : ""
+  const pathname = url.pathname.replace(/\/+$/, "")
+  // 主机名大小写不敏感；协议按 https 归一（学术检索里 http/https 指向同一份文档）
+  return `https://${url.hostname.toLowerCase()}${pathname}${search ? `?${search}` : ""}`
+}
+
 /** 同一篇文献可能以不同 URL / 大小写标题多次召回：url 或归一化标题任一相同即视为重复。 */
 export function dedupeAcademicHits(hits: AcademicSearchHit[]): AcademicSearchHit[] {
   const seenUrls = new Set<string>()
   const seenTitles = new Set<string>()
   const out: AcademicSearchHit[] = []
   for (const h of hits) {
-    const url = normalizeKeyPart(h.url)
+    const url = canonicalUrlKey(h.url)
     const title = normalizeKeyPart(h.title)
     if (url && seenUrls.has(url)) continue
     if (title && seenTitles.has(title)) continue
