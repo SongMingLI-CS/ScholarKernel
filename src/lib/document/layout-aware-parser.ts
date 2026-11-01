@@ -47,48 +47,101 @@ function safeEnv(name: string): string {
   }
 }
 
+const DEFAULT_LAYOUT_PARSER_TIMEOUT_MS = 15_000
+
+function layoutParserTimeoutMs(): number {
+  const raw = Number.parseInt(safeEnv("LAYOUT_PARSER_TIMEOUT_MS"), 10)
+  return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_LAYOUT_PARSER_TIMEOUT_MS
+}
+
+/** 给不可取消的外部调用套一层时限；至少保证调用方不会一起挂住。 */
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`${label}:timeout`)), timeoutMs)
+    promise.then(
+      (value) => {
+        clearTimeout(timer)
+        resolve(value)
+      },
+      (error) => {
+        clearTimeout(timer)
+        reject(error)
+      }
+    )
+  })
+}
+
+/**
+ * 外部版面解析器是**可选增强层**：任何失败（抛错 / 超时 / 非 JSON / 非 2xx）
+ * 都必须降级到本地解析，而不是把整次文档摄取一起弄失败。
+ */
 async function callExternalLayoutParser(
   buffer: Buffer,
   filename: string,
-  mimeType?: string
+  mimeType: string | undefined,
+  warnings: string[]
 ): Promise<{ text: string; blocks?: LayoutTextBlock[] } | null> {
-  if (externalParserHook) {
-    return externalParserHook({ buffer, filename, mimeType })
-  }
-
+  const hook = externalParserHook
   const url = safeEnv("LAYOUT_PARSER_URL")
-  const apiKey = safeEnv("LAYOUT_PARSER_API_KEY")
-  if (!url) return null
+  if (!hook && !url) return null
 
-  const headers: Record<string, string> = {}
-  if (apiKey) headers["Authorization"] = `Bearer ${apiKey}`
+  const timeoutMs = layoutParserTimeoutMs()
 
-  let res: Response
   try {
-    const body = new FormData()
-    body.append("file", new Blob([new Uint8Array(buffer)], { type: mimeType }), filename)
-    res = await fetch(url, { method: "POST", headers, body })
-  } catch {
-    res = await fetch(url, {
-      method: "POST",
-      headers: { ...headers, "content-type": "application/json" },
-      body: JSON.stringify({
-        filename,
-        mimeType,
-        content_base64: buffer.toString("base64"),
-      }),
-    })
-  }
-  if (!res.ok) return null
+    if (hook) {
+      // 同步抛错与永不 resolve 都要处理：前者由 Promise.resolve 捕获，
+      // 后者由 withTimeout 兜住。
+      return await withTimeout(
+        Promise.resolve(hook({ buffer, filename, mimeType })),
+        timeoutMs,
+        "ExternalParser"
+      )
+    }
 
-  const data = (await res.json()) as {
-    text?: string
-    markdown?: string
-    blocks?: LayoutTextBlock[]
+    const apiKey = safeEnv("LAYOUT_PARSER_API_KEY")
+    const headers: Record<string, string> = {}
+    if (apiKey) headers["Authorization"] = `Bearer ${apiKey}`
+
+    const signal = AbortSignal.timeout(timeoutMs)
+
+    let res: Response
+    try {
+      const body = new FormData()
+      body.append("file", new Blob([new Uint8Array(buffer)], { type: mimeType }), filename)
+      res = await fetch(url, { method: "POST", headers, body, signal })
+    } catch (firstError) {
+      // 服务端不接受 multipart 时退回 base64 JSON；但若已经超时/取消，不再重试
+      if (signal.aborted) throw firstError
+      res = await fetch(url, {
+        method: "POST",
+        headers: { ...headers, "content-type": "application/json" },
+        body: JSON.stringify({
+          filename,
+          mimeType,
+          content_base64: buffer.toString("base64"),
+        }),
+        signal,
+      })
+    }
+    if (!res.ok) {
+      warnings.push(`ExternalParserHttp:${res.status}`)
+      return null
+    }
+
+    const data = (await res.json()) as {
+      text?: string
+      markdown?: string
+      blocks?: LayoutTextBlock[]
+    }
+    const text = (data.text ?? data.markdown ?? "").trim()
+    if (!text) return null
+    return { text, blocks: data.blocks }
+  } catch (e) {
+    const msg = e instanceof Error ? `${e.name}:${e.message}` : String(e)
+    console.warn(`[layout-parser] external parser failed, falling back to local (${msg})`)
+    warnings.push(`ExternalParserUnavailable:${msg}`)
+    return null
   }
-  const text = (data.text ?? data.markdown ?? "").trim()
-  if (!text) return null
-  return { text, blocks: data.blocks }
 }
 
 function detectFormat(filename: string, mimeType?: string): LayoutParseFormat {
@@ -144,7 +197,7 @@ export async function parseLayoutAwareDocument(input: {
   const warnings: string[] = []
   const format = detectFormat(input.filename, input.mimeType)
 
-  const external = await callExternalLayoutParser(input.buffer, input.filename, input.mimeType)
+  const external = await callExternalLayoutParser(input.buffer, input.filename, input.mimeType, warnings)
   if (external?.text) {
     // 外部解析器已产出最终阅读顺序：只在有坐标块时按栏重排，禁止纯文本启发式再次改写。
     const reordered = applyColumnReorder(external.text, external.blocks)
