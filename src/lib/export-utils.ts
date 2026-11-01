@@ -274,9 +274,57 @@ function safeHref(raw: string | undefined): string | null {
 const BLOCKED_PAIRED_TAG_RE =
   /<\s*(script|style|iframe|object|embed|form)\b[\s\S]*?<\s*\/\s*(script|style|iframe|object|embed|form)\s*>/gi
 const BLOCKED_STRAY_TAG_RE = /<\/?\s*(script|style|iframe|object|embed|form|link|meta|base)\b[^>]*>/gi
-const EVENT_ATTR_RE = /\son[a-z]+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi
-const DANGEROUS_URL_ATTR_RE =
-  /\s(href|src|xlink:href)\s*=\s*(?:"\s*(?:javascript|vbscript|data:text\/html)[^"]*"|'\s*(?:javascript|vbscript|data:text\/html)[^']*')/gi
+/**
+ * 事件属性：不要求前面是空格。
+ *
+ * HTML 里 `<svg/onload=...>` 与 `<svg onload=...>` 解析结果相同，
+ * `<a href="/x"onclick=...>` 也一样 —— 旧规则 `\son[a-z]+` 要求空格，两种写法都能绕过。
+ */
+const EVENT_ATTR_RE = /(?<![a-z0-9_-])on[a-z]{3,}\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi
+
+const URL_ATTR_RE = /(\s(?:href|src|xlink:href)\s*=\s*)("(?:[^"]*)"|'(?:[^']*)'|[^\s>]+)/gi
+
+const SAFE_URL_SCHEMES = new Set(["http", "https", "mailto", "tel"])
+const NAMED_URL_ENTITY: Record<string, string> = { colon: ":", tab: "\t", newline: "\n", amp: "&" }
+
+function fromCodePoint(code: number, fallback: string): string {
+  if (!Number.isFinite(code) || code < 0 || code > 0x10ffff) return fallback
+  try {
+    return String.fromCodePoint(code)
+  } catch {
+    return fallback
+  }
+}
+
+/**
+ * 解码属性值里的实体。
+ *
+ * 浏览器在解析 `href` 前会先解实体，`&#106;avascript:` 与 `javascript:` 等价；
+ * 只认字面量的黑名单必然被编码绕过。
+ */
+function decodeUrlEntities(value: string): string {
+  return value
+    .replace(/&#x([0-9a-f]+);?/gi, (m, hex: string) => fromCodePoint(Number.parseInt(hex, 16), m))
+    .replace(/&#(\d+);?/g, (m, dec: string) => fromCodePoint(Number.parseInt(dec, 10), m))
+    .replace(/&(colon|tab|newline|amp);?/gi, (m, name: string) => NAMED_URL_ENTITY[name.toLowerCase()] ?? m)
+}
+
+/**
+ * URL 属性改用协议白名单：不再枚举危险协议，而是「只放行已知安全协议」。
+ * 相对链接与锚点没有协议头，直接放行。
+ * `data:` 只放行位图类型 —— `data:image/svg+xml` 内部可执行脚本。
+ */
+function isUnsafeUrl(value: string): boolean {
+  const normalized = decodeUrlEntities(value)
+    .replace(/[\u0000-\u0020\u007f]/g, "")
+    .toLowerCase()
+  const m = /^([a-z][a-z0-9+.-]*):/.exec(normalized)
+  if (!m) return false
+  const scheme = m[1] ?? ""
+  if (SAFE_URL_SCHEMES.has(scheme)) return false
+  if (scheme === "data" && /^data:image\/(?:png|jpe?g|gif|webp|bmp);/.test(normalized)) return false
+  return true
+}
 
 /**
  * 导出用 HTML 的净化。
@@ -287,14 +335,18 @@ const DANGEROUS_URL_ATTR_RE =
  * 在导出 PDF 的瞬间执行。导出的 .html 文件被再次打开时同理。
  *
  * 这里是字符串级纵深防御，不做完整 HTML 解析（那需要 DOMParser，在本模块要
- * 求的纯函数环境下不可用）。目标是挡住已知的执行面，而不是做到完美。
+ * 求的纯函数环境下不可用）。目标是挡住已知的执行面，而不是做到完美：
+ * 危险标签按黑名单剥离，URL 属性与事件属性按白名单/规范化后判定。
  */
 export function sanitizeExportHtml(html: string): string {
   return html
     .replace(BLOCKED_PAIRED_TAG_RE, "")
     .replace(BLOCKED_STRAY_TAG_RE, "")
+    .replace(URL_ATTR_RE, (whole: string, _lead: string, rawValue: string) => {
+      const unquoted = rawValue.replace(/^["']/, "").replace(/["']$/, "")
+      return isUnsafeUrl(unquoted) ? "" : whole
+    })
     .replace(EVENT_ATTR_RE, "")
-    .replace(DANGEROUS_URL_ATTR_RE, "")
 }
 
 /** Build print-ready HTML for PDF export (messages only, no chrome). */
