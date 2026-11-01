@@ -44,6 +44,68 @@ const KEYWORD_SECTION_MAP: Array<[RegExp, string]> = [
   [/^appendix\b/i, "Appendix"],
 ]
 
+/**
+ * 中文章节关键字。注意两点：
+ *
+ * 1. 不能用 `\b` 收尾 —— `\w` 只含 `[A-Za-z0-9_]`，CJK 不构成词边界，
+ *    `(摘要)\b` 永远不会匹配（与 SK-33 同一根因）。
+ * 2. 复合词要长的在前，「实验结果」先于「实验」，否则只会命中前半截。
+ */
+const ZH_SECTION_KEYWORDS = [
+  "摘要",
+  "引言",
+  "绪论",
+  "前言",
+  "相关工作",
+  "研究背景",
+  "背景",
+  "方法学",
+  "方法",
+  "实验结果",
+  "实验",
+  "结果",
+  "讨论",
+  "结论",
+  "总结",
+  "参考文献",
+  "致谢",
+  "附录",
+] as const
+
+const ZH_SECTION_MAP: Array<[RegExp, string]> = [
+  [/^摘要/, "Abstract"],
+  [/^引言|^绪论|^前言/, "Introduction"],
+  [/^相关工作/, "Related Work"],
+  [/^研究背景|^背景/, "Background"],
+  [/^方法学|^方法/, "Methodology"],
+  [/^实验结果|^实验/, "Experiments"],
+  [/^结果/, "Results"],
+  [/^讨论/, "Discussion"],
+  [/^结论|^总结/, "Conclusion"],
+  [/^参考文献/, "References"],
+  [/^致谢/, "Acknowledgments"],
+  [/^附录/, "Appendix"],
+]
+
+const ZH_SECTION_HEADING_RE = new RegExp(
+  `^(?:#{1,3}\\s+)?(?:(?:\\d+(?:\\.\\d+)*\\.?\\s*)|(?:[IVXLC]+\\.\\s+))?(${ZH_SECTION_KEYWORDS.join("|")})`
+)
+
+/** 中文标题的总长度上限：学术正文行几乎都超过这个长度。 */
+const ZH_MAX_SECTION_HEADING_CHARS = 24
+/** 中文标题内不该出现的句读标点（允许 `.`，因为「3.1 模型结构」需要它）。 */
+const ZH_INNER_PUNCT_RE = /[，。；：、]/
+
+function matchSectionKeyword(text: string): string | null {
+  for (const [re, name] of KEYWORD_SECTION_MAP) {
+    if (re.test(text)) return name
+  }
+  for (const [re, name] of ZH_SECTION_MAP) {
+    if (re.test(text)) return name
+  }
+  return null
+}
+
 export function detectSectionTitle(line: string): string | null {
   const trimmed = line.trim()
   if (!trimmed) return null
@@ -51,9 +113,8 @@ export function detectSectionTitle(line: string): string | null {
   const md = trimmed.match(MARKDOWN_HEADING_RE)
   if (md) {
     const title = md[2]!.trim()
-    for (const [re, name] of KEYWORD_SECTION_MAP) {
-      if (re.test(title)) return name
-    }
+    const known = matchSectionKeyword(title)
+    if (known) return known
     return title.replace(/^\d+(?:\.\d+)*\.?\s+/, "").trim() || title
   }
 
@@ -63,16 +124,21 @@ export function detectSectionTitle(line: string): string | null {
   if (SENTENCE_END_RE.test(trimmed)) return null
 
   const numbered = trimmed.match(SECTION_HEADING_RE)
-  if (!numbered) return null
+  if (numbered) {
+    const tail = trimmed.slice(numbered[0].length).trim()
+    if (tail.length > MAX_SECTION_HEADING_TAIL_CHARS) return null
 
-  const tail = trimmed.slice(numbered[0].length).trim()
-  if (tail.length > MAX_SECTION_HEADING_TAIL_CHARS) return null
-
-  const raw = numbered[1]!
-  for (const [re, name] of KEYWORD_SECTION_MAP) {
-    if (re.test(raw)) return name
+    const name = matchSectionKeyword(numbered[1]!)
+    if (name) return name
+    return numbered[1]!.charAt(0).toUpperCase() + numbered[1]!.slice(1).toLowerCase()
   }
-  return raw.charAt(0).toUpperCase() + raw.slice(1).toLowerCase()
+
+  // 中文标题没有空格、也无法靠 `\b` 收尾，改用「短行 + 无句读标点」判定
+  if (trimmed.length > ZH_MAX_SECTION_HEADING_CHARS) return null
+  if (ZH_INNER_PUNCT_RE.test(trimmed)) return null
+  const zh = trimmed.match(ZH_SECTION_HEADING_RE)
+  if (!zh) return null
+  return matchSectionKeyword(zh[1]!)
 }
 
 function buildLinePageMap(blocks: LayoutTextBlock[]): Map<string, number> {
