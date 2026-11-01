@@ -1,5 +1,6 @@
 import {
   AlignmentType,
+  BorderStyle,
   Document,
   HeadingLevel,
   Packer,
@@ -21,6 +22,23 @@ import type { Lang } from "@/store/types"
 
 type InlinePart = { text: string; bold?: boolean; italic?: boolean }
 
+const CODE_FONT = "Consolas"
+/** docx 的 size 单位是半磅：18 = 9pt。 */
+const CODE_FONT_SIZE = 18
+const QUOTE_COLOR = "555555"
+
+/**
+ * 围栏：``` 或 ~~~，可带 info string（```python / ```js title="x"）。
+ * info string 里若有反引号，说明这行其实是行内代码（```` ```x``` ````），
+ * 不能当围栏 —— 否则会把后面的全文都吞进代码块。
+ */
+const FENCE_RE = /^(`{3,}|~{3,})\s*([^`~]*)$/
+/** 引用：最多 3 个前导空格 + 一个或多个 `>`。 */
+const QUOTE_PREFIX_RE = /^\s{0,3}(?:>\s?)+/
+const QUOTE_LINE_RE = /^\s{0,3}>/
+/** 分隔线：`---` / `***` / `___`（允许符号间空格）。 */
+const RULE_RE = /^\s{0,3}(?:(?:\*\s*){3,}|(?:-\s*){3,}|(?:_\s*){3,})$/
+
 function parseInline(text: string): InlinePart[] {
   const parts: InlinePart[] = []
   const re = /(\*\*[^*]+\*\*|\*[^*]+\*|__[^_]+__|_[^_]+_)/g
@@ -40,19 +58,77 @@ function parseInline(text: string): InlinePart[] {
   return parts.length ? parts : [{ text }]
 }
 
-function inlineParagraph(text: string, opts?: { heading?: (typeof HeadingLevel)[keyof typeof HeadingLevel] }) {
-  const runs = parseInline(text).map(
+type RunStyle = { color?: string; size?: number; font?: string; italics?: boolean }
+
+/** `**x**` / `*x*` → 带样式的 run 列表；样式参数用于整块统一（引用、代码）。 */
+function inlineRuns(text: string, style?: RunStyle): TextRun[] {
+  return parseInline(text).map(
     (p) =>
       new TextRun({
         text: p.text,
         bold: p.bold,
-        italics: p.italic,
+        italics: p.italic || style?.italics,
+        color: style?.color,
+        size: style?.size,
+        font: style?.font,
       })
   )
+}
+
+function inlineParagraph(text: string, opts?: { heading?: (typeof HeadingLevel)[keyof typeof HeadingLevel] }) {
+  const runs = inlineRuns(text)
   return new Paragraph({
     heading: opts?.heading,
     children: runs.length ? runs : [new TextRun("")],
     spacing: { after: 120 },
+  })
+}
+
+/**
+ * 代码块：每行一段，等宽字体，**不裁掉前导空白**。
+ *
+ * 之前没有围栏分支，```` ```python ```` 与 `    if n < 2:` 都会走到正文分支：
+ * 围栏标记原样进 Word，而 `trimmed` 把缩进吃掉一半 —— Python 的缩进是语义，
+ * 导出后代码直接不可读。
+ */
+function codeParagraphs(codeLines: string[]): Paragraph[] {
+  if (!codeLines.length) return [new Paragraph({ children: [new TextRun("")] })]
+  return codeLines.map(
+    (line) =>
+      new Paragraph({
+        children: [new TextRun({ text: line, font: CODE_FONT, size: CODE_FONT_SIZE })],
+        spacing: { after: 0, line: 240 },
+        indent: { left: 240 },
+      })
+  )
+}
+
+/**
+ * 引用块：去掉 `>` 标记，用左缩进 + 灰色斜体表达。
+ * Word 没有块引用样式；而导出元数据头（`> 模型：…`）正是引用块形式，
+ * 不处理就会在每份带元数据的文档顶部留下字面 `>`。
+ */
+function quoteParagraph(quoteLines: string[]): Paragraph {
+  const runs: TextRun[] = []
+  quoteLines.forEach((line, idx) => {
+    const parts = inlineRuns(line, { color: QUOTE_COLOR, italics: true })
+    const first = parts[0] ?? new TextRun({ text: "" })
+    if (idx > 0) runs.push(new TextRun({ break: 1 }))
+    runs.push(first)
+    runs.push(...parts.slice(1))
+  })
+  return new Paragraph({
+    children: runs.length ? runs : [new TextRun("")],
+    spacing: { after: 120 },
+    indent: { left: 480 },
+  })
+}
+
+function ruleParagraph(): Paragraph {
+  return new Paragraph({
+    children: [new TextRun("")],
+    spacing: { after: 120 },
+    border: { bottom: { style: BorderStyle.SINGLE, size: 6, color: "CCCCCC", space: 1 } },
   })
 }
 
@@ -146,6 +222,26 @@ export async function exportMarkdownAsDocx(
       continue
     }
 
+    const fence = trimmed.match(FENCE_RE)
+    if (fence) {
+      const marker = fence[1] ?? "```"
+      const closeRe = new RegExp(`^\\s*${marker[0] === "~" ? "~" : "`"}{${marker.length},}\\s*$`)
+      i += 1
+      const codeLines: string[] = []
+      while (i < lines.length) {
+        const raw = lines[i] ?? ""
+        if (closeRe.test(raw)) {
+          i += 1
+          break
+        }
+        // 保留前导空白（缩进即语义），只裁掉行尾多余空白
+        codeLines.push(raw.replace(/\t/g, "    ").replace(/[ \t]+$/, ""))
+        i += 1
+      }
+      children.push(...codeParagraphs(codeLines))
+      continue
+    }
+
     if (isTableRow(trimmed)) {
       const tableRows: string[][] = []
       while (i < lines.length && isTableRow(lines[i] ?? "")) {
@@ -156,10 +252,28 @@ export async function exportMarkdownAsDocx(
       continue
     }
 
+    if (QUOTE_LINE_RE.test(line)) {
+      const quoteLines: string[] = []
+      while (i < lines.length && QUOTE_LINE_RE.test(lines[i] ?? "")) {
+        quoteLines.push((lines[i] ?? "").replace(QUOTE_PREFIX_RE, ""))
+        i += 1
+      }
+      children.push(quoteParagraph(quoteLines))
+      continue
+    }
+
+    if (RULE_RE.test(trimmed)) {
+      children.push(ruleParagraph())
+      i += 1
+      continue
+    }
+
     if (/^[-*+]\s+/.test(trimmed)) {
+      const itemText = trimmed.replace(/^[-*+]\s+/, "")
+      const runs = inlineRuns(itemText)
       children.push(
         new Paragraph({
-          children: [new TextRun({ text: `• ${trimmed.replace(/^[-*+]\s+/, "")}` })],
+          children: [new TextRun({ text: "• " }), ...runs],
           spacing: { after: 80 },
           indent: { left: 360 },
         })
