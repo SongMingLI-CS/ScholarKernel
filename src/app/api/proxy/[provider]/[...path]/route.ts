@@ -1,10 +1,13 @@
 import { jsonError } from "@/lib/api-utils"
 import {
+  ProxyBodyTooLargeError,
   checkProxyAuth,
   checkRateLimit,
   isKnownProxyProvider,
   logProxyRequest,
+  readBoundedRequestBody,
   resolveClientIp,
+  resolveProxyUpstreamTimeoutMs,
   resolveProxyUpstreamUrl,
 } from "@/lib/proxy-gateway"
 
@@ -53,15 +56,31 @@ async function handleProxy(req: Request, ctx: RouteCtx) {
     method: req.method,
     headers,
     redirect: "manual",
+    signal: AbortSignal.timeout(resolveProxyUpstreamTimeoutMs()),
   }
   if (req.method !== "GET" && req.method !== "HEAD") {
-    init.body = await req.arrayBuffer()
+    try {
+      init.body = await readBoundedRequestBody(req)
+    } catch (e) {
+      if (e instanceof ProxyBodyTooLargeError) {
+        logProxyRequest({ provider, path: pathSegments.join("/"), status: 413, clientIp })
+        return jsonError("Proxy request body too large", 413)
+      }
+      throw e
+    }
   }
 
   let upstreamRes: Response
   try {
     upstreamRes = await fetch(url.toString(), init)
   } catch (e) {
+    const timedOut = e instanceof Error && (e.name === "TimeoutError" || e.name === "AbortError")
+    if (timedOut) {
+      // 上游既不返回也不断开时，不能让请求永久悬挂
+      console.error("[proxy] upstream timeout", provider)
+      logProxyRequest({ provider, path: pathSegments.join("/"), status: 504, clientIp })
+      return jsonError("Upstream proxy request timed out", 504)
+    }
     console.error("[proxy] upstream fetch failed", e)
     logProxyRequest({ provider, path: pathSegments.join("/"), status: 502, clientIp })
     return jsonError("Upstream proxy request failed", 502)

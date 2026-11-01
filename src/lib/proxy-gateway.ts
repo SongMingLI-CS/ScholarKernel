@@ -86,6 +86,89 @@ export function resolveProxyUpstreamUrl(provider: string, pathSegments: string[]
   return suffix ? `${base}/${suffix}` : base
 }
 
+/* ------------------------------------------------------------------ *
+ * 请求体上限与上游超时
+ *
+ * 转发前的 `await req.arrayBuffer()` 没有任何体积上限：App Router 的
+ * route handler 不像 Server Actions 有 body 体积兜底，限流又按可伪造的
+ * `x-forwarded-for` 计数。未配置 PROXY_ACCESS_TOKEN 时该路由默认放行，
+ * 于是任何人都能用并发的大请求体把进程内存打满。
+ * ------------------------------------------------------------------ */
+
+export class ProxyBodyTooLargeError extends Error {
+  readonly status = 413 as const
+  constructor(
+    readonly limitBytes: number,
+    readonly seenBytes: number
+  ) {
+    super(`ProxyBodyTooLarge: ${seenBytes} > ${limitBytes}`)
+    this.name = "ProxyBodyTooLargeError"
+  }
+}
+
+/** 32 MiB：足够容纳超长上下文的多模态请求，又远低于会威胁进程的量级。 */
+export const DEFAULT_PROXY_MAX_BODY_BYTES = 32 * 1024 * 1024
+/** 上游是 LLM 流式接口，首字节可能很慢；给 2 分钟，但不允许无限挂起。 */
+export const DEFAULT_PROXY_UPSTREAM_TIMEOUT_MS = 120_000
+
+function readPositiveIntEnv(name: string): number | null {
+  const raw = process.env[name]
+  if (typeof raw !== "string") return null
+  const n = Number.parseInt(raw.trim(), 10)
+  return Number.isFinite(n) && n > 0 ? n : null
+}
+
+export function resolveProxyMaxBodyBytes(): number {
+  return readPositiveIntEnv("PROXY_MAX_BODY_BYTES") ?? DEFAULT_PROXY_MAX_BODY_BYTES
+}
+
+export function resolveProxyUpstreamTimeoutMs(): number {
+  return readPositiveIntEnv("PROXY_UPSTREAM_TIMEOUT_MS") ?? DEFAULT_PROXY_UPSTREAM_TIMEOUT_MS
+}
+
+/**
+ * 有界读取请求体。
+ *
+ * 先看 `content-length` 做快速拒绝（该头部可被伪造，因此只用于提前失败，
+ * 不作为放行依据）；随后边读边累加，任一分片越界立即取消剩余读取。
+ */
+export async function readBoundedRequestBody(
+  req: Request,
+  maxBytes = resolveProxyMaxBodyBytes()
+): Promise<ArrayBuffer> {
+  const declaredRaw = req.headers.get("content-length")
+  const declared = declaredRaw === null ? Number.NaN : Number.parseInt(declaredRaw, 10)
+  if (Number.isFinite(declared) && declared > maxBytes) {
+    throw new ProxyBodyTooLargeError(maxBytes, declared)
+  }
+  if (!req.body) return new ArrayBuffer(0)
+
+  const reader = req.body.getReader()
+  const chunks: Uint8Array[] = []
+  let total = 0
+  try {
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      if (!value || value.byteLength === 0) continue
+      total += value.byteLength
+      if (total > maxBytes) throw new ProxyBodyTooLargeError(maxBytes, total)
+      chunks.push(value)
+    }
+  } catch (e) {
+    await reader.cancel().catch(() => undefined)
+    throw e
+  }
+
+  const out = new Uint8Array(total)
+  let offset = 0
+  for (const c of chunks) {
+    out.set(c, offset)
+    offset += c.byteLength
+  }
+  return out.buffer as ArrayBuffer
+}
+
 function readBearerToken(req: Request): string | null {
   const auth = req.headers.get("authorization") ?? req.headers.get("Authorization")
   if (!auth) return null
