@@ -257,9 +257,17 @@ export function serializeResearchOutputForReasoning(output: Record<string, unkno
 }
 
 const REASONING_JSON_MARKER = "已完成子任务结果（JSON）："
+const CLAMP_TRUNC_NOTE = "\n\n[...truncated by contextLimit...]"
+const CLAMP_JSON_NOTE = "\n\n[...subtask JSON truncated; full references kept above...]"
+const CLAMP_SHORT_NOTE = "\n\n[...truncated]"
 
 /**
  * 推理 prompt 截断：保留用户需求与完整参考文献块，仅压缩 JSON 段。
+ *
+ * 上限是硬约束 —— 这个 `limit` 来自 `inference.contextLimit`，唯一作用就是
+ * 把 prompt 压进模型上下文窗口，返回超出即等于没有截断。
+ * 截断提示语本身也计入预算（原实现把提示语加在 `slice(0, lim)` 之后，
+ * 且用 `Math.max(200, reserved)` 硬塞 JSON 片段，实测可超出 35 / 15 字符）。
  */
 export function clampReasoningPrompt(text: string, limit: number | undefined): string {
   const lim = typeof limit === "number" && Number.isFinite(limit) ? Math.max(0, Math.floor(limit)) : 0
@@ -267,19 +275,22 @@ export function clampReasoningPrompt(text: string, limit: number | undefined): s
 
   const markerIdx = text.indexOf(REASONING_JSON_MARKER)
   if (markerIdx < 0) {
-    return text.slice(0, lim) + "\n\n[...truncated by contextLimit...]"
+    const keep = lim - CLAMP_TRUNC_NOTE.length
+    if (keep <= 0) return CLAMP_TRUNC_NOTE.slice(0, lim)
+    return text.slice(0, keep) + CLAMP_TRUNC_NOTE
   }
 
   const head = text.slice(0, markerIdx + REASONING_JSON_MARKER.length)
   const jsonPart = text.slice(markerIdx + REASONING_JSON_MARKER.length)
-  const reserved = lim - head.length - 64
-  if (reserved <= 0) return head + "\n\n[...truncated by contextLimit...]"
+  if (head.length + jsonPart.length <= lim) return head + jsonPart
 
-  const jsonBudget = Math.max(200, reserved)
-  const trimmedJson =
-    jsonPart.length <= jsonBudget
-      ? jsonPart
-      : `${jsonPart.slice(0, jsonBudget)}\n\n[...subtask JSON truncated; full references kept above...]`
+  const room = lim - head.length
+  if (room <= 0) return text.slice(0, lim)
+  if (jsonPart.length <= room) return head + jsonPart
 
-  return head + trimmedJson
+  if (room <= CLAMP_JSON_NOTE.length) {
+    if (room >= CLAMP_SHORT_NOTE.length) return head + CLAMP_SHORT_NOTE
+    return head.slice(0, lim)
+  }
+  return head + jsonPart.slice(0, room - CLAMP_JSON_NOTE.length) + CLAMP_JSON_NOTE
 }
