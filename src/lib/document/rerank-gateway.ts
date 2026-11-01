@@ -18,12 +18,41 @@ function safeEnv(name: string): string {
   }
 }
 
+/**
+ * CJK 连续段（含假名）。中文/日文没有词间空格，按空白切词会把整句变成**一个** token，
+ * 查询与文档几乎永不相等，词项重排直接失效。
+ */
+const CJK_RUN = "\\u3400-\\u4dbf\\u4e00-\\u9fff\\uf900-\\ufaff\\u3040-\\u30ff"
+const CJK_SPLIT_RE = new RegExp(`([${CJK_RUN}]+)`)
+const CJK_ONLY_RE = new RegExp(`^[${CJK_RUN}]+$`)
+
+/**
+ * 中文没有空格，用**二元组（bigram）**近似切词：`深度学习` -> `深度 / 度学 / 学习`。
+ * 这是无词典分词里最省事、召回也够的做法；单字段落仍产出该单字。
+ */
+function cjkBigrams(run: string): string[] {
+  const chars = Array.from(run)
+  if (chars.length === 1) return [chars[0]!]
+  const out: string[] = []
+  for (let i = 0; i + 1 < chars.length; i += 1) out.push(chars[i]! + chars[i + 1]!)
+  return out
+}
+
 function tokenize(text: string): string[] {
-  return text
-    .toLowerCase()
-    .replace(/[^\p{L}\p{N}\s]/gu, " ")
-    .split(/\s+/)
-    .filter((t) => t.length > 1)
+  const lowered = text.toLowerCase()
+  const out: string[] = []
+  // 先把 CJK 段与其余部分切开，各走各的规则
+  for (const part of lowered.split(CJK_SPLIT_RE)) {
+    if (!part) continue
+    if (CJK_ONLY_RE.test(part)) {
+      out.push(...cjkBigrams(part))
+      continue
+    }
+    for (const t of part.replace(/[^\p{L}\p{N}\s]/gu, " ").split(/\s+/)) {
+      if (t.length > 1) out.push(t)
+    }
+  }
+  return out
 }
 
 /** BM25 风格轻量词项打分（无外部 API 时的兜底重排）。 */

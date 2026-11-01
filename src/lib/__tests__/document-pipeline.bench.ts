@@ -90,6 +90,18 @@ describe("retrieval reranking", () => {
     lexicalRerankScores(QUERY, HITS.map((h) => `${h.title}\n${h.snippet}\n${h.url}`))
   })
 
+  // 中文查询走 bigram 分词，token 数约为英文的 2 倍，单列一条以观察回归
+  bench("lexicalRerankScores 28 docs (CJK query)", () => {
+    lexicalRerankScores(
+      "基于深度学习的注意力机制检索增强生成",
+      HITS.map((h) =>
+        h.title.startsWith("Attention")
+          ? `${h.title}\n本文提出基于深度学习的注意力机制，用于检索增强生成任务`
+          : `${h.title}\n蛋白质结构预测的实验结果与分析`
+      )
+    )
+  })
+
   bench("dedupe + sanitize on 56 candidates", () => {
     const deduped = dedupeAcademicHits(DUPLICATED_HITS)
     sanitizeRerankScores(
