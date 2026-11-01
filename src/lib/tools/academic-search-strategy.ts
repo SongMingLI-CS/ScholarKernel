@@ -3,6 +3,7 @@ import {
   RERANK_FINAL_TOP_K,
   RETRIEVAL_RECALL_TOP_K,
 } from "@/lib/document/rerank-gateway"
+import { truncateUtf16 } from "@/lib/text-truncate"
 
 /** 第一阶段宽召回 TopK（Tavily advanced） */
 export const DEFAULT_ACADEMIC_SEARCH_MAX_RESULTS = RETRIEVAL_RECALL_TOP_K
@@ -22,7 +23,7 @@ const SURVEY_PROGRESS_RE =
 export function truncateSnippet(text: string, maxChars: number): string {
   const t = text.trim()
   if (!maxChars || t.length <= maxChars) return t
-  return `${t.slice(0, maxChars)}…`
+  return truncateUtf16(t, maxChars, "…")
 }
 
 /** 宽泛主题：短 query、无具体论文标题、或命中常见领域词 */

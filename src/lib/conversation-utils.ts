@@ -1,6 +1,7 @@
 import type { ConversationSummary } from "@/lib/db-types"
 import type { ExportMetadata } from "@/lib/export-metadata"
 import { buildExportMetadataMarkdown } from "@/lib/export-metadata"
+import { truncateUtf16 } from "@/lib/text-truncate"
 import type { ChatMessage } from "@/store/useAgentStore"
 import type { Lang } from "@/store/types"
 
@@ -86,12 +87,7 @@ const MAX_FILENAME_BASE_CHARS = 100
  * 按 UTF-16 长度截断（文件系统限制的就是这个），但不能留下半个代理对 ——
  * 否则会得到一个孤立的高位代理，写盘时变成乱码字符。
  */
-function truncateFileNameBase(value: string, limit: number): string {
-  if (value.length <= limit) return value
-  let out = value.slice(0, limit)
-  if (/[\uD800-\uDBFF]$/.test(out)) out = out.slice(0, -1)
-  return out
-}
+const truncateFileNameBase = truncateUtf16
 
 export function sanitizeExportFilename(title: string): string {
   const cleaned = title
@@ -152,9 +148,7 @@ const DEFAULT_TITLES = new Set(["新对话", "new chat", "new conversation"])
 export function deriveConversationTitle(firstUserMessage: string, maxLen = 32): string {
   const s = firstUserMessage.trim().replace(/\s+/g, " ")
   if (!s) return "新对话"
-  const oneLine = (s.split("\n")[0] ?? s).trim()
-  if (oneLine.length <= maxLen) return oneLine
-  return `${oneLine.slice(0, maxLen - 1)}…`
+  return truncateUtf16(s, maxLen, "…")
 }
 
 export function isDefaultConversationTitle(title: string): boolean {

@@ -1,3 +1,5 @@
+import { truncateUtf16 } from "@/lib/text-truncate"
+
 /**
  * 脱敏必须覆盖**现实的 key 形状**，而不只是「sk- 后面全是字母数字」。
  * 现代 provider 的 key 中间带连字符：`sk-proj-…`（OpenAI）、`sk-ant-api03-…`（Anthropic）、
@@ -24,8 +26,7 @@ export function sanitizeAgentErrorText(text: string, maxLen = 4000): string {
   for (const re of SECRET_PATTERNS) {
     out = out.replace(re, "[redacted]")
   }
-  if (out.length > maxLen) return `${out.slice(0, maxLen)}…`
-  return out
+  return truncateUtf16(out, maxLen, "…")
 }
 
 export function stackPreview(stack: string | undefined, lines = 5): string {
