@@ -17,6 +17,14 @@ type PendingGate = {
   resolve: (decision: HumanInterventionDecision) => void
   reject: (err: Error) => void
   createdAt: number
+  /**
+   * 挂起该断点的用户。生产路径上 sessionId 就是 jobId（`agent/jobs/route.ts`
+   * 的 `interventionSessionId: job.id`），而 jobId 不是能力令牌 —— 它会出现在
+   * 会话列表、日志、错误信息里。没有归属校验时，任何拿到别人 jobId 的登录用户
+   * 都能替对方点「批准 / 改道」，并把自己的指令注入对方的审稿流程。
+   * 缺省（undefined）表示无用户上下文的服务端内部调用，保持旧行为。
+   */
+  ownerId?: string
 }
 
 const gates = new Map<string, PendingGate>()
@@ -26,7 +34,8 @@ export function waitForHumanIntervention(
   sessionId: string,
   nodeId: string,
   reason: string,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  ownerId?: string
 ): Promise<HumanInterventionDecision> {
   if (!sessionId.trim()) {
     return Promise.resolve({ action: "approve" })
@@ -37,7 +46,7 @@ export function waitForHumanIntervention(
   }
 
   return new Promise<HumanInterventionDecision>((resolve, reject) => {
-    const gate: PendingGate = { nodeId, reason, resolve, reject, createdAt: Date.now() }
+    const gate: PendingGate = { nodeId, reason, resolve, reject, createdAt: Date.now(), ownerId }
     gates.set(sessionId, gate)
 
     const onAbort = () => {
@@ -48,21 +57,38 @@ export function waitForHumanIntervention(
   })
 }
 
+/**
+ * 归属判定：门记录了属主时必须与请求者一致；未记录属主则不设限。
+ * 注意**不能**在拒绝时删除门 —— 拒绝只是「这次不给你」，断点仍在等合法属主。
+ */
+function isOwnedBy(gate: PendingGate, requesterId: string | undefined): boolean {
+  if (!gate.ownerId) return true
+  return gate.ownerId === requesterId
+}
+
 export function resolveHumanInterventionSession(
   sessionId: string,
-  decision: HumanInterventionDecision
+  decision: HumanInterventionDecision,
+  requesterId?: string
 ): { ok: true; nodeId: string } | { ok: false; error: string } {
   const gate = gates.get(sessionId)
   if (!gate) return { ok: false, error: "InterventionSessionNotFound" }
+  if (!isOwnedBy(gate, requesterId)) {
+    return { ok: false, error: "InterventionSessionForbidden" }
+  }
   gates.delete(sessionId)
   gate.resolve(decision)
   return { ok: true, nodeId: gate.nodeId }
 }
 
-export function getPendingIntervention(sessionId: string): Omit<PendingGate, "resolve" | "reject"> | null {
+export function getPendingIntervention(
+  sessionId: string,
+  requesterId?: string
+): Omit<PendingGate, "resolve" | "reject"> | null {
   const gate = gates.get(sessionId)
   if (!gate) return null
-  return { nodeId: gate.nodeId, reason: gate.reason, createdAt: gate.createdAt }
+  if (!isOwnedBy(gate, requesterId)) return null
+  return { nodeId: gate.nodeId, reason: gate.reason, createdAt: gate.createdAt, ownerId: gate.ownerId }
 }
 
 export function cancelHumanInterventionSession(sessionId: string, err?: Error) {

@@ -58,15 +58,32 @@ export async function POST(req: Request) {
     decision = { action: "redirect", instruction, prunedNodes }
   }
 
-  const resolved = resolveHumanInterventionSession(sessionId, decision)
+  /**
+   * 顺序很关键：**先**证明这个 job 属于当前用户，**再**去动门。
+   * 旧实现先 resolve 门、后校验 jobId，于是「用自己合法的 jobId 走授权、
+   * 拿别人的 sessionId 去唤醒」可以通吃别人的断点。
+   */
+  const requestedJobId = body.jobId?.trim()
+  let job = null
+  if (requestedJobId) {
+    job = await getAgentJobForUser(requestedJobId, userId)
+    if (!job) return jsonError("Job not found", 404)
+    // 服务端挂起时 sessionId 恒等于 job.id（`interventionSessionId: job.id`）。
+    // 两者不一致说明不是同一会话，直接拒绝而不是猜。
+    if (sessionId !== job.id) {
+      return jsonError("Invalid body: sessionId does not match jobId", 400)
+    }
+  }
+
+  const resolved = resolveHumanInterventionSession(sessionId, decision, userId)
   if (!resolved.ok) {
+    if (resolved.error === "InterventionSessionForbidden") {
+      return jsonError(resolved.error, 403)
+    }
     return jsonError(resolved.error, 404)
   }
 
-  if (body.jobId?.trim()) {
-    const job = await getAgentJobForUser(body.jobId.trim(), userId)
-    if (!job) return jsonError("Job not found", 404)
-
+  if (job) {
     const nodesToPersist =
       prunedNodes ??
       parseWorkflowNodes(body.workflowNodes) ??
@@ -100,7 +117,7 @@ export async function GET(req: Request) {
   if (!sessionId) return jsonError("sessionId required", 400)
 
   const { getPendingIntervention } = await import("@/lib/agent/human-intervention-gate")
-  const pending = getPendingIntervention(sessionId)
+  const pending = getPendingIntervention(sessionId, userId)
   if (!pending) return jsonOk({ pending: false })
 
   return jsonOk({

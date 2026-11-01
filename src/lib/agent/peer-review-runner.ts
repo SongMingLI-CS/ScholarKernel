@@ -413,7 +413,7 @@ export async function executePeerReviewGroup(input: ExecutePeerReviewGroupInput)
     const waitFn = input.waitForHumanIntervention ?? waitForHumanIntervention
     let decision: HumanInterventionDecision
     try {
-      decision = await waitFn(sessionId, r3Node.id, reason, deps.signal)
+      decision = await waitFn(sessionId, r3Node.id, reason, deps.signal, deps.userId)
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
       hooks.onNodePatch?.(r3Node.id, { status: "error", error: msg })
