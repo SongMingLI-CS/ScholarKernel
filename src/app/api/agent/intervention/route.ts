@@ -5,6 +5,11 @@ import {
   type HumanInterventionDecision,
 } from "@/lib/agent/human-intervention-gate"
 import { pruneWorkflowAfterHumanIntervention } from "@/lib/agent/human-intervention-pruning"
+import {
+  isWorkflowInstructionWithinLimit,
+  MAX_WORKFLOW_INSTRUCTION_CHARS,
+  normalizeWorkflowNodes,
+} from "@/lib/agent/workflow-node-guard"
 import type { WorkflowNode } from "@/lib/agent/planner"
 import { jsonError, jsonOk, parseJsonBody } from "@/lib/api-utils"
 
@@ -15,11 +20,6 @@ type InterventionBody = {
   action?: "approve" | "redirect"
   instruction?: string
   workflowNodes?: WorkflowNode[]
-}
-
-function parseWorkflowNodes(raw: unknown): WorkflowNode[] | null {
-  if (!Array.isArray(raw)) return null
-  return raw as WorkflowNode[]
 }
 
 export async function POST(req: Request) {
@@ -41,12 +41,32 @@ export async function POST(req: Request) {
     return jsonError("Invalid body: instruction required for redirect", 400)
   }
 
+  if (body.instruction !== undefined && !isWorkflowInstructionWithinLimit(body.instruction)) {
+    return jsonError(
+      `Invalid body: instruction exceeds ${MAX_WORKFLOW_INSTRUCTION_CHARS} characters`,
+      400
+    )
+  }
+
+  /**
+   * `workflowNodes` 会被写进 `job.checkpoint.nodes`，之后被读回渲染拓扑、
+   * 也被续跑当作真实计划。必须整批归一化，形状不成立就拒绝 —— 落库一个
+   * `[{}]` 比返回 400 难排查得多。
+   */
+  let clientNodes: WorkflowNode[] | null = null
+  if (body.workflowNodes !== undefined) {
+    clientNodes = normalizeWorkflowNodes(body.workflowNodes)
+    if (clientNodes === null) {
+      return jsonError("Invalid body: workflowNodes", 400)
+    }
+  }
+
   let decision: HumanInterventionDecision = { action: "approve" }
   let prunedNodes: WorkflowNode[] | undefined
 
   if (action === "redirect") {
     const instruction = body.instruction!.trim()
-    const baseNodes = parseWorkflowNodes(body.workflowNodes) ?? []
+    const baseNodes = clientNodes ?? []
     if (baseNodes.length > 0) {
       const pruned = pruneWorkflowAfterHumanIntervention({
         nodes: baseNodes,
@@ -86,7 +106,7 @@ export async function POST(req: Request) {
   if (job) {
     const nodesToPersist =
       prunedNodes ??
-      parseWorkflowNodes(body.workflowNodes) ??
+      clientNodes ??
       (Array.isArray((job.checkpoint as { nodes?: unknown })?.nodes)
         ? ((job.checkpoint as { nodes: unknown[] }).nodes as WorkflowNode[])
         : [])
