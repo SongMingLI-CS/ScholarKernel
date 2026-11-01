@@ -11,7 +11,18 @@ export type RecordTokenUsageInput = {
   ttftMs?: number | null
 }
 
-export function extractUsageCounts(usage: LanguageModelUsage | undefined | null): {
+/**
+ * 只需要两个计数，因此按结构最小化声明参数类型：
+ * AI SDK 的 LanguageModelUsage 结构上可直接传入，同时允许测试/其他调用方
+ * 只提供 inputTokens / outputTokens 两个字段。
+ */
+export type UsageCountsInput = {
+  inputTokens?: number | null
+  outputTokens?: number | null
+  totalTokens?: number | null
+}
+
+export function extractUsageCounts(usage: UsageCountsInput | undefined | null): {
   inputTokens: number
   outputTokens: number
 } {

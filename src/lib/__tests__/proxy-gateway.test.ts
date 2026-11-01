@@ -8,6 +8,11 @@ import {
   resetProxyRateLimitsForTests,
 } from "@/lib/proxy-gateway"
 
+// NODE_ENV 在 @types/node 中是只读属性，测试里用显式断言写入
+function setNodeEnv(value: string) {
+  ;(process.env as Record<string, string | undefined>).NODE_ENV = value
+}
+
 describe("proxy-gateway", () => {
   const envSnapshot = { ...process.env }
 
@@ -16,7 +21,7 @@ describe("proxy-gateway", () => {
     process.env = { ...envSnapshot }
     delete process.env.PROXY_ACCESS_TOKEN
     delete process.env.PROXY_RATE_LIMIT_PER_MIN
-    process.env.NODE_ENV = "development"
+    setNodeEnv("development")
   })
 
   afterEach(() => {
@@ -41,7 +46,7 @@ describe("proxy-gateway", () => {
   })
 
   it("allows proxy in production when PROXY_ACCESS_TOKEN is unset (direct fallback)", async () => {
-    process.env.NODE_ENV = "production"
+    setNodeEnv("production")
     const req = new Request("http://localhost/api/proxy/openai/v1/models")
     await expect(checkProxyAuth(req)).resolves.toEqual({ ok: true })
   })

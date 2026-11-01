@@ -5,7 +5,9 @@ export function learningLaunchId(search: string): string | null {
   return params.get("learning") === "1" && id && /^learning-[0-9a-f-]{36}$/.test(id) ? id : null
 }
 
-export function learningDraftFromMessages(messages: Array<{ metadata?: unknown }>): string | null {
+export function learningDraftFromMessages(
+  messages: Array<{ metadata?: unknown; content?: string }>
+): string | null {
   for (const message of messages) {
     const metadata = message.metadata
     if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) continue

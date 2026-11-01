@@ -1,5 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
+// NODE_ENV 在 @types/node 中是只读属性，测试里用显式断言写入
+function setNodeEnv(value: string) {
+  ;(process.env as Record<string, string | undefined>).NODE_ENV = value
+}
+
 describe("crypto-server", () => {
   const envSnapshot = { ...process.env }
 
@@ -29,7 +34,7 @@ describe("crypto-server", () => {
   })
 
   it("throws in production when encryption secret is missing", async () => {
-    process.env.NODE_ENV = "production"
+    setNodeEnv("production")
     delete process.env.ENCRYPTION_SECRET
     delete process.env.DATABASE_ENCRYPTION_KEY
     const { assertEncryptionSecretForProduction } = await import("@/lib/crypto-server")
@@ -37,7 +42,7 @@ describe("crypto-server", () => {
   })
 
   it("resolveEncryptionSecret throws in production when secret is missing", async () => {
-    process.env.NODE_ENV = "production"
+    setNodeEnv("production")
     delete process.env.ENCRYPTION_SECRET
     delete process.env.DATABASE_ENCRYPTION_KEY
     const { resolveEncryptionSecret } = await import("@/lib/crypto-server")
@@ -45,7 +50,7 @@ describe("crypto-server", () => {
   })
 
   it("uses dev fallback in non-production when secret is missing", async () => {
-    process.env.NODE_ENV = "development"
+    setNodeEnv("development")
     delete process.env.ENCRYPTION_SECRET
     delete process.env.DATABASE_ENCRYPTION_KEY
     const { encryptForStorage, decryptFromStorage } = await import("@/lib/crypto-server")
