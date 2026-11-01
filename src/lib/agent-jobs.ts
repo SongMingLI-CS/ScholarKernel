@@ -6,7 +6,7 @@ import {
   peerReviewCheckpointToJobPatch,
   type PeerReviewCheckpointData,
 } from "@/lib/agent/peer-review-checkpoint"
-import type { Prisma } from "../../generated/prisma/client"
+import type { AgentJob, Prisma } from "../../generated/prisma/client"
 import type { ActiveProviderConfig } from "@/lib/agent/planner"
 
 export type { PeerReviewCheckpointData } from "@/lib/agent/peer-review-checkpoint"
@@ -115,15 +115,29 @@ export async function failAgentJob(
 ) {
   const { errorMessage, errorStack } = serializeAgentJobError(error)
 
-  let prev: unknown
+  let existing: AgentJob | null = null
   try {
-    const row = await prisma.agentJob.findUnique({ where: { id }, select: { checkpoint: true } })
-    prev = row?.checkpoint
+    existing = await prisma.agentJob.findUnique({ where: { id } })
   } catch {
     // 读不到历史 checkpoint 不能阻断「把错误写进去」这件更重要的事
-    prev = undefined
+    existing = null
   }
 
+  /**
+   * 终态不可逆：已经 `done` 的任务不能被事后错误改写。
+   *
+   * 触发路径是真实的：`/api/agent/run` 用 `void persistAgentJobError(...)` 做
+   * fire-and-forget，与 `completeAgentJob` 没有顺序保证。一次成功完成的运行，
+   * 只要收尾（写消息 / 断流 / 客户端 abort）里抛错，就会被写成
+   * `status="error"` + `result` 仍在 + `checkpoint.phase="error"` 的自相矛盾记录：
+   * 既不能被断点续跑（phase 已 error），也不能被信任（结果在但状态是失败）。
+   */
+  if (existing?.status === "done") {
+    console.warn("[failAgentJob] job already done, skip error write:", id)
+    return existing
+  }
+
+  const prev = existing?.checkpoint
   const shouldWriteCheckpoint = Boolean(prev) || Boolean(checkpoint)
 
   return prisma.agentJob.update({
@@ -147,6 +161,12 @@ export function persistAgentJobError(userId: string, error: unknown, ctx: AgentJ
     if (ctx.jobId) {
       const owned = await prisma.agentJob.findFirst({ where: { id: ctx.jobId, userId } })
       if (owned) {
+        // 与 failAgentJob 同一条铁律：已完成的任务不被事后错误改写。
+        // 这里必须 `return` 而不是继续往下走 —— 否则会顺手把另一条活跃任务标成失败。
+        if (owned.status === "done") {
+          console.warn("[persistAgentJobError] job already done, skip:", ctx.jobId)
+          return
+        }
         await prisma.agentJob.update({
           where: { id: ctx.jobId },
           data: {
