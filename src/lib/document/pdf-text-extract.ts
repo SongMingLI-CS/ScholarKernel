@@ -1,9 +1,43 @@
+import { inflateRawSync, inflateSync } from "node:zlib"
+
 import type { LayoutTextBlock, PageGeometry } from "@/lib/document/column-reorder"
 
 type PdfExtractResult = {
   text: string
   blocks: LayoutTextBlock[]
   pageGeometries: PageGeometry[]
+}
+
+/** 内容流是否被 FlateDecode 压缩（`/Filter /FlateDecode` 或 `/Filter [/FlateDecode]`）。 */
+const FLATE_FILTER_RE = /\/Filter\s*(?:\[\s*)?\/FlateDecode/
+
+/**
+ * TJ 数组里「这是一个词间空格」的字距阈值（单位 1/1000 em）。
+ * 字偶距通常在 -10 ~ -50；生成器用 -100 及更大的负位移代替空格。
+ */
+const TJ_WORD_GAP_THRESHOLD = -100
+
+/**
+ * 解压 FlateDecode 内容流。
+ *
+ * 真实 PDF 的内容流几乎都是压缩的（LaTeX / Word / Acrobat 默认如此），
+ * 不解压的话一个 `BT` / `Tj` 都扫不到，只能落到乱码兜底 ——
+ * 表现为「上传正常 PDF，检索与审稿拿到一堆噪声」。
+ *
+ * 输入是 latin1 解码后的字符串，`Buffer.from(..., "latin1")` 能逐字节还原。
+ * 先试 zlib（带 2 字节头，绝大多数），失败再试裸 deflate。解不开返回 `null`：
+ * 宁可丢掉这一条流，也不要把压缩字节当正文喂给下游。
+ */
+export function inflatePdfStream(rawLatin1: string): string | null {
+  const bytes = Buffer.from(rawLatin1, "latin1")
+  for (const fn of [inflateSync, inflateRawSync]) {
+    try {
+      return fn(bytes).toString("latin1")
+    } catch {
+      // 换下一种包装格式
+    }
+  }
+  return null
 }
 
 function decodePdfLiteral(s: string): string {
@@ -127,7 +161,15 @@ export function extractPdfLayoutBlocks(buffer: Buffer): PdfExtractResult {
       page = sequentialPage
     }
 
-    const stream = match[1] ?? ""
+    const rawStream = match[1] ?? ""
+    // 流字典在 `stream` 之前：压缩流必须先解压再 token 化，否则扫不到任何操作符
+    const ownerDict = owner ? owner.body.slice(0, Math.max(0, streamStart - owner.start)) : ""
+    let stream = rawStream
+    if (FLATE_FILTER_RE.test(ownerDict)) {
+      const inflated = inflatePdfStream(rawStream)
+      if (inflated === null) continue
+      stream = inflated
+    }
     let x = 0
     let y = 0
     let pending = ""
@@ -168,9 +210,26 @@ export function extractPdfLayoutBlocks(buffer: Buffer): PdfExtractResult {
         if (j >= 0 && tokens[j] === "]") j -= 1
         while (j >= 0 && tokens[j] !== "[" && tokens[j] !== "]") j--
         if (j >= 0 && tokens[j] === "[") {
+          // 字距调整量以 1/1000 em 计：小负数只是字偶距（-20 = 0.02em），
+          // 达到 0.1em 量级才是 PDF 生成器用来代替空格的分词位移。
+          // 不还原的话 `[(Hello) -300 (World)]` 会拼成 `HelloWorld`，
+          // 下游分词、检索、引用对齐全部受影响。
+          let sawWordGap = false
           for (const p of tokens.slice(j + 1, i)) {
-            if (p.startsWith("(")) pending += decodePdfLiteral(p.slice(1, -1))
-            else if (p.startsWith("<") && !p.startsWith("<<")) pending += decodePdfHex(p.slice(1, -1))
+            const kern = Number(p)
+            if (Number.isFinite(kern) && p.trim() !== "") {
+              if (kern <= TJ_WORD_GAP_THRESHOLD) sawWordGap = true
+              continue
+            }
+            if (p.startsWith("(")) {
+              if (sawWordGap && pending && !pending.endsWith(" ")) pending += " "
+              sawWordGap = false
+              pending += decodePdfLiteral(p.slice(1, -1))
+            } else if (p.startsWith("<") && !p.startsWith("<<")) {
+              if (sawWordGap && pending && !pending.endsWith(" ")) pending += " "
+              sawWordGap = false
+              pending += decodePdfHex(p.slice(1, -1))
+            }
           }
         }
         continue

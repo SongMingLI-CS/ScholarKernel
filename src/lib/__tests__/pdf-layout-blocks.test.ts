@@ -3,9 +3,10 @@ import { describe, expect, it } from "vitest"
 import { extractPdfLayoutBlocks, extractPdfPageGeometries } from "../document/pdf-text-extract"
 
 /**
- * 手工构造的最小未压缩 PDF。
- * 真实 PDF 的内容流通常是 FlateDecode 压缩的，本解析器只对未压缩流有效；
- * 因此用合成样本来固定它在「唯一能工作」的场景下的行为。
+ * 手工构造的最小**未压缩** PDF。
+ *
+ * 真实 PDF 的内容流通常是 FlateDecode 压缩的，那条路径由 `pdf-flate.test.ts` 覆盖；
+ * 这里固定未压缩路径的坐标与排版语义（Tm/Td/Tj/TJ、多内容流页码归属）。
  */
 function buildPdf(opts: {
   pages: Array<{ mediaBox?: string; streams: string[] }>
@@ -61,9 +62,17 @@ describe("pdf layout block extraction", () => {
     })
     const out = extractPdfLayoutBlocks(pdf)
     expect(out.blocks).toHaveLength(1)
-    // TJ 的数字是字距调整量；当前实现不据此还原词间空格，只保证字形不丢失
-    expect(out.blocks[0]!.text).toContain("Glyph")
-    expect(out.blocks[0]!.text).toContain("Graph")
+    // -20 = 0.02em 只是字偶距，不该变成空格
+    expect(out.blocks[0]!.text).toBe("GlyphGraph")
+  })
+
+  it("TJ 词间位移（≤ -100）还原成空格", () => {
+    // 生成器用 -250 ~ -350 的位移代替空格；不还原会让 "Hello World" 变成 "HelloWorld"
+    const pdf = buildPdf({
+      pages: [{ streams: ["BT 60 640 Td [(Hello) -250 (World)] TJ ET"] }],
+    })
+    const out = extractPdfLayoutBlocks(pdf)
+    expect(out.blocks[0]!.text).toBe("Hello World")
   })
 
   it("keeps blocks of one page on the same page number when the page has two content streams", () => {
