@@ -32,6 +32,21 @@ export async function POST(req: Request, ctx: RouteCtx) {
       body.metadata && typeof body.metadata === "object" && !Array.isArray(body.metadata)
         ? body.metadata
         : undefined
+
+    // 归属校验只覆盖了 conversationId，管不到 messageId。
+    // 而下面 upsert 的 `where: { id: messageId }` 只按主键定位 —— 不校验的话，
+    // 攻击者拿任意一个自己拥有的会话，把别人的 message id 传进来，
+    // update 分支就会改写那条消息的 role/content（跨租户越权写）。
+    if (messageId) {
+      const existing = await prisma.message.findUnique({
+        where: { id: messageId },
+        select: { conversationId: true },
+      })
+      if (existing && existing.conversationId !== conversationId) {
+        return jsonError("Message id already in use", 409)
+      }
+    }
+
     const [message] = await prisma.$transaction([
       messageId
         ? prisma.message.upsert({
