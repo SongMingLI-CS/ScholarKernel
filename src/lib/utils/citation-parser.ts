@@ -432,6 +432,37 @@ export function formatReferencesContextBlock(refs: AcademicReference[], lang: "z
 }
 
 const MD_REF_HEADING_RE = /^#{1,3}\s*(参考文献|references?)(?:\s|\(|$)/i
+/** 任意 ATX 标题：参考文献区遇到下一个标题即结束（否则附录正文会被当作文献条目）。 */
+const MD_ANY_HEADING_RE = /^#{1,6}\s+\S/
+
+/** 形如 "A."、"N."、"J. K." 的缩写名，属于上一位作者。 */
+const AUTHOR_INITIALS_RE = /^(?:[A-Z]\.\s*)+$|^[A-Z]\.?(?:-[A-Z]\.?)?$/
+
+/**
+ * 参考文献里的作者串：APA/GB-T 用「Family, I.」成对出现，
+ * 直接按逗号切会把一个人拆成两条（"Vaswani, A." → "Vaswani" + "A."）。
+ * 这里按逗号切后，把紧随其后的缩写名并回上一位作者。
+ */
+function splitAuthorList(raw: string): string[] {
+  const cleaned = raw
+    .replace(/\s+/g, " ")
+    .replace(/\s+&\s+/g, ", ")
+    .replace(/\s+and\s+/gi, ", ")
+    .trim()
+  if (!cleaned) return []
+
+  const out: string[] = []
+  for (const tokenRaw of cleaned.split(/\s*,\s*/)) {
+    const token = tokenRaw.replace(/^&\s*/, "").trim()
+    if (!token) continue
+    if (out.length > 0 && AUTHOR_INITIALS_RE.test(token)) {
+      out[out.length - 1] = `${out[out.length - 1]}, ${token}`
+      continue
+    }
+    out.push(token)
+  }
+  return out.filter(Boolean)
+}
 
 export function extractReferencesFromMarkdown(md: string): AcademicReference[] {
   const lines = md.replace(/\r\n/g, "\n").split("\n")
@@ -445,6 +476,8 @@ export function extractReferencesFromMarkdown(md: string): AcademicReference[] {
       continue
     }
     if (!inRefs || !trimmed) continue
+    // 参考文献区在下一个标题处结束（例如 ## Appendix），否则附录正文会被当成文献条目
+    if (MD_ANY_HEADING_RE.test(trimmed)) break
 
     const numbered = trimmed.match(/^\[(\d+)\]\s*(.+)$/)
     const bullet = trimmed.match(/^[-*•]\s+\[(\d+)\]\s*(.+)$/)
@@ -452,10 +485,7 @@ export function extractReferencesFromMarkdown(md: string): AcademicReference[] {
 
     const authorYear = body.match(/^(.+?)\s*\((\d{4}|n\.d\.)\)\.\s*(.+)$/)
     if (authorYear) {
-      const authors = authorYear[1]!
-        .split(/,| and /i)
-        .map((a) => a.trim())
-        .filter(Boolean)
+      const authors = splitAuthorList(authorYear[1]!)
       const yearRaw = authorYear[2]!
       const rest = authorYear[3]!
       const doiMatch = rest.match(/\b(10\.\d{4,9}\/[-._;()/:A-Z0-9]+)\b/i)
