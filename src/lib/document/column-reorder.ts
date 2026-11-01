@@ -161,11 +161,30 @@ export function reorderInterleavedPlainText(raw: string): ColumnReorderResult {
   return { text: reordered, layout: "double", blocks: lines.length }
 }
 
+export type ColumnReorderOptions = {
+  /**
+   * 是否允许对「无坐标的纯文本」执行奇偶行重排启发式。
+   *
+   * 该启发式只依据「行长度分布均衡」推断双栏，无法从文本本身证明栏位，
+   * 对单栏正文（尤其是 Markdown / 纯文本上传）会产生奇偶行整体错位的静默错误。
+   * 因此默认关闭，只允许在确知来源为双栏 PDF 时由调用方显式开启。
+   */
+  plainTextHeuristic?: boolean
+}
+
+function passthroughPlainText(raw: string): ColumnReorderResult {
+  const text = raw.trim()
+  if (!text) return { text: "", layout: "unknown", blocks: 0 }
+  return { text, layout: "unknown", blocks: text.split(/\r?\n/).filter(Boolean).length }
+}
+
 export function applyColumnReorder(
   input: string,
   blocks?: LayoutTextBlock[],
-  pageGeometries?: PageGeometry[]
+  pageGeometries?: PageGeometry[],
+  options?: ColumnReorderOptions
 ): ColumnReorderResult {
   if (blocks?.length) return reorderDoubleColumnBlocks(blocks, pageGeometries)
+  if (!options?.plainTextHeuristic) return passthroughPlainText(input)
   return reorderInterleavedPlainText(input)
 }

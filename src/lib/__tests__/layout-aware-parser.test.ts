@@ -22,7 +22,8 @@ describe("column-reorder", () => {
 
   it("fixes interleaved plain text columns", () => {
     const raw = ["L1", "R1", "L2", "R2", "L3", "R3", "L4", "R4"].join("\n")
-    const out = applyColumnReorder(raw)
+    // 纯文本启发式需显式开启（默认关闭，见 column-reorder-safety.test.ts）
+    const out = applyColumnReorder(raw, undefined, undefined, { plainTextHeuristic: true })
     expect(out.layout).toBe("double")
     expect(out.text.startsWith("L1\nL2\nL3\nL4")).toBe(true)
     expect(out.text.endsWith("R4")).toBe(true)

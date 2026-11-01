@@ -146,6 +146,7 @@ export async function parseLayoutAwareDocument(input: {
 
   const external = await callExternalLayoutParser(input.buffer, input.filename, input.mimeType)
   if (external?.text) {
+    // 外部解析器已产出最终阅读顺序：只在有坐标块时按栏重排，禁止纯文本启发式再次改写。
     const reordered = applyColumnReorder(external.text, external.blocks)
     const normalized = normalizeAcademicFormulas(cleanAcademicNoise(reordered.text))
     return finalizeParseResult({
@@ -187,7 +188,9 @@ export async function parseLayoutAwareDocument(input: {
   const reordered = applyColumnReorder(
     rawText,
     blocks.length ? blocks : undefined,
-    pageGeometries.length ? pageGeometries : undefined
+    pageGeometries.length ? pageGeometries : undefined,
+    // 仅 PDF（且显式开启）才允许纯文本奇偶行重排；docx / md / txt 一律保持原序。
+    { plainTextHeuristic: format === "pdf" && safeEnv("DOC_COLUMN_REORDER_PLAINTEXT") === "1" }
   )
   const normalized = normalizeAcademicFormulas(cleanAcademicNoise(reordered.text))
 

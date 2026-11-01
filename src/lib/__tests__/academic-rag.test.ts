@@ -53,7 +53,8 @@ const FULL_DIRTY_PAPER = [
 
 describe("academic-rag pipeline", () => {
   it("reorders interleaved double-column plain text left-then-right", () => {
-    const out = applyColumnReorder(DIRTY_DOUBLE_COLUMN)
+    // 纯文本启发式默认关闭，此处显式开启以覆盖既有双栏能力
+    const out = applyColumnReorder(DIRTY_DOUBLE_COLUMN, undefined, undefined, { plainTextHeuristic: true })
     expect(out.layout).toBe("double")
     expect(out.text.indexOf("L1")).toBeLessThan(out.text.indexOf("R1"))
     expect(out.text.indexOf("L4")).toBeLessThan(out.text.indexOf("R4"))
