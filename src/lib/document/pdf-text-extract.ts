@@ -40,14 +40,170 @@ export function inflatePdfStream(rawLatin1: string): string | null {
   return null
 }
 
+/**
+ * PDF 字面量串（`(...)`）解码，规则见规范 7.3.4.2。
+ *
+ * 旧实现是 6 行链式 `replace`，三处与规范不符：
+ *
+ * 1. **顺序**：`/\\n/` 先于 `/\\\\/` 执行，于是 PDF 字节 `a\\nb`
+ *    （转义的反斜杠 + 字母 n）被吃成「a + 反斜杠 + 换行」。规范要求 `a\nb`。
+ * 2. **八进制转义 `\ddd` 完全没实现**：`\050A\051` 是 `(A)`，
+ *    LaTeX / Word 生成的 PDF 里很常见，旧行为是原样输出反斜杠数字。
+ * 3. **续行**：`\` 后紧跟 EOL 表示「什么也不产生」，旧行为留下一个反斜杠 + 换行。
+ *
+ * 链式 replace 本身就不可能对 —— 每个 `replace` 都重新扫描整串，
+ * 前一步产出的字符会被后一步当成新的转义起点。改成单遍扫描。
+ */
+const PDF_SIMPLE_ESCAPES: Record<string, string> = {
+  n: "\n",
+  r: "\r",
+  t: "\t",
+  b: "\b",
+  f: "\f",
+  "(": "(",
+  ")": ")",
+  "\\": "\\",
+}
+
+function isPdfOctalDigit(ch: string): boolean {
+  return ch >= "0" && ch <= "7"
+}
+
 function decodePdfLiteral(s: string): string {
-  return s
-    .replace(/\\n/g, "\n")
-    .replace(/\\r/g, "\r")
-    .replace(/\\t/g, "\t")
-    .replace(/\\\(/g, "(")
-    .replace(/\\\)/g, ")")
-    .replace(/\\\\/g, "\\")
+  if (!s.includes("\\")) return s
+  let out = ""
+  let i = 0
+  while (i < s.length) {
+    const ch = s[i]!
+    if (ch !== "\\") {
+      out += ch
+      i += 1
+      continue
+    }
+    const next = s[i + 1]
+    if (next === undefined) {
+      // 末尾孤立反斜杠：规范未定义，丢弃而不是输出
+      i += 1
+      continue
+    }
+    // 续行：\ 后跟 CRLF / CR / LF，不产生任何字符
+    if (next === "\r") {
+      i += s[i + 2] === "\n" ? 3 : 2
+      continue
+    }
+    if (next === "\n") {
+      i += 2
+      continue
+    }
+    const simple = PDF_SIMPLE_ESCAPES[next]
+    if (simple !== undefined) {
+      out += simple
+      i += 2
+      continue
+    }
+    // 八进制：1~3 位，取低 8 位
+    if (isPdfOctalDigit(next)) {
+      let digits = ""
+      let k = i + 1
+      while (k < s.length && digits.length < 3 && isPdfOctalDigit(s[k]!)) {
+        digits += s[k]
+        k += 1
+      }
+      out += String.fromCharCode(Number.parseInt(digits, 8) & 0xff)
+      i = k
+      continue
+    }
+    // 未定义的转义：规范要求忽略反斜杠，保留字符本身
+    out += next
+    i += 2
+  }
+  return out
+}
+
+const PDF_WHITESPACE = new Set([" ", "\n", "\r", "\t", "\f", "\0"])
+
+/**
+ * 内容流分词。
+ *
+ * 旧实现是一条正则：`/\((?:\\(?:[\s\S])|[^\\)])*\)|<[0-9A-Fa-f\s]*>|[[\]]|[^\s]+/g`。
+ * 它的字面量分支在**第一个** `)` 处收尾，而 PDF 允许字面量里出现平衡括号：
+ * `(Outer (Inner) Tail)` 会被切成 `(Outer (Inner)` + `Tail)`，
+ * 于是 `Tj` 取到的操作数是 `Tail)`，不以 `(` 开头 → **整段文字被静默丢弃**。
+ *
+ * 正则做不了任意深度的括号配对，这里改成显式扫描：`(` 进 `(` 出、按深度配对，
+ * 遇到 `\` 跳过下一个字节（含八进制与续行，转义里的 `(` 不参与配对）。
+ */
+function tokenizeContentStream(stream: string): string[] {
+  const tokens: string[] = []
+  const n = stream.length
+  let i = 0
+  while (i < n) {
+    const ch = stream[i]!
+    if (PDF_WHITESPACE.has(ch)) {
+      i += 1
+      continue
+    }
+    if (ch === "%") {
+      while (i < n && stream[i] !== "\n" && stream[i] !== "\r") i += 1
+      continue
+    }
+    if (ch === "(") {
+      const start = i
+      let depth = 0
+      while (i < n) {
+        const c = stream[i]!
+        if (c === "\\") {
+          i += 2
+          continue
+        }
+        if (c === "(") {
+          depth += 1
+          i += 1
+          continue
+        }
+        if (c === ")") {
+          depth -= 1
+          i += 1
+          if (depth === 0) break
+          continue
+        }
+        i += 1
+      }
+      tokens.push(stream.slice(start, i))
+      continue
+    }
+    if (ch === "<") {
+      if (stream[i + 1] === "<") {
+        tokens.push("<<")
+        i += 2
+        continue
+      }
+      const start = i
+      i += 1
+      while (i < n && stream[i] !== ">") i += 1
+      if (i < n) i += 1
+      tokens.push(stream.slice(start, i))
+      continue
+    }
+    if (ch === "[" || ch === "]") {
+      tokens.push(ch)
+      i += 1
+      continue
+    }
+    const start = i
+    while (i < n) {
+      const c = stream[i]!
+      if (PDF_WHITESPACE.has(c) || c === "(" || c === ")" || c === "<" || c === "[" || c === "]") break
+      i += 1
+    }
+    // 防御：任何未预期字符都要能前进，否则这里会变成死循环（本项目栽过两次）
+    if (i === start) {
+      i += 1
+      continue
+    }
+    tokens.push(stream.slice(start, i))
+  }
+  return tokens
 }
 
 function decodePdfHex(hex: string): string {
@@ -174,11 +330,10 @@ export function extractPdfLayoutBlocks(buffer: Buffer): PdfExtractResult {
     let y = 0
     let pending = ""
 
-    // 字面量串 / 十六进制串必须排在裸 token 之前：
-    // 若 `[^\s]+` 在前，`(First page body)` 会被空格切成三段，Tj 的操作数就取不到了。
+    // 字面量串 / 十六进制串必须排在裸 token 之前：若 `[^\s]+` 在前，
+    // `(First page body)` 会被空格切成三段，Tj 的操作数就取不到了。
     // 方括号单独成 token，才能把 `[ (A) -20 (B) ]` 还原成一个 TJ 数组。
-    const tokens =
-      stream.match(/\((?:\\(?:[\s\S])|[^\\)])*\)|<[0-9A-Fa-f\s]*>|[[\]]|[^\s]+/g) ?? []
+    const tokens = tokenizeContentStream(stream)
     for (let i = 0; i < tokens.length; i++) {
       const tok = tokens[i]!
       // 注意：这里不能把 i 往回拨。操作数已经通过 tokens[i - n] 直接读取，
