@@ -328,6 +328,7 @@ export function extractPdfLayoutBlocks(buffer: Buffer): PdfExtractResult {
     }
     let x = 0
     let y = 0
+    let leading = 0
     let pending = ""
 
     // 字面量串 / 十六进制串必须排在裸 token 之前：若 `[^\s]+` 在前，
@@ -338,9 +339,11 @@ export function extractPdfLayoutBlocks(buffer: Buffer): PdfExtractResult {
       const tok = tokens[i]!
       // 注意：这里不能把 i 往回拨。操作数已经通过 tokens[i - n] 直接读取，
       // 回拨只会在 for 的 i++ 补偿下回到原位，形成死循环（Tj / TJ 曾是死循环）。
+      // Tm 操作数是 6 个矩阵元素 a b c d e f Tm；位置取平移分量 (e, f)。
+      // 旧代码取 tokens[i-4]（c 分量）作为 tx，对单位矩阵 1 0 0 1 e f 会读成 0。
       if (tok === "Tm" && i >= 6) {
-        const ty = parseFloat(tokens[i - 1]!)
-        const tx = parseFloat(tokens[i - 4]!)
+        const ty = parseFloat(tokens[i - 1]!) // f
+        const tx = parseFloat(tokens[i - 2]!) // e
         if (!Number.isNaN(tx)) x = tx
         if (!Number.isNaN(ty)) y = ty
         continue
@@ -350,6 +353,22 @@ export function extractPdfLayoutBlocks(buffer: Buffer): PdfExtractResult {
         const dx = parseFloat(tokens[i - 2]!)
         if (!Number.isNaN(dx)) x += dx
         if (!Number.isNaN(dy)) y += dy
+        continue
+      }
+      // TD：设置行首距 leading = -dy，再做 Td(dx, dy)
+      if (tok === "TD" && i >= 2) {
+        const dy = parseFloat(tokens[i - 1]!)
+        const dx = parseFloat(tokens[i - 2]!)
+        if (!Number.isNaN(dy)) leading = -dy
+        if (!Number.isFinite(leading)) leading = 0
+        if (!Number.isNaN(dx)) x += dx
+        if (!Number.isNaN(dy)) y += dy
+        continue
+      }
+      // TL：直接设置行首距
+      if (tok === "TL" && i >= 1) {
+        const n = parseFloat(tokens[i - 1]!)
+        if (!Number.isNaN(n)) leading = n
         continue
       }
       if (tok === "Tj" && i >= 1) {
@@ -389,7 +408,15 @@ export function extractPdfLayoutBlocks(buffer: Buffer): PdfExtractResult {
         }
         continue
       }
-      if (tok === "T*" || tok === "ET" || tok === "Q") {
+      // T*：移到下一行首。先 flush 当前 pending（用旧 y），再 y -= leading
+      // 为后续文本准备新位置。顺序反了会把前一行也挪到新 y。
+      if (tok === "T*") {
+        if (pending.trim()) flushText(pending, x, y, page)
+        pending = ""
+        y -= leading
+        continue
+      }
+      if (tok === "ET" || tok === "Q") {
         if (pending.trim()) flushText(pending, x, y, page)
         pending = ""
       }
