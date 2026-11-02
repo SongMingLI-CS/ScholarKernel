@@ -198,7 +198,7 @@ function filterAcademicOnly(results: AcademicSearchHit[]): AcademicSearchHit[] {
 }
 
 /** 确保 query 为纯净字符串；含中文时记录日志（上游应已通过 LLM 改写为英文）。 */
-function sanitizeSearchQuery(query: string): string {
+function normalizeSearchQuery(query: string): string {
   const optimizedQuery = String(query ?? "").trim()
   if (/[\u4e00-\u9fff]/.test(optimizedQuery)) {
     console.warn(
@@ -215,7 +215,7 @@ async function tavilySearch(apiKey: string, query: string, maxResults: number): 
     throw new Error("MissingSearchApiKey")
   }
 
-  const optimizedQuery = sanitizeSearchQuery(query)
+  const optimizedQuery = normalizeSearchQuery(query)
   console.log("🔍 Tavily Search Query:", optimizedQuery)
 
   const url = isBrowser() ? "/api/proxy/tavily/search" : "https://api.tavily.com/search"
@@ -369,8 +369,8 @@ export function createAcademicSearchTool(input: {
     execute: async ({ search_query, search_queries, academicOnly, maxResults, rerankTopK }) => {
       const queryList =
         Array.isArray(search_queries) && search_queries.length
-          ? search_queries.map((q) => sanitizeSearchQuery(q)).filter(Boolean)
-          : [sanitizeSearchQuery(search_query)]
+          ? search_queries.map((q) => normalizeSearchQuery(q)).filter(Boolean)
+          : [normalizeSearchQuery(search_query)]
       const query = queryList.join(" | ")
       const wantAcademicOnly = Boolean(academicOnly)
       const n = maxResults ?? DEFAULT_ACADEMIC_SEARCH_MAX_RESULTS

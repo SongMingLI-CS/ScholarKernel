@@ -25,6 +25,8 @@ const eslintConfig = defineConfig([
   globalIgnores([
     // Default ignores of eslint-config-next:
     ".next/**",
+    // 任何 .next 前缀的构建产物目录（如临时 distDir 验证产生的 .next-round2）
+    ".next-*/**",
     "out/**",
     "build/**",
     "next-env.d.ts",
