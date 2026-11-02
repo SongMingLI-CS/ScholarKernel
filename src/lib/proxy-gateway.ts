@@ -127,6 +127,86 @@ export function resolveProxyUpstreamTimeoutMs(): number {
 }
 
 /**
+ * 上游响应体上限。
+ *
+ * 请求体在 `readBoundedRequestBody` 已经有上限，但响应体原来直接
+ * `new Response(upstreamRes.body, ...)` —— 上游可以往这个进程灌任意大的响应。
+ * 上游超时兜住了「挂死」，兜不住「在超时内灌满带宽」。
+ * 64 MiB：LLM 流式响应哪怕带 reasoning 也到不了这个量级，
+ * 又远低于会威胁进程或带宽预算的量级。
+ */
+export const DEFAULT_PROXY_MAX_RESPONSE_BYTES = 64 * 1024 * 1024
+
+export function resolveProxyMaxResponseBytes(): number {
+  return readPositiveIntEnv("PROXY_MAX_RESPONSE_BYTES") ?? DEFAULT_PROXY_MAX_RESPONSE_BYTES
+}
+
+export class ProxyResponseTooLargeError extends Error {
+  readonly status = 413
+  constructor(maxBytes: number, declaredOrSeen: number) {
+    super(`Proxy response too large: ${declaredOrSeen} > ${maxBytes}`)
+    this.name = "ProxyResponseTooLargeError"
+  }
+}
+
+/**
+ * 给上游响应体套一个计数外壳：边转发边累加，越界立即取消上游读取。
+ *
+ * 不能用「先缓冲整份再判断」—— 那等于把无上限响应整体读进内存，
+ * 与要解决的问题相同。流式转发 + 计数外壳才是 streaming proxy 的正确形状。
+ * 越界时 `controller.error`：此时状态行已经发出（`new Response(body, {status})`
+ * 在第一个字节前就提交头部），客户端会看到 200 + 部分 body + 连接错误。
+ * 这是可接受的 —— 唯一的替代是缓冲整份再发，而那正是要避免的。
+ *
+ * 声明值（content-length）的提前判断在调用方做，能给出干净的 413。
+ */
+export function capUpstreamResponseStream(
+  stream: ReadableStream<Uint8Array>,
+  maxBytes: number
+): ReadableStream<Uint8Array> {
+  let total = 0
+  let reader: ReadableStreamDefaultReader<Uint8Array> | null = null
+  return new ReadableStream<Uint8Array>({
+    async start(controller) {
+      reader = stream.getReader()
+      try {
+        for (;;) {
+          const { done, value } = await reader.read()
+          if (done) break
+          if (!value || value.byteLength === 0) continue
+          total += value.byteLength
+          if (total > maxBytes) {
+            await reader.cancel().catch(() => undefined)
+            controller.error(new ProxyResponseTooLargeError(maxBytes, total))
+            return
+          }
+          controller.enqueue(value)
+        }
+        controller.close()
+      } catch (e) {
+        controller.error(e)
+      } finally {
+        try {
+          reader?.releaseLock()
+        } catch {
+          // 已取消的 reader 可能不允许重复释放
+        }
+      }
+    },
+    cancel(reason) {
+      stream.cancel(reason).catch(() => undefined)
+    },
+  })
+}
+
+/** 上游响应的声明体积；不可解析时返回 NaN（交由流式计数外壳兜底）。 */
+export function readUpstreamDeclaredContentLength(res: Response): number {
+  const raw = res.headers.get("content-length")
+  if (raw === null) return Number.NaN
+  return Number.parseInt(raw, 10)
+}
+
+/**
  * 有界读取请求体。
  *
  * 先看 `content-length` 做快速拒绝（该头部可被伪造，因此只用于提前失败，

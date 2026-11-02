@@ -1,12 +1,15 @@
 import { jsonError } from "@/lib/api-utils"
 import {
   ProxyBodyTooLargeError,
+  capUpstreamResponseStream,
   checkProxyAuth,
   checkRateLimit,
   isKnownProxyProvider,
   logProxyRequest,
   readBoundedRequestBody,
+  readUpstreamDeclaredContentLength,
   resolveClientIp,
+  resolveProxyMaxResponseBytes,
   resolveProxyUpstreamTimeoutMs,
   resolveProxyUpstreamUrl,
 } from "@/lib/proxy-gateway"
@@ -98,8 +101,28 @@ async function handleProxy(req: Request, ctx: RouteCtx) {
   if (contentType) resHeaders.set("content-type", contentType)
   const cacheControl = upstreamRes.headers.get("cache-control")
   if (cacheControl) resHeaders.set("cache-control", cacheControl)
+  // 同源响应必须带 nosniff：这个路由是 /api/proxy/...，与主应用同源，
+  // 上游若返回 text/html，浏览器会按 content-type 嗅探并当成 HTML 渲染 ——
+  // 等于把上游内容注入主应用_origin。nosniff 强制按声明类型处理。
+  resHeaders.set("x-content-type-options", "nosniff")
 
-  return new Response(upstreamRes.body, {
+  // 响应体上限：先看 content-length 给干净的 413（声明值可伪造，只用于提前失败）；
+  // 再给 body 套计数外壳，越界在中途 abort。两个一起才能同时挡住「老实的大响应」
+  // 和「撒谎的大响应」。
+  const maxResponseBytes = resolveProxyMaxResponseBytes()
+  const declared = readUpstreamDeclaredContentLength(upstreamRes)
+  if (Number.isFinite(declared) && declared > maxResponseBytes) {
+    logProxyRequest({ provider, path: pathSegments.join("/"), status: 413, clientIp })
+    // 不消费上游 body：让它自己断开
+    upstreamRes.body?.cancel().catch(() => undefined)
+    return jsonError("Proxy response too large", 413)
+  }
+
+  const body = upstreamRes.body
+    ? capUpstreamResponseStream(upstreamRes.body, maxResponseBytes)
+    : null
+
+  return new Response(body, {
     status: upstreamRes.status,
     statusText: upstreamRes.statusText,
     headers: resHeaders,
