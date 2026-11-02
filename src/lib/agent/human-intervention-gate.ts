@@ -37,6 +37,7 @@ export function waitForHumanIntervention(
   signal?: AbortSignal,
   ownerId?: string
 ): Promise<HumanInterventionDecision> {
+  if (signal?.aborted) return Promise.reject(new Error("InterventionAborted"))
   if (!sessionId.trim()) {
     return Promise.resolve({ action: "approve" })
   }
@@ -46,12 +47,20 @@ export function waitForHumanIntervention(
   }
 
   return new Promise<HumanInterventionDecision>((resolve, reject) => {
-    const gate: PendingGate = { nodeId, reason, resolve, reject, createdAt: Date.now(), ownerId }
+    const cleanup = () => signal?.removeEventListener("abort", onAbort)
+    const gate: PendingGate = {
+      nodeId,
+      reason,
+      createdAt: Date.now(),
+      ownerId,
+      resolve: (decision) => { cleanup(); resolve(decision) },
+      reject: (error) => { cleanup(); reject(error) },
+    }
     gates.set(sessionId, gate)
 
     const onAbort = () => {
       gates.delete(sessionId)
-      reject(new Error("InterventionAborted"))
+      gate.reject(new Error("InterventionAborted"))
     }
     signal?.addEventListener("abort", onAbort, { once: true })
   })
